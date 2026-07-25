@@ -36,6 +36,9 @@ _TELEGRAM_TIMER_UPDATE_SECONDS = int(os.getenv("TELEGRAM_TIMER_UPDATE_SECONDS", 
 _TELEGRAM_MIN_LEARN_EARN_CONTRACT_BALANCE_GD = float(
     os.getenv("TELEGRAM_MIN_LEARN_EARN_CONTRACT_BALANCE_GD", "200")
 )
+_TELEGRAM_MIN_LEARN_EARN_OPERATOR_GAS_CELO = float(
+    os.getenv("TELEGRAM_MIN_LEARN_EARN_OPERATOR_GAS_CELO", "0.001")
+)
 _TELEGRAM_LEARN_EARN_SCHEDULER_STOP = threading.Event()
 _TELEGRAM_LEARN_EARN_SCHEDULER_THREAD = None
 _TELEGRAM_LEARN_EARN_SCHEDULER_LOCK = threading.Lock()
@@ -249,7 +252,8 @@ def _ensure_wallet_can_start_learn_earn(chat_id, telegram_user_id, wallet: str) 
         )
         return False
 
-    if not eligibility.get("eligible", True):
+    # Missing/malformed eligibility data must not bypass the database cooldown.
+    if not eligibility.get("eligible", False):
         _clear_wallet_learn_earn_sessions(wallet, except_user_id=telegram_user_id)
         send_message(
             chat_id,
@@ -301,7 +305,7 @@ def _send_no_active_or_cooldown_message(chat_id, telegram_user_id):
         try:
             from learn_and_earn.learn_and_earn import quiz_manager
             eligibility = _run_async(quiz_manager.check_quiz_eligibility(saved_wallet))
-            if not eligibility.get("eligible", True):
+            if not eligibility.get("eligible", False):
                 send_message(
                     chat_id,
                     _format_learn_earn_unavailable_message(eligibility),
@@ -695,14 +699,28 @@ def _finish_chat_quiz(chat_id, telegram_user_id):
             disbursement = {"success": False, "error": "Reward transfer failed. Please try again later."}
 
         if not disbursement or not disbursement.get("success"):
-            error = html.escape(str((disbursement or {}).get("error") or "Reward transfer failed. Please try again later."))
+            error_code = (disbursement or {}).get("error_code")
+            if error_code == "insufficient_gas":
+                error = (
+                    "The reward contract still has G$, but the bot's operator wallet does not have enough CELO "
+                    "to pay the network gas fee. Your reward cannot be sent until the operator gas wallet is refilled."
+                )
+                retry_guidance = (
+                    "You do not need to add gas to your own wallet. Your quiz attempt was not recorded and no cooldown started; "
+                    "please try again after the bot operator gas wallet is refilled."
+                )
+            else:
+                error = str((disbursement or {}).get("error") or "Reward transfer failed. Please try again later.")
+                retry_guidance = (
+                    "Your quiz attempt was not recorded yet, so the cooldown will not start until the reward is successfully received."
+                )
             send_message(
                 chat_id,
                 "⚠️ <b>Learn &amp; Earn reward was not sent</b>\n\n"
                 f"Score: <b>{quiz_result.get('score')}/{quiz_result.get('total_questions')}</b>\n"
                 f"Reward calculated: <b>{reward_amount} G$</b>\n\n"
-                f"{error}\n\n"
-                "Your quiz attempt was not recorded yet, so the cooldown will not start until the reward is successfully received.",
+                f"{html.escape(error)}\n\n"
+                f"{retry_guidance}",
             )
             return
 
@@ -933,6 +951,17 @@ def handle_earn(chat_id, telegram_user):
                 chat_id,
                 "⛔ <b>Learn &amp; Earn quiz cannot start yet</b>\n\n"
                 "The Learn &amp; Earn gas operator wallet is not configured, so Telegram rewards cannot be disbursed right now.",
+                _learn_earn_keyboard(telegram_user_id, saved_wallet),
+            )
+            return
+
+        operator_gas_balance = _run_async(learn_blockchain_service.get_operator_gas_balance())
+        if 0 <= operator_gas_balance < _TELEGRAM_MIN_LEARN_EARN_OPERATOR_GAS_CELO:
+            send_message(
+                chat_id,
+                "⛔ <b>Learn &amp; Earn quiz cannot start yet</b>\n\n"
+                "The reward contract has G$, but the bot's operator wallet does not have enough CELO to pay the network gas fee.\n\n"
+                "You do not need to add gas to your own wallet. Please try again after the bot operator gas wallet is refilled.",
                 _learn_earn_keyboard(telegram_user_id, saved_wallet),
             )
             return
