@@ -145,6 +145,22 @@ class LearnBlockchainService:
             logger.error(f"Error getting contract balance: {type(e).__name__}: {e}")
             return 0.0
 
+    async def get_operator_gas_balance(self) -> float:
+        """Return the operator wallet's native CELO balance used to pay gas."""
+        if not self.owner_account:
+            return 0.0
+
+        try:
+            balance_wei = self.w3.eth.get_balance(self.owner_account.address)
+            balance_celo = float(self.w3.from_wei(balance_wei, 'ether'))
+            logger.info("Learn & Earn operator gas balance: %.6f CELO", balance_celo)
+            return balance_celo
+        except Exception as e:
+            logger.error(f"Error getting operator gas balance: {type(e).__name__}: {e}")
+            # Do not report an RPC/read failure as an empty wallet. The actual
+            # transaction path will still return a safe, user-facing error.
+            return -1.0
+
     async def get_learn_wallet_balance(self) -> float:
         """Get the G$ balance of the Learn wallet (for legacy compatibility)"""
         try:
@@ -202,12 +218,15 @@ class LearnBlockchainService:
                 last_error = str(e)
                 logger.error(f"Attempt {attempt}/{self.MAX_RETRIES} exception: {type(e).__name__}: {e}")
 
+                classified_error = self._transaction_error_result(e)
+                if classified_error.get('permanent_failure'):
+                    return classified_error
+
                 if attempt < self.MAX_RETRIES:
                     delay = self.RETRY_DELAY_BASE ** attempt
                     await asyncio.sleep(delay)
 
-        error_msg = self._sanitize_error(last_error or "Failed after all retries")
-        return {"success": False, "error": error_msg}
+        return self._transaction_error_result(last_error or "Failed after all retries")
 
     async def _attempt_direct_transfer(self, wallet_address: str, amount: float, attempt: int) -> dict:
         """Direct ERC20 transfer fallback when smart contract is not configured"""
@@ -279,7 +298,7 @@ class LearnBlockchainService:
 
         except Exception as e:
             logger.error(f"Direct transfer error: {type(e).__name__}: {e}")
-            return {"success": False, "error": self._sanitize_error(str(e))}
+            return self._transaction_error_result(e)
 
     async def _attempt_disburse(self, wallet_address: str, amount: float, quiz_id: str, attempt: int) -> dict:
         """Single attempt to disburse reward"""
@@ -393,6 +412,28 @@ class LearnBlockchainService:
                 "tx_hash": tx_hash_hex,
                 "explorer_url": f"https://celoscan.io/tx/{tx_hash_hex}"
             }
+
+    def _transaction_error_result(self, error) -> dict:
+        """Classify transaction failures without confusing gas and G$ balances."""
+        raw_error = str(error)
+        error_lower = raw_error.lower()
+        gas_markers = (
+            'insufficient funds for gas',
+            'insufficient funds for transfer',
+            'insufficient balance for gas',
+            'gas required exceeds allowance',
+        )
+        if any(marker in error_lower for marker in gas_markers):
+            return {
+                "success": False,
+                "error_code": "insufficient_gas",
+                "error": (
+                    "The reward operator has insufficient CELO for network gas. "
+                    "The G$ reward pool is funded, but the transfer cannot be submitted yet."
+                ),
+                "permanent_failure": True,
+            }
+        return {"success": False, "error": self._sanitize_error(raw_error)}
 
 
     def _build_cfa_abi(self):
