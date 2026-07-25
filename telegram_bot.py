@@ -217,7 +217,7 @@ def _save_wallet_session(telegram_user, chat_id, wallet: str) -> bool:
                 .upsert({
                     "wallet_address": normalized_wallet,
                     "last_login": now,
-                    "ubi_verified": False,
+                    "ubi_verified": True,
                     "login_method": "telegram_wallet",
                 }, on_conflict="wallet_address")\
                 .execute()
@@ -227,7 +227,55 @@ def _save_wallet_session(telegram_user, chat_id, wallet: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"❌ Could not save Telegram wallet session: {e}")
+    return False
+
+
+def _check_wallet_face_verification(wallet: str) -> dict:
+    """Return the on-chain GoodDollar face-verification result for a wallet."""
+    try:
+        from blockchain import is_identity_verified
+
+        result = is_identity_verified(wallet)
+        if not isinstance(result, dict):
+            return {"verified": False, "error": "Invalid identity service response"}
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.error("❌ Telegram identity check failed for %s: %s", _mask_wallet(wallet), exc)
+        return {"verified": False, "error": str(exc)}
+
+
+def _ensure_wallet_is_face_verified(chat_id, wallet: str) -> bool:
+    """Show identity-check UX and fail closed unless GoodDollar verifies the wallet."""
+    send_message(
+        chat_id,
+        "🔎 <b>Checking your wallet…</b>\n\n"
+        f"Wallet: <code>{_mask_wallet(wallet)}</code>\n"
+        "Please wait while we check its GoodDollar face-verification status.",
+    )
+    result = _check_wallet_face_verification(wallet)
+    if result.get("verified") is True:
+        return True
+
+    if result.get("error"):
+        logger.warning(
+            "⚠️ Telegram wallet identity check unavailable for %s: %s",
+            _mask_wallet(wallet),
+            result.get("error"),
+        )
+        send_message(
+            chat_id,
+            "⚠️ <b>We could not check your wallet right now.</b>\n\n"
+            "Your wallet was not saved. Please try submitting it again in a few minutes.",
+        )
         return False
+
+    send_message(
+        chat_id,
+        "❌ <b>This wallet is not face verified yet.</b>\n\n"
+        "Please complete face verification in GoodDollar first, then send the same wallet address again. "
+        "Your wallet was not saved and you cannot enter Learn &amp; Earn yet.",
+    )
+    return False
 
 
 def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
@@ -1097,6 +1145,9 @@ def handle_wallet_text(chat_id, telegram_user, text):
         )
         return
 
+    if not _ensure_wallet_is_face_verified(chat_id, wallet):
+        return
+
     if not _save_wallet_session(telegram_user, chat_id, wallet):
         logger.warning(
             "Telegram wallet DB save failed; sending signed temporary Learn & Earn login "
@@ -1112,9 +1163,9 @@ def handle_wallet_text(chat_id, telegram_user, text):
         return
 
     text_msg = (
-        "✅ <b>Wallet saved!</b>\n\n"
+        "✅ <b>Face verification confirmed — pasok ka na!</b>\n\n"
         f"Wallet: <code>{_mask_wallet(wallet)}</code>\n\n"
-        "You can now start Learn &amp; Earn directly in this Telegram chat without opening a Mini App or connecting a wallet. "
+        "Your verified wallet is saved. You can now start Learn &amp; Earn directly in this Telegram chat without opening a Mini App or connecting a wallet. "
         "Your rewards and quiz history will use this wallet in GoodMarket Overview."
     )
     send_message(chat_id, text_msg, _learn_earn_keyboard(telegram_user.get("id"), wallet))
