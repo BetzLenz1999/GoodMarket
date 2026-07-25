@@ -91,11 +91,40 @@ def _mask_wallet(wallet: str) -> str:
 
 
 def _safe_text(value: str, limit: int = 700) -> str:
-    """Convert module HTML or arbitrary text to Telegram-safe plain text."""
-    text = re.sub(r"<[^>]+>", " ", value or "")
-    text = html.unescape(re.sub(r"\s+", " ", text)).strip()
+    """Convert module HTML to readable plain text without losing paragraphs."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    # Preserve the document structure before removing HTML. Scraped module
+    # content commonly uses p/div/li tags; collapsing all whitespace turns the
+    # entire lesson into one dense Telegram paragraph.
+    text = re.sub(r"<\s*br\s*/?\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<\s*li(?:\s[^>]*)?>", "\n• ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<\s*/\s*li\s*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"<\s*/?\s*(?:p|div|section|article|header|footer|blockquote|h[1-6]|ul|ol)(?:\s[^>]*)?>",
+        "\n\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"<\s*(?:script|style)[^>]*>[\s\S]*?<\s*/\s*(?:script|style)\s*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text).replace("\xa0", " ")
+
+    lines = []
+    previous_was_blank = True
+    for raw_line in text.split("\n"):
+        line = re.sub(r"[ \t\f\v]+", " ", raw_line).strip()
+        if line:
+            lines.append(line)
+            previous_was_blank = False
+        elif not previous_was_blank:
+            lines.append("")
+            previous_was_blank = True
+
+    text = "\n".join(lines).strip()
     if len(text) > limit:
-        text = f"{text[:limit].rstrip()}…"
+        shortened = text[:limit].rsplit(None, 1)[0].rstrip(" ,.;:-")
+        text = f"{shortened or text[:limit].rstrip()}…"
     return text
 
 
@@ -459,7 +488,9 @@ def _module_message_text(module, module_index, total_modules, seconds_remaining,
         f"📘 <b>Module {module_index + 1}/{total_modules}: {title}</b>\n"
         f"Estimated reading time: <b>{reading_time} min</b>\n"
         f"{status}\n\n"
+        f"📖 <b>Module content</b>\n\n"
         f"{html.escape(body)}\n\n"
+        f"━━━━━━━━━━━━━━\n"
         + ("Starting the next step now…" if ready else "Please read while this same message counts down live. The next step appears automatically when the timer finishes.")
     )
 
