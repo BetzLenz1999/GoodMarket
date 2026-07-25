@@ -210,7 +210,6 @@ def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
             "callback_data": "learn_earn_chat",
         }])
         keyboard.append([{"text": "💰 Show saved wallet", "callback_data": "show_wallet"}])
-    keyboard.append([{"text": "🛒 Open GoodMarket", "url": APP_URL}])
     return {"inline_keyboard": keyboard}
 
 
