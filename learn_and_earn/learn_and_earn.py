@@ -706,22 +706,24 @@ class LearnEarnQuizManager:
         return wallet_address[:6] + "..." + wallet_address[-4:]
 
 
-    def _rewarded_attempt_query(self, supabase, wallet_address: str):
-        """Build the canonical cooldown query for rewarded Learn & Earn logs.
+    def _latest_attempt_query(self, supabase, wallet_address: str):
+        """Build the canonical cooldown query for Learn & Earn logs.
 
         Telegram and web quiz rewards may be stored with either the masked
         display wallet or the normalized full wallet address depending on the
-        caller/version that created the row. Cooldown checks must read all
-        known wallet forms so a paid reward logged in ``learnearn_log`` always
-        makes the wallet ineligible until the configured cooldown expires.
+        caller/version that created the row. Use case-insensitive comparisons
+        for all known wallet forms. Any completed attempt in ``learnearn_log``
+        starts cooldown; filtering by reward/status can accidentally allow a
+        duplicate quiz when historical rows use a different representation.
         """
+        if not supabase:
+            raise RuntimeError("Supabase is unavailable for Learn & Earn cooldown check")
+
         wallet_normalized = (wallet_address or '').lower()
-        masked_address = self.mask_wallet_address(wallet_address or '')
+        masked_address = self.mask_wallet_address(wallet_normalized)
         return supabase.table(LEARN_EARN_LOG_TABLE)\
-            .select('timestamp, amount_g$, transaction_hash, wallet_address, status')\
-            .or_(f"wallet_address.eq.{masked_address},wallet_address.eq.{wallet_normalized},wallet_address.eq.{wallet_address}")\
-            .gt('amount_g$', 0)\
-            .eq('status', True)\
+            .select('timestamp, wallet_address')\
+            .or_(f"wallet_address.ilike.{masked_address},wallet_address.ilike.{wallet_normalized}")\
             .order('timestamp', desc=True)\
             .limit(1)
 
@@ -731,11 +733,10 @@ class LearnEarnQuizManager:
             supabase = get_supabase_client()
             masked_address = self.mask_wallet_address(wallet_address)
 
-            # Fetch the most recent rewarded quiz attempt for the user.
-            # Cooldown must start as soon as a successful positive reward is logged
-            # in Supabase. Some historical Telegram rows were paid but later missed
-            # transaction_hash updates, so requiring a hash here can reopen quizzes.
-            result = self._rewarded_attempt_query(supabase, wallet_address).execute()
+            # Read the newest matching attempt directly from learnearn_log. Any
+            # existing attempt starts cooldown, including historical rows whose
+            # reward metadata was stored differently.
+            result = self._latest_attempt_query(supabase, wallet_address).execute()
 
             if result.data:
                 last_attempt_str = result.data[0]['timestamp']
@@ -757,10 +758,12 @@ class LearnEarnQuizManager:
                 except Exception as parse_error:
                     logger.error(f"❌ Error parsing UTC timestamp in next quiz time check: {parse_error}")
                     logger.error(f"Original timestamp: {last_attempt_str}")
-                    # If parsing fails, assume user can take quiz
+                    # A matching database row exists, so fail closed rather than
+                    # allowing a duplicate quiz because of malformed legacy data.
                     return {
-                        'next_quiz_time': None,
-                        'can_take_now': True
+                        'next_quiz_time': last_attempt_str,
+                        'can_take_now': False,
+                        'error': 'invalid_cooldown_timestamp'
                     }
 
                 # Use the configured cooldown hours (120 hours = 5 days)
@@ -787,10 +790,12 @@ class LearnEarnQuizManager:
                 }
         except Exception as e:
             logger.error(f"❌ Error getting next quiz time for {wallet_address}: {e}")
-            # Assume user can take quiz if error occurs during retrieval
+            # Cooldown is a duplicate-payment protection. Never open the quiz
+            # when its database history cannot be verified.
             return {
                 'next_quiz_time': None,
-                'can_take_now': True
+                'can_take_now': False,
+                'error': 'cooldown_database_unavailable'
             }
 
     async def save_quiz_attempt(self, user_wallet, questions, user_answers, total_reward, ubi_verification, retry_count=0):
@@ -870,11 +875,10 @@ class LearnEarnQuizManager:
             supabase = get_supabase_client()
             masked_address = self.mask_wallet_address(wallet_address)
 
-            # Fetch the most recent rewarded quiz attempt for the user.
-            # Cooldown must start as soon as a successful positive reward is logged
-            # in Supabase. Some historical Telegram rows were paid but later missed
-            # transaction_hash updates, so requiring a hash here can reopen quizzes.
-            result = self._rewarded_attempt_query(supabase, wallet_address).execute()
+            # Read the newest matching attempt directly from learnearn_log. Any
+            # existing attempt starts cooldown, including historical rows whose
+            # reward metadata was stored differently.
+            result = self._latest_attempt_query(supabase, wallet_address).execute()
 
             if result.data:
                 last_attempt_str = result.data[0]['timestamp']
@@ -896,8 +900,8 @@ class LearnEarnQuizManager:
                 except Exception as parse_error:
                     logger.error(f"❌ Error parsing UTC timestamp in eligibility check: {parse_error}")
                     logger.error(f"Original timestamp: {last_attempt_str}")
-                    # If parsing fails, assume user can take quiz
-                    return True
+                    # A log exists, so parsing failure must not permit a duplicate.
+                    return False
 
                 # Calculate using UTC time consistently
                 next_quiz_time = last_attempt_time + timedelta(hours=self.cooldown_hours)
@@ -919,11 +923,12 @@ class LearnEarnQuizManager:
 
         except Exception as e:
             logger.error(f"❌ Failed to check eligibility for {wallet_address}: {e}")
-            # Default to eligible if there's an error during checking
-            return True
+            # Fail closed because an unreadable learnearn_log cannot prove that
+            # this wallet is outside its cooldown window.
+            return False
 
     async def check_quiz_eligibility(self, wallet_address: str) -> Dict[str, Any]:
-        """Check if user is eligible for Learn & Earn quiz (24-hour cooldown only)"""
+        """Check if user is eligible for Learn & Earn quiz after its 5-day cooldown."""
         try:
             # Check maintenance mode first
             try:
@@ -950,8 +955,8 @@ class LearnEarnQuizManager:
                 eligible = self.check_user_eligibility(wallet_address)
             except Exception as elig_error:
                 logger.error(f"❌ Eligibility check error: {elig_error}")
-                # Default to eligible if check fails
-                eligible = True
+                # Fail closed if learnearn_log cannot be checked.
+                eligible = False
 
             # Get next quiz time for consistent data
             try:
@@ -959,9 +964,24 @@ class LearnEarnQuizManager:
                 can_take_now = next_quiz_info.get('can_take_now', eligible)
             except Exception as time_error:
                 logger.error(f"❌ Next quiz time check error: {time_error}")
-                # Default to using eligibility result
-                next_quiz_info = {'can_take_now': eligible, 'next_quiz_time': None}
-                can_take_now = eligible
+                next_quiz_info = {
+                    'can_take_now': False,
+                    'next_quiz_time': None,
+                    'error': 'cooldown_database_unavailable'
+                }
+                can_take_now = False
+
+            if next_quiz_info.get('error') == 'cooldown_database_unavailable':
+                return {
+                    'eligible': False,
+                    'blocked': True,
+                    'reason': 'cooldown_database_unavailable',
+                    'message': 'We could not verify your Learn & Earn history. Please try again later.',
+                    'next_quiz_time': None,
+                    'can_take_now': False,
+                    'cooldown_hours': self.cooldown_hours,
+                    'feature_available': False
+                }
 
             if not eligible or not can_take_now:
                 return {
@@ -993,13 +1013,13 @@ class LearnEarnQuizManager:
             import traceback
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return {
-                'eligible': True,
-                'blocked': False,
-                'reason': 'Eligibility check bypassed due to error',
-                'message': 'Learn & Earn available - take the quiz to earn instant G$ rewards!',
-                'feature_available': True,
+                'eligible': False,
+                'blocked': True,
+                'reason': 'cooldown_database_unavailable',
+                'message': 'We could not verify your Learn & Earn history. Please try again later.',
+                'feature_available': False,
                 'max_reward': 0,
-                'can_take_now': True,
+                'can_take_now': False,
                 'cooldown_hours': 120,
                 'error': str(e)
             }
