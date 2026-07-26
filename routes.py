@@ -1571,6 +1571,12 @@ def index():
     )
 
 
+@routes.route("/security")
+def security_policy():
+    """Public wallet-safety guidance and security contact information."""
+    return render_template("security.html")
+
+
 @routes.route("/api/homepage-stats")
 def api_homepage_stats():
     """Public JSON endpoint for homepage hero stats (no auth required)."""
