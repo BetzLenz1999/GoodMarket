@@ -1918,24 +1918,12 @@ OR manually enter HTML content here...
                 <p>Manage reward amounts for social media tasks.</p>
 
                 <div class="content-box">
-                    <h2>Task Rewards</h2>
-                    <div id="reward-config-status" style="margin-bottom: 2rem;">
-                        <div class="loading">
-                            <div class="spinner"></div>
-                            <p>Loading reward configuration...</p>
-                        </div>
-                    </div>
-
-                    <div id="reward-config-controls" style="display: none;">
-                        <!-- Farming Reward Pool Funding -->
-                        <div style="margin-bottom: 2rem; padding: 1.5rem; background: rgba(250, 204, 21, 0.08); border: 1px solid rgba(250, 204, 21, 0.22); border-radius: 12px;">
-                            <h3 style="margin-bottom: 1rem; color: #facc15;">
-                                <span class="menu-icon">🐔</span> Farming Reward Pool
-                            </h3>
-                            <p style="color: rgba(241,245,249,0.7); line-height: 1.6;">
+                    <h2>🐔 Farming Reward Pool</h2>
+                    <div style="padding: 1.5rem; background: rgba(250, 204, 21, 0.08); border: 1px solid rgba(250, 204, 21, 0.22); border-radius: 12px;">
+                        <p style="color: rgba(241,245,249,0.7); line-height: 1.6;">
                                 Fund the chicken farming contract reward pool from an admin wallet. Users can still start farms, sell eggs, and close farms from the Farming page, but reward-pool funding is controlled here.
-                            </p>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                        </p>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
                                 <div>
                                     <strong>Reward Pool:</strong>
                                     <p id="farming-reward-pool" style="font-size: 1.5rem; color: #10b981; margin-top: 0.5rem;">Loading...</p>
@@ -1945,18 +1933,29 @@ OR manually enter HTML content here...
                                     <label class="form-label">Funding Amount (G$)</label>
                                     <input type="number" id="farming-reward-amount-input" min="1" step="1" class="form-control" placeholder="1000" value="1000">
                                 </div>
-                            </div>
-                            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                        </div>
+                        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
                                 <button class="btn btn-primary" onclick="fundFarmingRewards()" style="padding: 1rem; font-size: 1.05rem; background: linear-gradient(135deg, #facc15, #f97316); color: #241300;">
                                     🎁 Fund Farming Rewards
                                 </button>
                                 <button class="btn btn-primary" onclick="loadFarmingRewardPool()" style="padding: 1rem; font-size: 1.05rem; background: rgba(255,255,255,0.12);">
                                     🔄 Refresh Pool
                                 </button>
-                            </div>
-                            <div id="farming-reward-status" style="margin-top: 1rem; color: rgba(241,245,249,0.7);"></div>
                         </div>
+                        <div id="farming-reward-status" style="margin-top: 1rem; color: rgba(241,245,249,0.7);"></div>
+                    </div>
+                </div>
 
+                <div class="content-box">
+                    <h2>Task Rewards</h2>
+                    <div id="reward-config-status" style="margin-bottom: 2rem;">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>Loading reward configuration...</p>
+                        </div>
+                    </div>
+
+                    <div id="reward-config-controls" style="display: none;">
                         <!-- Telegram Task Reward -->
                         <div style="margin-bottom: 2rem; padding: 1.5rem; background: rgba(255, 255, 255, 0.05); border-radius: 12px;">
                             <h3 style="margin-bottom: 1rem; color: #00acee;">
@@ -2932,6 +2931,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     loadModuleLinks();
                     break;
                 case 'reward-config':
+                    loadFarmingRewardPool();
                     loadRewardConfig();
                     break;
                 case 'discourse-task':
@@ -5893,7 +5893,6 @@ async function loadMinigamesMaintenance() {
 
                     statusDiv.style.display = 'none';
                     controlsDiv.style.display = 'block';
-                    await loadFarmingRewardPool();
                 } else {
                     statusDiv.innerHTML = '<p style="color: #ef4444;">Failed to load reward configuration</p>';
                 }
