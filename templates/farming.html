@@ -92,7 +92,7 @@
             <button class="chip" type="button" data-farm-amount="{{ farming_config.chicken_price_gd * 20 }}">20 chickens</button>
             <button class="chip" type="button" data-farm-amount="{{ farming_config.chicken_price_gd * 50 }}">50 chickens</button>
         </div>
-        <p class="amount-help">Rewards come from the contract reward pool and are funded by admins from the Admin Dashboard.</p>
+        <p class="amount-help">Rewards come from the contract reward pool and are funded by admins from the Admin Dashboard. Gas is estimated by the Celo network and your wallet; it is not a hardcoded farming fee.</p>
         <div class="action-grid">
             <button class="btn secondary" type="button" id="refreshFarmBtn">🔄 Refresh status</button>
             <button class="btn secondary" type="button" id="sellEggsBtn">🥚 Sell eggs</button>
@@ -140,6 +140,7 @@
 
         const $ = (id) => document.getElementById(id);
         let selectedAccount = "";
+        let farmState = null;
 
         function provider() {
             if (!window.ethereum) return null;
@@ -180,7 +181,30 @@
         async function sendTx(to, data) {
             const eth = provider();
             if (!selectedAccount) await getWalletAccount();
-            return eth.request({ method: "eth_sendTransaction", params: [{ from: selectedAccount, to, data, chainId: CHAIN_ID_HEX }] });
+            const transaction = { from: selectedAccount, to, data, chainId: CHAIN_ID_HEX };
+            // Simulate first so a known contract revert never reaches the wallet. Some
+            // wallets show a very large fallback fee when gas estimation fails.
+            await eth.request({ method: "eth_call", params: [transaction, "latest"] });
+            return eth.request({ method: "eth_sendTransaction", params: [transaction] });
+        }
+
+        function updateActionAvailability() {
+            const active = Boolean(farmState && farmState.active);
+            const eggsPayable = active && farmState.eggValue > 0n && farmState.pool >= farmState.eggValue;
+            const closePayable = active && farmState.mature && farmState.pool >= farmState.eggValue;
+            $("sellEggsBtn").disabled = !eggsPayable;
+            $("closeFarmBtn").disabled = !closePayable;
+        }
+
+        function actionBlockReason(action) {
+            if (!farmState || !farmState.active) return "No active farm found. Tap Refresh status first.";
+            if (action === "close" && !farmState.mature) return "This farm is still growing and cannot be closed yet.";
+            if (farmState.eggValue === 0n && action === "sell") return "There are no egg rewards ready to sell yet.";
+            if (farmState.pool < farmState.eggValue) {
+                const shortage = farmState.eggValue - farmState.pool;
+                return `The transaction was not opened because it would fail: the reward pool needs ${weiToGd(shortage)} more G$. Gas is network-estimated, not a hardcoded farm fee. Please ask an admin to fund the reward pool, then refresh.`;
+            }
+            return "";
         }
 
         async function waitForReceipt(hash, waitingMessage) {
@@ -233,7 +257,10 @@
             const poolRaw = await eth.request({ method: "eth_call", params: [{ to: FARMING_CONTRACT, data: SELECTORS.rewardPool }, "latest"] });
             const pool = BigInt(poolRaw || "0x0");
             $("rewardPoolValue").textContent = `${weiToGd(pool)} G$`;
-            setStatus(active ? `Active farm: ${weiToGd(principal)} G$ principal. ${mature ? "Ready to close." : "Still growing."}` : "No active farm yet. Start one above.", active ? "ok" : "");
+            farmState = { active, mature, eggValue, pool };
+            updateActionAvailability();
+            const fundingShortfall = active && pool < eggValue ? ` Reward pool is short by ${weiToGd(eggValue - pool)} G$; Sell/Close is blocked to prevent a failed transaction and misleading wallet gas estimate.` : "";
+            setStatus(active ? `Active farm: ${weiToGd(principal)} G$ principal. ${mature ? "Mature." : "Still growing."}${fundingShortfall || (mature ? " Ready to close." : "")}` : "No active farm yet. Start one above.", active && !fundingShortfall ? "ok" : fundingShortfall ? "error" : "");
         }
 
         async function simpleAction(selector, label) {
@@ -255,8 +282,17 @@
         updateChickensToBuy();
         $("startFarmBtn").addEventListener("click", () => startFarm().catch((e) => setStatus(e.message || "Unable to start farm.", "error")));
         $("refreshFarmBtn").addEventListener("click", () => refreshFarm().catch((e) => setStatus(e.message || "Unable to refresh farm.", "error")));
-        $("sellEggsBtn").addEventListener("click", () => simpleAction(SELECTORS.sellEggs, "Sell eggs").catch((e) => setStatus(e.message || "Unable to sell eggs.", "error")));
-        $("closeFarmBtn").addEventListener("click", () => simpleAction(SELECTORS.closeFarm, "Close farm").catch((e) => setStatus(e.message || "Unable to close farm.", "error")));
+        $("sellEggsBtn").addEventListener("click", () => {
+            const reason = actionBlockReason("sell");
+            if (reason) return setStatus(reason, "error");
+            return simpleAction(SELECTORS.sellEggs, "Sell eggs").catch((e) => setStatus(e.message || "Unable to sell eggs.", "error"));
+        });
+        $("closeFarmBtn").addEventListener("click", () => {
+            const reason = actionBlockReason("close");
+            if (reason) return setStatus(reason, "error");
+            return simpleAction(SELECTORS.closeFarm, "Close farm").catch((e) => setStatus(e.message || "Unable to close farm.", "error"));
+        });
+        refreshFarm().catch((e) => setStatus(e.message || "Unable to load farm status.", "error"));
     </script>
 </body>
 </html>
