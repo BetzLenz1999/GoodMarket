@@ -2526,19 +2526,6 @@
                 <div style="font-family:monospace;font-size:0.8rem;color:var(--text-dim);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.75rem;word-break:break-all;line-height:1.6;">{{ wallet }}</div>
             </div>
 
-            <div class="private-key-export-card" id="privateKeyExportCard" style="display:none;">
-                <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">Private Key Export</div>
-                <div class="warning-title">⚠️ Security warning</div>
-                <div class="warning-copy">
-                    Exporting your private key can be safe only if you never share it with anyone. If it is leaked, shared, screenshotted, or typed into a fake website, your funds can be stolen permanently.
-                    Before continuing, type this exact sentence:
-                    <span class="confirm-phrase" id="privateKeyConfirmPhrase">I agree that if my private key is shared with anyone my funds may be lost, and GoodMarket is not responsible.</span>
-                </div>
-                <input class="form-input" id="privateKeyConfirmInput" type="text" autocomplete="off" spellcheck="false" placeholder="Type the exact sentence above">
-                <button class="btn-primary" id="privateKeyExportBtn" type="button" style="margin-top:0.7rem;" disabled onclick="handlePrivateKeyExport()">Reveal Private Key in Privy</button>
-                <div class="export-status" id="privateKeyExportStatus" aria-live="polite"></div>
-            </div>
-
             <div style="margin-bottom:1.25rem;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">Face Verification</div>
                 <div id="fvStatusCard" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.85rem 0.95rem;font-size:0.85rem;line-height:1.6;">
@@ -2767,7 +2754,7 @@
     <script type="module">
         import React, {useEffect} from 'https://esm.sh/react@18.3.1';
         import {createRoot} from 'https://esm.sh/react-dom@18.3.1/client';
-        import {PrivyProvider, useExportWallet, usePrivy, useWallets} from 'https://esm.sh/@privy-io/react-auth@3.32.2?deps=react@18.3.1,react-dom@18.3.1';
+        import {PrivyProvider, usePrivy, useWallets} from 'https://esm.sh/@privy-io/react-auth@3.32.2?deps=react@18.3.1,react-dom@18.3.1';
 
 
         const CELO_PRIVY_CHAIN = {
@@ -2835,17 +2822,15 @@
 
         function PrivyWalletBridge() {
             const {ready, authenticated, login} = usePrivy();
-            const {exportWallet} = useExportWallet();
             const {wallets} = useWallets();
 
             useEffect(() => {
                 window.GMPrivyReady = !!ready;
                 window.GMPrivyAuthenticated = !!authenticated;
                 window.GMPrivyLogin = login;
-                window.GMPrivyExportWallet = exportWallet;
                 window.GMPrivyWallets = wallets || [];
                 window.dispatchEvent(new CustomEvent('gm:privy-wallets-updated'));
-            }, [ready, authenticated, login, exportWallet, wallets]);
+            }, [ready, authenticated, login, wallets]);
 
             return null;
         }
@@ -4062,96 +4047,11 @@
         navigateWithFeedback('/reloadly/#topup', 'Opening Mobile Top-Up…');
     }
 
-    const PRIVATE_KEY_EXPORT_CONFIRMATION = 'I agree that if my private key is shared with anyone my funds may be lost, and GoodMarket is not responsible.';
-
-    function setPrivateKeyExportStatus(message, type) {
-        const status = document.getElementById('privateKeyExportStatus');
-        if (!status) return;
-        status.textContent = message || '';
-        status.className = 'export-status' + (message ? ' show' : '') + (type ? ' ' + type : '');
-    }
-
-    function getPrivyExportableEmbeddedWallet() {
-        if (!IS_PRIVY_LOGIN) return null;
-        const wallets = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
-        return wallets.find(w =>
-            (w.address || '').toLowerCase() === WALLET.toLowerCase()
-            && (w.walletClientType || '').toLowerCase() === 'privy'
-        ) || null;
-    }
-
-    function canShowPrivateKeyExport() {
-        if (!IS_PRIVY_LOGIN || typeof window.GMPrivyExportWallet !== 'function') return false;
-        const matchingWallet = getPrivyExportableEmbeddedWallet();
-        if (matchingWallet) return true;
-        const wallets = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
-        if (wallets.length > 0) return false;
-        return (SERVER_PRIVY_WALLET_CLIENT_TYPE || '').toLowerCase() === 'privy';
-    }
-
-    function refreshPrivateKeyExportVisibility() {
-        const card = document.getElementById('privateKeyExportCard');
-        if (!card) return;
-        const visible = canShowPrivateKeyExport();
-        card.style.display = visible ? '' : 'none';
-        if (!visible) {
-            setPrivateKeyExportStatus('', '');
-        }
-        refreshPrivateKeyExportState();
-    }
-
-    function refreshPrivateKeyExportState() {
-        const input = document.getElementById('privateKeyConfirmInput');
-        const btn = document.getElementById('privateKeyExportBtn');
-        if (!input || !btn) return;
-        const confirmed = input.value.trim() === PRIVATE_KEY_EXPORT_CONFIRMATION;
-        const exportable = canShowPrivateKeyExport();
-        btn.disabled = !exportable || !confirmed;
-        btn.textContent = confirmed ? 'Reveal Private Key in Privy' : 'Type the warning exactly to continue';
-    }
-
-    async function handlePrivateKeyExport() {
-        const input = document.getElementById('privateKeyConfirmInput');
-        if (!input || input.value.trim() !== PRIVATE_KEY_EXPORT_CONFIRMATION) {
-            setPrivateKeyExportStatus('Type the warning sentence exactly before exporting your private key.', 'error');
-            refreshPrivateKeyExportState();
-            return;
-        }
-
-        try {
-            if (!canShowPrivateKeyExport()) {
-                throw new Error('Private key export is only available for your GoodMarket Privy embedded wallet. Connected wallets and WalletConnect sessions manage private keys in their own wallet app.');
-            }
-            if (window.GMPrivyReady && !window.GMPrivyAuthenticated && typeof window.GMPrivyLogin === 'function') {
-                setPrivateKeyExportStatus('Opening Privy login before export…', 'info');
-                await window.GMPrivyLogin();
-            }
-            if (typeof window.GMPrivyExportWallet !== 'function') {
-                throw new Error('Privy private key export is not available for this wallet session. Please log in with your GoodMarket Privy embedded wallet.');
-            }
-            setPrivateKeyExportStatus('Opening Privy secure export screen. GoodMarket will not see or store your private key.', 'info');
-            await window.GMPrivyExportWallet();
-        } catch (err) {
-            const msg = err && err.message ? err.message : 'Private key export was cancelled or failed.';
-            setPrivateKeyExportStatus(msg, 'error');
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
-        const input = document.getElementById('privateKeyConfirmInput');
-        const phrase = document.getElementById('privateKeyConfirmPhrase');
-        if (phrase) phrase.textContent = PRIVATE_KEY_EXPORT_CONFIRMATION;
-        if (input) input.addEventListener('input', refreshPrivateKeyExportState);
-        window.addEventListener('gm:privy-wallets-updated', refreshPrivateKeyExportVisibility);
-        refreshPrivateKeyExportVisibility();
-    });
-
     // ── Modal ────────────────────────────────────────────────
     function openModal(id) {
         document.getElementById(id).classList.add('open');
         document.body.style.overflow = 'hidden';
         if (id === 'settingsModal') {
-            refreshPrivateKeyExportVisibility();
             // Refresh FV status each time Settings opens so the user sees fresh data.
             loadFvStatus(true);
         }
@@ -6140,10 +6040,8 @@
             // Trust Wallet is the most common culprit for this, so when we
             // can detect Trust Wallet mobile we surface a much more specific
             // notice sooner (12s vs 25s) that explicitly tells the user the
-            // dApp browser is unreliable for Face Verification and that the
-            // recommended path is to import their seed / private key into
-            // MetaMask Mobile (or reconnect here via WalletConnect, which
-            // moves the signing into Trust's main app and works reliably).
+            // dApp browser is unreliable for Face Verification and recommends
+            // reconnecting through WalletConnect instead.
             // Non-Trust wallets keep the original generic 25s hint so users
             // on e.g. desktop MetaMask aren't nagged early.
             const _isTrustCtx = typeof _isTrustWalletMobileContext === 'function'
@@ -6161,8 +6059,8 @@
                     notice.innerHTML =
                         '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.45rem;">⚠️ Trust Wallet is not recommended for Face Verification</div>' +
                         '<div style="margin-bottom:0.6rem;">Trust Wallet\'s in-app browser can sign you in and let you claim daily G$, but its Face Verification flow is unreliable — the wallet often signs the request but never delivers the signature back to this page, leaving you stuck on <em>"Preparing verification…"</em>.</div>' +
-                        '<div style="margin-bottom:0.6rem;"><strong>For best results</strong>, import your Trust Wallet seed phrase or private key into <strong>MetaMask Mobile</strong> and retry Face Verification there — MetaMask\'s in-app browser handles the full flow reliably.</div>' +
-                        '<div style="margin-bottom:0.75rem;">Alternatively, log out and reconnect here via <strong>WalletConnect</strong>. That routes the signature through Trust Wallet\'s main app (instead of the in-app browser), which also works reliably.</div>' +
+                        '<div style="margin-bottom:0.6rem;"><strong>Never share or enter your wallet recovery phrase or raw signing credentials on GoodMarket.</strong></div>' +
+                        '<div style="margin-bottom:0.75rem;">Log out and reconnect here via <strong>WalletConnect</strong>. That routes the signature through Trust Wallet\'s main app (instead of the in-app browser), which also works reliably.</div>' +
                         '<a href="/logout" style="display:block;text-align:center;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;text-decoration:none;font-weight:600;padding:0.55rem 1rem;border-radius:10px;font-size:0.9rem;">🔐 Log out & reconnect via WalletConnect</a>';
                     wrap.appendChild(notice);
                     return;
