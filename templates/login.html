@@ -412,15 +412,10 @@
                     <span style="margin-left:auto; color:#10b981; font-size:1.1rem;">→</span>
                 </button>
 
-                <!-- Option 2: Import Existing Wallet -->
-                <button onclick="showImportPanel()" style="width:100%; padding:16px; border-radius:14px; border:2px solid rgba(251,191,36,0.4); background:linear-gradient(135deg,rgba(251,191,36,0.07),rgba(245,158,11,0.04)); color:white; cursor:pointer; text-align:left; display:flex; align-items:center; gap:14px; transition:all 0.2s;">
-                    <span style="font-size:1.8rem;">🔑</span>
-                    <div>
-                        <div style="font-weight:700; color:#fbbf24; font-size:0.95rem; margin-bottom:3px;">Import Existing Wallet</div>
-                        <div style="font-size:0.8rem; color:rgba(255,255,255,0.6); line-height:1.4;">Already have a GoodDollar wallet? Import your private key</div>
-                    </div>
-                    <span style="margin-left:auto; color:#fbbf24; font-size:1.1rem;">→</span>
-                </button>
+                <div style="padding:14px; border-radius:12px; border:1px solid rgba(96,165,250,0.4); background:rgba(59,130,246,0.08); color:rgba(255,255,255,0.78); font-size:0.82rem; line-height:1.55;">
+                    🛡️ <strong>Protect your wallet.</strong> GoodMarket will never ask for your recovery phrase or raw signing credentials. Existing-wallet access is available only through approved wallet connections.
+                    <a href="/security" style="display:block; margin-top:6px; color:#93c5fd;">Read our wallet safety policy →</a>
+                </div>
             </div>
 
             <!-- Create New Wallet Panel -->
@@ -450,46 +445,6 @@
                 </div>
             </div>
 
-            <!-- Import Existing Wallet Panel (Private Key) -->
-            <div id="panelPrivateKey" style="display:none;">
-                <button onclick="showLoginOptions()" style="background:none; border:none; color:rgba(255,255,255,0.6); cursor:pointer; font-size:0.9rem; padding:0; margin-bottom:14px;">← Back</button>
-
-                <div style="background:rgba(251,191,36,0.1); border:1px solid rgba(251,191,36,0.4); border-radius:10px; padding:12px; margin-bottom:14px; font-size:0.82rem; color:#1f2937; line-height:1.5;">
-                    🔐 <strong>Import Existing Wallet</strong><br>
-                    Your private key is encrypted and stored in your session only — never written to the database. After login, transactions are signed automatically with no wallet app needed.
-                </div>
-
-                <div class="input-group">
-                    <label class="input-label" for="privateKeyInput">Private Key</label>
-                    <input 
-                        type="password"
-                        id="privateKeyInput"
-                        class="wallet-input"
-                        placeholder="0x... or 64 hex characters"
-                        autocomplete="new-password"
-                    />
-                    <div style="margin-top:6px; font-size:0.78rem; color:rgba(255,255,255,0.5);">
-                        Export your private key from your GoodDollar wallet app's Security settings
-                    </div>
-                </div>
-
-                <div style="margin:12px 0;">
-                    <input type="text" id="referral-code-pk" placeholder="Referral code (optional)" 
-                           style="width:100%; padding:14px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:12px; color:white; font-size:0.95rem; text-transform:uppercase;">
-                </div>
-
-                <button class="verify-btn" onclick="loginWithPrivateKey()">
-                    <span class="btn-text-pk">🔑 Import Key & Login</span>
-                    <span class="btn-loader-pk" style="display:none; align-items:center; justify-content:center; gap:8px;">
-                        <div class="spinner"></div>
-                        Securing your key…
-                    </span>
-                </button>
-
-                <div style="margin-top:10px; text-align:center; font-size:0.8rem; color:rgba(255,255,255,0.45);">
-                    Don't have a wallet yet? <a href="#" onclick="showCreatePanel();return false;" style="color:#10b981; text-decoration:none;">Create one for free →</a>
-                </div>
-            </div>
         </div>
 
         <div class="features">
@@ -517,7 +472,6 @@
         function showLoginOptions() {
             document.getElementById('loginOptions').style.display = 'block';
             document.getElementById('panelCreate').style.display = 'none';
-            document.getElementById('panelPrivateKey').style.display = 'none';
             document.getElementById('status').className = 'status-message';
             document.getElementById('status').textContent = '';
         }
@@ -525,25 +479,10 @@
         function showCreatePanel() {
             document.getElementById('loginOptions').style.display = 'none';
             document.getElementById('panelCreate').style.display = 'block';
-            document.getElementById('panelPrivateKey').style.display = 'none';
-        }
-
-        function showImportPanel() {
-            document.getElementById('loginOptions').style.display = 'none';
-            document.getElementById('panelCreate').style.display = 'none';
-            document.getElementById('panelPrivateKey').style.display = 'block';
-            setTimeout(() => {
-                const pk = document.getElementById('privateKeyInput');
-                if (pk) pk.focus();
-            }, 100);
         }
 
         async function createInAppWallet() {
             showStatus('⚠️ In-app wallet creation has been removed. Please use WalletConnect (MetaMask/Trust Wallet).', 'error');
-        }
-
-        async function loginWithPrivateKey() {
-            showStatus('⚠️ Private-key login has been removed. Please connect with WalletConnect.', 'error');
         }
 
         // Helper function for fetch with timeout
@@ -575,7 +514,7 @@
             if (referralCode) {
                 console.log('Referral code detected:', referralCode);
 
-                ['referral-code-pk', 'create-referral-code'].forEach(id => {
+                ['create-referral-code'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el && !el.value.trim()) el.value = referralCode.toUpperCase();
                 });
