@@ -6806,8 +6806,21 @@
                         }
                         setClaimGasUiState('gas_ready');
                     } else {
-                        const gasSnap = await getProviderGasSnapshot(provider);
-                        if (!gasSnap.gasReady) {
+                        let gasSnap = null;
+                        try {
+                            gasSnap = await getProviderGasSnapshot(provider);
+                        } catch (providerGasErr) {
+                            // An injected wallet's RPC is only an optimization for the
+                            // pre-flight. Trust Wallet and other mobile dApp browsers can
+                            // return HTTP 401/403 (or reject eth_getBalance entirely)
+                            // even though the authenticated GoodMarket backend RPC is
+                            // healthy. Do not abort before the faucet gets a chance to
+                            // run: the backend status + gas endpoints perform the same
+                            // balance check and route GoodDollar first, followed by the
+                            // TOPWALLET_KEY on-chain fallback.
+                            console.warn('[claim] injected wallet gas probe failed; using backend faucet preflight:', providerGasErr);
+                        }
+                        if (!gasSnap || !gasSnap.gasReady) {
                             setStatus('Checking wallet gas…', 'var(--text-dim)');
                             await ensureGasReadyBeforeClaim();
                             gasCheckedByBackend = true;
