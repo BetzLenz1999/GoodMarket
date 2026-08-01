@@ -484,10 +484,11 @@ def _question_keyboard(question_number: int):
     }
 
 
-def _module_keyboard(module_index: int, ready: bool = False):
+def _module_keyboard(module_index: int, total_modules: int):
+    is_last_module = module_index >= total_modules - 1
     return {
         "inline_keyboard": [[{
-            "text": "✅ Continue now" if ready else "🔄 Check timer",
+            "text": "✅ Start quiz" if is_last_module else "➡️ Next module",
             "callback_data": f"le_mod_next:{module_index}",
         }]]
     }
@@ -520,26 +521,23 @@ def _start_questions_from_session(chat_id, telegram_user_id):
     _send_current_question(chat_id, telegram_user_id)
 
 
-def _module_message_text(module, module_index, total_modules, seconds_remaining, ready=False):
+def _module_message_text(module, module_index, total_modules):
     title = html.escape(str(module.get("title") or f"Module {module_index + 1}"))
-    reading_time = module.get("reading_time_minutes") or 1
     body = _safe_text(module.get("content") or module.get("description") or module.get("url") or "", limit=2200)
     if not body:
         body = "No module body was provided yet, but this module is active in the admin dashboard."
 
-    status = (
-        "✅ Timer complete. Starting the next step now…"
-        if ready
-        else f"⏳ Live reading countdown: <b>{_format_countdown(seconds_remaining)}</b>"
+    next_step = (
+        "Tap <b>Start quiz</b> after you finish reading."
+        if module_index >= total_modules - 1
+        else "Tap <b>Next module</b> after you finish reading."
     )
     return (
-        f"📘 <b>Module {module_index + 1}/{total_modules}: {title}</b>\n"
-        f"Estimated reading time: <b>{reading_time} min</b>\n"
-        f"{status}\n\n"
+        f"📘 <b>Module {module_index + 1}/{total_modules}: {title}</b>\n\n"
         f"📖 <b>Module content</b>\n\n"
         f"{html.escape(body)}\n\n"
         f"━━━━━━━━━━━━━━\n"
-        + ("Starting the next step now…" if ready else "Please read while this same message counts down live. The next step appears automatically when the timer finishes.")
+        f"{next_step}"
     )
 
 
@@ -558,16 +556,11 @@ def _send_current_module(chat_id, telegram_user_id):
 
         _delete_session_message(session_data, chat_id, "module_message_id")
         module = modules[module_index]
-        try:
-            reading_time = max(1, int(float(module.get("reading_time_minutes") or 1)))
-        except (TypeError, ValueError):
-            reading_time = 1
-        seconds = reading_time * 60
-        ready_at = time.time() + seconds
-        session_data["module_ready_at"] = ready_at
-        session_data["module_timer_token"] = secrets.token_urlsafe(8)
-        timer_token = session_data["module_timer_token"]
-        response = send_message(chat_id, _module_message_text(module, module_index, len(modules), seconds), _module_keyboard(module_index))
+        response = send_message(
+            chat_id,
+            _module_message_text(module, module_index, len(modules)),
+            _module_keyboard(module_index, len(modules)),
+        )
         session_data["module_message_id"] = _telegram_message_id(response)
 
 
@@ -610,46 +603,6 @@ def _send_current_question(chat_id, telegram_user_id):
         timer_token = session_data["question_timer_token"]
         response = send_message(chat_id, _question_message_text(question, current_index, len(questions), seconds), _question_keyboard(current_index))
         session_data["question_message_id"] = _telegram_message_id(response)
-
-
-def _tick_module_timer(chat_id, session_key, session_data):
-    module_index = session_data.get("current_module_index", 0)
-    timer_token = session_data.get("module_timer_token")
-    modules = session_data.get("modules") or []
-    module = modules[module_index] if module_index < len(modules) else None
-    if not module or not timer_token:
-        return
-
-    remaining = math.ceil(session_data.get("module_ready_at", 0) - time.time())
-    if remaining > 0:
-        _edit_or_replace_session_message(
-            session_data,
-            chat_id,
-            "module_message_id",
-            _module_message_text(module, module_index, len(modules), remaining),
-            _module_keyboard(module_index),
-        )
-        return
-
-    _edit_or_replace_session_message(
-        session_data,
-        chat_id,
-        "module_message_id",
-        _module_message_text(module, module_index, len(modules), 0, ready=True),
-        _module_keyboard(module_index, ready=True),
-    )
-    message_id_to_delete = session_data.get("module_message_id")
-    session_data["module_timer_token"] = None
-    session_data["current_module_index"] = module_index + 1
-    should_start_quiz = session_data["current_module_index"] >= len(modules)
-
-    if message_id_to_delete:
-        delete_message(chat_id, message_id_to_delete)
-        session_data.pop("module_message_id", None)
-    if should_start_quiz:
-        _start_questions_from_session(chat_id, session_key)
-    else:
-        _send_current_module(chat_id, session_key)
 
 
 def _tick_question_timer(chat_id, session_key, session_data):
@@ -700,9 +653,7 @@ def _process_learn_earn_timers_once():
             if not live_session:
                 continue
             phase = live_session.get("phase")
-            if phase == "module":
-                _tick_module_timer(chat_id, session_key, live_session)
-            elif phase == "quiz":
+            if phase == "quiz":
                 _tick_question_timer(chat_id, session_key, live_session)
 
 
@@ -934,13 +885,7 @@ def handle_learn_earn_module_next(chat_id, telegram_user_id, callback_data: str)
         send_message(chat_id, "ℹ️ That module button is old. Please use the latest module message.")
         return
 
-    if time.time() < session_data.get("module_ready_at", 0):
-        remaining = int(session_data.get("module_ready_at", 0) - time.time())
-        send_message(chat_id, f"⏳ Please wait for the live module timer to finish: <b>{_format_countdown(remaining)}</b> remaining.")
-        return
-
     _delete_session_message(session_data, chat_id, "module_message_id")
-    _delete_session_message(session_data, chat_id, "module_timer_message_id")
     session_data["current_module_index"] = module_index + 1
     if session_data["current_module_index"] >= len(session_data.get("modules") or []):
         _start_questions_from_session(chat_id, telegram_user_id)
