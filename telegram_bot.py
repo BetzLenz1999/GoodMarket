@@ -1043,20 +1043,22 @@ def handle_start(chat_id, telegram_user):
 
     if saved_wallet:
         text = (
-            f"👋 Hello, <b>{first_name}</b>!\n\n"
-            f"Your saved GoodMarket wallet is <code>{_mask_wallet(saved_wallet)}</code>.\n\n"
-            "Tap <b>Start Learn & Earn chat</b> to continue here in Telegram without Mini App or WalletConnect."
+            f"👋 Welcome back, <b>{first_name}</b>!\n\n"
+            "Welcome to <b>GoodMarket on Telegram</b> — our backup chat hub from the GoodMarket web app. "
+            "You can use it for <b>Learn &amp; Earn</b>, <b>Community Stories</b>, and more GoodMarket features coming soon like savings, claims, and games.\n\n"
+            f"Your saved wallet is <code>{_mask_wallet(saved_wallet)}</code>.\n\n"
+            "Choose an option below to continue without reopening the Mini App."
         )
         send_message(chat_id, text, _learn_earn_keyboard(telegram_user_id, saved_wallet))
         return
 
     text = (
-        f"👋 Hello, <b>{first_name}</b>!\n\n"
-        "Welcome to <b>GoodMarket Learn &amp; Earn</b> 📚\n\n"
-        "Please send your wallet address here in Telegram.\n"
+        f"👋 Welcome to <b>GoodMarket on Telegram</b>, <b>{first_name}</b>!\n\n"
+        "We launched this bot from the GoodMarket web app as a backup chat hub for "
+        "<b>Learn &amp; Earn</b>, <b>Community Stories</b>, and upcoming features like savings, claims, games, and more.\n\n"
+        "To get started, send your Celo wallet address here in Telegram.\n"
         "Example: <code>0x1234...abcd</code>\n\n"
-        "This wallet will be saved for chat-based Learn &amp; Earn, "
-        "so no Mini App or WalletConnect step is needed."
+        "After your verified wallet is saved, the buttons will let you continue directly in chat."
     )
     send_message(chat_id, text)
 
