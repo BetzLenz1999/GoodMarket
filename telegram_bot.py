@@ -291,7 +291,8 @@ def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
             "text": "🌟 Community Stories",
             "callback_data": "community_stories",
         }])
-        keyboard.append([{"text": "💰 Show saved wallet", "callback_data": "show_wallet"}])
+        keyboard.append([{"text": "💰 Check balance", "callback_data": "check_balance"}])
+        keyboard.append([{"text": "👛 Show saved wallet", "callback_data": "show_wallet"}])
     return {"inline_keyboard": keyboard}
 
 
@@ -1069,6 +1070,7 @@ def handle_help(chat_id, telegram_user=None):
         "/earn — Start Learn &amp; Earn in this chat\n"
         "/stories — Community Stories instructions, status, and submission\n"
         "/wallet — Show your saved wallet\n"
+        "/balance — Check your Celo wallet balances\n"
         "/change_wallet — Replace your saved wallet\n"
         "/market — Open GoodMarket\n"
     )
@@ -1340,6 +1342,63 @@ def handle_wallet(chat_id, telegram_user):
     send_message(chat_id, text, _learn_earn_keyboard(telegram_user_id, saved_wallet))
 
 
+
+def _format_telegram_balance_line(label: str, result: dict) -> str:
+    """Format a single token balance line for Telegram."""
+    if not result or not result.get("success"):
+        return f"• {html.escape(label)}: <code>unavailable</code>"
+
+    formatted = str(result.get("balance_formatted") or f"{float(result.get('balance') or 0):,.6f} {label}")
+    return f"• {html.escape(label)}: <b>{html.escape(formatted)}</b>"
+
+
+def handle_balance(chat_id, telegram_user):
+    """Handle /balance command and balance button for the saved Celo wallet."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "💰 No wallet saved yet. Please send your wallet address first with /start.")
+        return
+
+    try:
+        from blockchain import (
+            get_celo_balance,
+            get_cusd_balance,
+            get_gooddollar_balance,
+            get_usdc_balance,
+            get_usdt_balance,
+        )
+
+        balances = {
+            "G$": get_gooddollar_balance(saved_wallet, include_price=False),
+            "CELO": get_celo_balance(saved_wallet),
+            "cUSD": get_cusd_balance(saved_wallet),
+            "USDT": get_usdt_balance(saved_wallet),
+            "USDC": get_usdc_balance(saved_wallet),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("❌ Telegram balance check failed for %s: %s", _mask_wallet(saved_wallet), exc)
+        send_message(
+            chat_id,
+            "⚠️ <b>Balance check failed.</b>\n\nPlease try again in a few minutes.",
+            _learn_earn_keyboard(telegram_user_id, saved_wallet),
+        )
+        return
+
+    lines = [
+        "💰 <b>Your Celo Wallet Balances</b>",
+        "",
+        f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>",
+        "Network: <b>Celo</b>",
+        "",
+    ]
+    lines.extend(_format_telegram_balance_line(label, result) for label, result in balances.items())
+    lines.extend([
+        "",
+        "Balances are read-only and cached briefly to keep the bot fast.",
+    ])
+    send_message(chat_id, "\n".join(lines), _learn_earn_keyboard(telegram_user_id, saved_wallet))
+
 def handle_change_wallet(chat_id):
     """Prompt user to send a replacement wallet address."""
     send_message(
@@ -1461,6 +1520,8 @@ def webhook():
                 handle_market(chat_id)
             elif text.startswith("/wallet"):
                 handle_wallet(chat_id, telegram_user)
+            elif text.startswith("/balance"):
+                handle_balance(chat_id, telegram_user)
             elif text.startswith("/change_wallet"):
                 handle_change_wallet(chat_id)
             elif handle_community_stories_text(chat_id, telegram_user, text):
@@ -1489,6 +1550,8 @@ def webhook():
                 handle_community_stories_submit_prompt(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data == "show_wallet":
                 handle_wallet(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "check_balance":
+                handle_balance(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data.startswith("le_mod_next:"):
                 handle_learn_earn_module_next(callback_chat_id, callback_user.get("id"), callback_data)
             elif callback_chat_id and callback_data.startswith("le_ans:"):
