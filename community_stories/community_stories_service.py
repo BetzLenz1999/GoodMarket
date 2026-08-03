@@ -160,9 +160,10 @@ class CommunityStoriesService:
             return error_result
 
     def _get_next_month_window(self) -> str:
-        """Get next month's participation window"""
+        """Get next month's participation window using admin dashboard config."""
         now = datetime.utcnow()
-        start_day = COMMUNITY_STORIES_CONFIG['WINDOW_START_DAY'] # Using fallback config as _get_next_month_window is not yet updated to use get_config
+        config = self.get_config()
+        start_day = int(config.get('WINDOW_START_DAY', COMMUNITY_STORIES_CONFIG['WINDOW_START_DAY']))
         start_hour = COMMUNITY_STORIES_CONFIG['WINDOW_START_HOUR']
         start_minute = COMMUNITY_STORIES_CONFIG['WINDOW_START_MINUTE']
 
@@ -241,6 +242,8 @@ class CommunityStoriesService:
             # Validate tweet URL
             config = self.get_config()
             required_mentions = config.get('REQUIRED_MENTIONS', [])
+            if isinstance(required_mentions, str):
+                required_mentions = [item for item in required_mentions.split() if item]
             if required_mentions:
                 if not any(mention in tweet_url for mention in required_mentions):
                     return {
