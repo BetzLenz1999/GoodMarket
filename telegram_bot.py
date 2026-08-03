@@ -31,6 +31,7 @@ TELEGRAM_WEBHOOK_SECRET_TOKEN = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "")
 TELEGRAM_LOGIN_TOKEN_MAX_AGE_SECONDS = int(os.getenv("TELEGRAM_LOGIN_TOKEN_MAX_AGE_SECONDS", "900"))
 _WALLET_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _TELEGRAM_LEARN_EARN_SESSIONS = {}
+_TELEGRAM_COMMUNITY_STORIES_SESSIONS = {}
 _TELEGRAM_LEARN_EARN_LOCK = threading.RLock()
 _TELEGRAM_TIMER_UPDATE_SECONDS = int(os.getenv("TELEGRAM_TIMER_UPDATE_SECONDS", "10"))
 _TELEGRAM_MIN_LEARN_EARN_CONTRACT_BALANCE_GD = float(
@@ -286,8 +287,148 @@ def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
             "text": "📚 Start Learn & Earn chat",
             "callback_data": "learn_earn_chat",
         }])
+        keyboard.append([{
+            "text": "🌟 Community Stories",
+            "callback_data": "community_stories",
+        }])
         keyboard.append([{"text": "💰 Show saved wallet", "callback_data": "show_wallet"}])
     return {"inline_keyboard": keyboard}
+
+
+def _community_stories_keyboard(can_submit: bool = False):
+    """Inline buttons for the Telegram Community Stories flow."""
+    keyboard = [[
+        {"text": "📊 Status", "callback_data": "community_stories_status"},
+        {"text": "🏆 Rewards", "callback_data": "community_stories_rewards"},
+    ]]
+    if can_submit:
+        keyboard.insert(0, [{"text": "📝 Submit X/Twitter URL", "callback_data": "community_stories_submit"}])
+    return {"inline_keyboard": keyboard}
+
+
+def _format_day_suffix(day) -> str:
+    """Return an English ordinal day label for compact Telegram schedules."""
+    try:
+        day = int(day)
+    except (TypeError, ValueError):
+        return html.escape(str(day))
+    if 10 <= day % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{day}{suffix}"
+
+
+def _format_gd_amount(amount) -> str:
+    """Format a GoodDollar amount for Telegram display."""
+    try:
+        value = float(amount or 0)
+    except (TypeError, ValueError):
+        return "0 G$"
+    if value.is_integer():
+        return f"{int(value):,} G$"
+    return f"{value:,.2f} G$"
+
+
+def _community_stories_config_message(config: dict, admin_message: str = "") -> str:
+    """Render Community Stories settings sourced from the admin dashboard."""
+    required_mentions = config.get("REQUIRED_MENTIONS") or ""
+    if isinstance(required_mentions, (list, tuple)):
+        required_mentions = " ".join(str(item) for item in required_mentions)
+    required_mentions = str(required_mentions).strip() or "Not configured"
+    start_day = _format_day_suffix(config.get("WINDOW_START_DAY", 26))
+    end_day = _format_day_suffix(config.get("WINDOW_END_DAY", 30))
+    instructions = _safe_text(admin_message, limit=1500) if admin_message else ""
+    instructions_block = f"\n\n<b>Admin instructions:</b>\n{html.escape(instructions)}" if instructions else ""
+    return (
+        "🌟 <b>Community Stories</b>\n\n"
+        "<b>Admin-dashboard settings are active in Telegram:</b>\n"
+        f"• Text post reward: <b>{_format_gd_amount(config.get('LOW_REWARD'))}</b>\n"
+        f"• Video post reward: <b>{_format_gd_amount(config.get('HIGH_REWARD'))}</b>\n"
+        f"• Participation window: <b>every {start_day} to {end_day} of the month</b>\n"
+        f"• Required mentions/hashtags: <code>{html.escape(required_mentions)}</code>"
+        f"{instructions_block}"
+    )
+
+
+def _get_community_stories_admin_message() -> str:
+    """Fetch the Community Stories message configured in the admin dashboard."""
+    try:
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return ""
+        result = supabase.table("maintenance_settings")\
+            .select("custom_message")\
+            .eq("feature_name", "community_stories_message")\
+            .limit(1)\
+            .execute()
+        if result.data:
+            return str(result.data[0].get("custom_message") or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ Could not fetch Telegram Community Stories admin message: %s", exc)
+    return ""
+
+
+def _get_community_stories_status(wallet: str) -> dict:
+    """Load Community Stories config/status/history for a Telegram wallet."""
+    from community_stories.community_stories_service import community_stories_service
+
+    config = community_stories_service.get_config()
+    window = community_stories_service.is_participation_window_open()
+    cooldown = community_stories_service.check_user_cooldown(wallet)
+    pending = community_stories_service.has_pending_submission(wallet)
+    history = community_stories_service.get_user_submissions(wallet)
+    return {
+        "config": config,
+        "window": window,
+        "cooldown": cooldown,
+        "pending": pending,
+        "history": history,
+        "message": _get_community_stories_admin_message(),
+    }
+
+
+def _community_stories_status_message(wallet: str) -> tuple[str, bool]:
+    """Render Telegram status text and whether the wallet can submit now."""
+    status = _get_community_stories_status(wallet)
+    config = status["config"]
+    window = status["window"] or {}
+    cooldown = status["cooldown"] or {}
+    pending = status["pending"] or {}
+    history = status["history"] or {}
+    stats = history.get("stats") or {}
+    submissions = history.get("submissions") or []
+
+    is_open = bool(window.get("is_open"))
+    has_pending = bool(pending.get("has_pending"))
+    can_participate = bool(cooldown.get("can_participate"))
+    can_submit = is_open and can_participate and not has_pending
+    next_window = window.get("next_window") or cooldown.get("next_participation")
+    latest_status = submissions[0].get("status") if submissions else "none"
+    pending_count = sum(1 for item in submissions if item.get("status") == "pending")
+    rewarded_count = int(stats.get("total_submissions") or 0)
+    total_earned = stats.get("total_earned") or 0
+
+    lines = [
+        _community_stories_config_message(config, status.get("message") or ""),
+        "",
+        "<b>Your status:</b>",
+        f"• Saved wallet: <code>{_mask_wallet(wallet)}</code>",
+        f"• Window now: <b>{'OPEN' if is_open else 'CLOSED'}</b>",
+        f"• Can submit: <b>{'YES' if can_submit else 'NO'}</b>",
+        f"• Pending review: <b>{pending_count}</b>",
+        f"• Latest submission status: <code>{html.escape(str(latest_status))}</code>",
+        f"• Rewards received: <b>{rewarded_count}</b>",
+        f"• Total rewards received: <b>{_format_gd_amount(total_earned)}</b>",
+    ]
+    if has_pending:
+        lines.append("• Note: You already have a pending submission; wait for admin review.")
+    if not can_participate:
+        reason = cooldown.get("reason") or cooldown.get("error") or "cooldown active"
+        lines.append(f"• Cooldown: <code>{html.escape(str(reason))}</code>")
+    if next_window:
+        lines.append(f"• Next participation: <code>{html.escape(str(next_window))} UTC</code>")
+    return "\n".join(lines), can_submit
 
 
 def _clear_wallet_learn_earn_sessions(wallet: str, *, except_user_id=None):
@@ -926,6 +1067,7 @@ def handle_help(chat_id, telegram_user=None):
         "🤖 <b>GoodMarket Bot Commands</b>\n\n"
         "/start — Save your wallet or open Learn &amp; Earn\n"
         "/earn — Start Learn &amp; Earn in this chat\n"
+        "/stories — Community Stories instructions, status, and submission\n"
         "/wallet — Show your saved wallet\n"
         "/change_wallet — Replace your saved wallet\n"
         "/market — Open GoodMarket\n"
@@ -1056,6 +1198,132 @@ def handle_market(chat_id):
     send_message(chat_id, text, reply_markup)
 
 
+def handle_community_stories(chat_id, telegram_user):
+    """Handle /stories and Community Stories callbacks using admin dashboard config."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(
+            chat_id,
+            "🌟 <b>Community Stories</b>\n\n"
+            "Please send your wallet address first with /start so Telegram can check your admin-configured eligibility.",
+        )
+        return
+
+    try:
+        text, can_submit = _community_stories_status_message(saved_wallet)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("❌ Telegram Community Stories status failed: %s", exc)
+        send_message(chat_id, "⚠️ Community Stories settings/status could not be loaded. Please try again later.")
+        return
+    send_message(chat_id, text, _community_stories_keyboard(can_submit))
+
+
+def handle_community_stories_rewards(chat_id, telegram_user):
+    """Show Community Stories reward totals for a Telegram wallet."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "🌟 Please save your wallet with /start first.")
+        return
+
+    try:
+        status = _get_community_stories_status(saved_wallet)
+        stats = ((status.get("history") or {}).get("stats") or {})
+        submissions = (status.get("history") or {}).get("submissions") or []
+        pending_count = sum(1 for item in submissions if item.get("status") == "pending")
+        latest_status = submissions[0].get("status") if submissions else "none"
+        text = (
+            "🏆 <b>Your Community Stories Rewards</b>\n\n"
+            f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+            f"Rewards received: <b>{int(stats.get('total_submissions') or 0)}</b>\n"
+            f"Total rewards received: <b>{_format_gd_amount(stats.get('total_earned') or 0)}</b>\n"
+            f"Last reward amount: <b>{_format_gd_amount(stats.get('last_reward_amount') or 0)}</b>\n"
+            f"Last reward date: <code>{html.escape(str(stats.get('last_reward_date') or 'none'))}</code>\n"
+            f"Pending review: <b>{pending_count}</b>\n"
+            f"Latest submission status: <code>{html.escape(str(latest_status))}</code>"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("❌ Telegram Community Stories rewards failed: %s", exc)
+        text = "⚠️ Community Stories reward history could not be loaded. Please try again later."
+    send_message(chat_id, text, _community_stories_keyboard(False))
+
+
+def handle_community_stories_submit_prompt(chat_id, telegram_user):
+    """Prompt a Telegram user to send a Community Stories X/Twitter URL."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "🌟 Please save your wallet with /start first.")
+        return
+
+    try:
+        text, can_submit = _community_stories_status_message(saved_wallet)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("❌ Telegram Community Stories submit status failed: %s", exc)
+        send_message(chat_id, "⚠️ Community Stories status could not be loaded. Please try again later.")
+        return
+
+    if not can_submit:
+        send_message(chat_id, text, _community_stories_keyboard(False))
+        return
+
+    _TELEGRAM_COMMUNITY_STORIES_SESSIONS[str(telegram_user_id)] = {
+        "chat_id": chat_id,
+        "wallet": saved_wallet,
+        "awaiting": "tweet_url",
+        "created_at": time.time(),
+    }
+    send_message(
+        chat_id,
+        "📝 <b>Submit Community Story</b>\n\n"
+        "Send your public X/Twitter post URL now.\n"
+        "The bot will validate it using the current Community Stories settings from the admin dashboard.",
+    )
+
+
+def handle_community_stories_text(chat_id, telegram_user, text) -> bool:
+    """Submit pending Community Stories text input. Returns True if handled."""
+    telegram_user_id = str(telegram_user.get("id"))
+    session_data = _TELEGRAM_COMMUNITY_STORIES_SESSIONS.get(telegram_user_id)
+    if not session_data or session_data.get("awaiting") != "tweet_url":
+        return False
+
+    from community_stories.community_stories_service import community_stories_service
+
+    wallet = _normalize_wallet(session_data.get("wallet") or "")
+    if not wallet:
+        _TELEGRAM_COMMUNITY_STORIES_SESSIONS.pop(telegram_user_id, None)
+        send_message(chat_id, "⚠️ Your Community Stories session expired. Please use /stories again.")
+        return True
+
+    tweet_url = (text or "").strip()
+    result = community_stories_service.submit_tweet(wallet, tweet_url)
+    if result.get("success"):
+        _TELEGRAM_COMMUNITY_STORIES_SESSIONS.pop(telegram_user_id, None)
+        send_message(
+            chat_id,
+            "✅ <b>Community Story submitted!</b>\n\n"
+            f"Submission ID: <code>{html.escape(str(result.get('submission_id')))}</code>\n"
+            "Status: <b>pending admin review</b>\n\n"
+            "Your reward and cooldown will follow the Community Stories settings configured in the admin dashboard.",
+            _community_stories_keyboard(False),
+        )
+        return True
+
+    error = result.get("error") or "Submission failed."
+    next_time = result.get("next_window") or result.get("next_participation")
+    extra = f"\nNext participation: <code>{html.escape(str(next_time))} UTC</code>" if next_time else ""
+    send_message(
+        chat_id,
+        "⚠️ <b>Community Story was not submitted</b>\n\n"
+        f"{html.escape(str(error))}{extra}\n\n"
+        "Use /stories to review the latest admin-dashboard settings.",
+        _community_stories_keyboard(False),
+    )
+    return True
+
+
 def handle_wallet(chat_id, telegram_user):
     """Handle /wallet command — show or request saved wallet."""
     telegram_user_id = telegram_user.get("id")
@@ -1111,7 +1379,7 @@ def handle_wallet_text(chat_id, telegram_user, text):
         "✅ <b>Face verification confirmed — pasok ka na!</b>\n\n"
         f"Wallet: <code>{_mask_wallet(wallet)}</code>\n\n"
         "Your verified wallet is saved. You can now start Learn &amp; Earn directly in this Telegram chat without opening a Mini App or connecting a wallet. "
-        "Your rewards and quiz history will use this wallet in GoodMarket Overview."
+        "Your rewards, quiz history, and Community Stories submissions will use this wallet in GoodMarket Overview."
     )
     send_message(chat_id, text_msg, _learn_earn_keyboard(telegram_user.get("id"), wallet))
 
@@ -1187,12 +1455,16 @@ def webhook():
                 handle_help(chat_id, telegram_user)
             elif text.startswith("/earn"):
                 handle_earn(chat_id, telegram_user)
+            elif text.startswith("/stories"):
+                handle_community_stories(chat_id, telegram_user)
             elif text.startswith("/market"):
                 handle_market(chat_id)
             elif text.startswith("/wallet"):
                 handle_wallet(chat_id, telegram_user)
             elif text.startswith("/change_wallet"):
                 handle_change_wallet(chat_id)
+            elif handle_community_stories_text(chat_id, telegram_user, text):
+                pass
             else:
                 handle_wallet_text(chat_id, telegram_user, text)
 
@@ -1207,6 +1479,14 @@ def webhook():
             )
             if callback_chat_id and callback_data == "learn_earn_chat":
                 handle_earn(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "community_stories":
+                handle_community_stories(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "community_stories_status":
+                handle_community_stories(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "community_stories_rewards":
+                handle_community_stories_rewards(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "community_stories_submit":
+                handle_community_stories_submit_prompt(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data == "show_wallet":
                 handle_wallet(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data.startswith("le_mod_next:"):
