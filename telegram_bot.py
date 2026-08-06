@@ -20,6 +20,7 @@ from flask import Blueprint, current_app, redirect, request, jsonify, session, u
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from config import PRODUCTION_DOMAIN
 from supabase_client import get_supabase_admin_client, get_supabase_client
+from news_feed import news_feed_service
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +292,7 @@ def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
             "text": "🌟 Community Stories",
             "callback_data": "community_stories",
         }])
+        keyboard.append([{"text": "📰 News", "callback_data": "news_latest"}])
         keyboard.append([{"text": "💰 Check balance", "callback_data": "check_balance"}])
         keyboard.append([{"text": "👛 Show saved wallet", "callback_data": "show_wallet"}])
     return {"inline_keyboard": keyboard}
@@ -1071,6 +1073,7 @@ def handle_help(chat_id, telegram_user=None):
         "/start — Save your wallet or open Learn &amp; Earn\n"
         "/earn — Start Learn &amp; Earn in this chat\n"
         "/stories — Community Stories instructions, status, and submission\n"
+        "/news — Latest GoodMarket news\n"
         "/wallet — Show your saved wallet\n"
         "/balance — Check your Celo wallet balances\n"
         "/change_wallet — Replace your saved wallet\n"
@@ -1189,6 +1192,133 @@ def handle_earn(chat_id, telegram_user):
         _send_current_module(chat_id, telegram_user_id)
     else:
         _start_questions_from_session(chat_id, telegram_user_id)
+
+
+def _article_web_url(article: dict) -> str:
+    """Return the public web URL for a news article."""
+    share_url = str(article.get("share_url") or "").strip()
+    if share_url.startswith("http://") or share_url.startswith("https://"):
+        return share_url
+    if share_url.startswith("/"):
+        return f"{APP_URL}{share_url}" if APP_URL else share_url
+    article_id = article.get("id")
+    path = f"/news/article/{article_id}" if article_id else "/news"
+    return f"{APP_URL}{path}" if APP_URL else path
+
+
+def _truncate_for_telegram(value: str, limit: int = 180) -> str:
+    """Trim text to a Telegram-friendly preview without cutting mid-word when possible."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    trimmed = text[:limit].rstrip()
+    last_space = trimmed.rfind(" ")
+    if last_space > limit // 2:
+        trimmed = trimmed[:last_space]
+    return f"{trimmed}..."
+
+
+def _format_news_item_for_telegram(article: dict, index: int) -> str:
+    """Format one news article as a compact Telegram HTML preview."""
+    title = html.escape(str(article.get("title") or "Untitled news"))
+    category = html.escape(str(article.get("category_display") or "📰 News"))
+    time_ago = html.escape(str(article.get("time_ago") or "recently"))
+    excerpt = html.escape(_truncate_for_telegram(article.get("excerpt") or article.get("content") or "", 180))
+
+    lines = [
+        f"<b>{index}. {title}</b>",
+        f"{category} · {time_ago}",
+    ]
+    if excerpt:
+        lines.append(excerpt)
+    return "\n".join(lines)
+
+
+def _news_keyboard(articles: list[dict], mode: str = "latest") -> dict:
+    """Build inline buttons for Telegram news browsing."""
+    article_buttons = []
+    for idx, article in enumerate(articles[:5], start=1):
+        article_buttons.append({"text": f"{idx}️⃣ Read", "url": _article_web_url(article)})
+
+    keyboard = []
+    for i in range(0, len(article_buttons), 2):
+        keyboard.append(article_buttons[i:i + 2])
+
+    nav_row = []
+    if mode != "featured":
+        nav_row.append({"text": "⭐ Featured", "callback_data": "news_featured"})
+    if mode != "latest":
+        nav_row.append({"text": "📰 Latest", "callback_data": "news_latest"})
+    nav_row.append({"text": "📂 Categories", "callback_data": "news_categories"})
+    keyboard.append(nav_row)
+    keyboard.append([{"text": "🔄 Refresh", "callback_data": f"news_{mode}"}])
+    return {"inline_keyboard": keyboard}
+
+
+def _news_categories_keyboard() -> dict:
+    """Build category picker from the shared news feed service categories."""
+    keyboard = []
+    for key, label in news_feed_service.categories.items():
+        keyboard.append([{"text": str(label), "callback_data": f"news_cat:{key}"}])
+    keyboard.append([{"text": "📰 Latest", "callback_data": "news_latest"}])
+    return {"inline_keyboard": keyboard}
+
+
+def handle_news(chat_id, text: str = "/news"):
+    """Handle /news commands and send a compact Telegram news feed."""
+    command = (text or "/news").strip().lower()
+    mode = "featured" if "featured" in command else "latest"
+    if "categor" in command:
+        send_message(chat_id, "📂 <b>GoodMarket News Categories</b>\n\nChoose a category to browse.", _news_categories_keyboard())
+        return
+    _send_news_feed(chat_id, mode=mode)
+
+
+def handle_news_callback(chat_id, callback_data: str):
+    """Handle Telegram inline callbacks for news browsing."""
+    if callback_data == "news_categories":
+        send_message(chat_id, "📂 <b>GoodMarket News Categories</b>\n\nChoose a category to browse.", _news_categories_keyboard())
+        return
+    if callback_data == "news_featured":
+        _send_news_feed(chat_id, mode="featured")
+        return
+    if callback_data == "news_latest":
+        _send_news_feed(chat_id, mode="latest")
+        return
+    if callback_data.startswith("news_cat:"):
+        category = callback_data.split(":", 1)[1]
+        _send_news_feed(chat_id, mode="category", category=category)
+        return
+
+
+def _send_news_feed(chat_id, mode: str = "latest", category: str | None = None):
+    """Fetch shared news feed data and send a Telegram-friendly digest."""
+    try:
+        featured_only = mode == "featured"
+        articles = news_feed_service.get_news_feed(limit=5, category=category, featured_only=featured_only)
+    except Exception as exc:
+        logger.error("Telegram news feed failed: %s", exc)
+        fallback_url = f"{APP_URL}/news" if APP_URL else "/news"
+        send_message(
+            chat_id,
+            "⚠️ <b>News feed is temporarily unavailable.</b>\n\n"
+            f"You can still open the web news feed here: {html.escape(fallback_url)}",
+        )
+        return
+
+    if category:
+        heading = f"📂 <b>{html.escape(str(news_feed_service.categories.get(category, category)))}</b>"
+    elif mode == "featured":
+        heading = "⭐ <b>Featured GoodMarket News</b>"
+    else:
+        heading = "📰 <b>Latest GoodMarket News</b>"
+
+    if not articles:
+        send_message(chat_id, f"{heading}\n\nNo published articles found yet.", _news_keyboard([], mode="latest"))
+        return
+
+    body = "\n\n".join(_format_news_item_for_telegram(article, index) for index, article in enumerate(articles, start=1))
+    send_message(chat_id, f"{heading}\n\n{body}", _news_keyboard(articles, mode=mode if mode in {"latest", "featured"} else "latest"))
 
 
 def handle_market(chat_id):
@@ -1520,6 +1650,8 @@ def webhook():
                 handle_community_stories(chat_id, telegram_user)
             elif text.startswith("/market"):
                 handle_market(chat_id)
+            elif text.startswith("/news"):
+                handle_news(chat_id, text)
             elif text.startswith("/wallet"):
                 handle_wallet(chat_id, telegram_user)
             elif text.startswith("/balance"):
@@ -1550,6 +1682,8 @@ def webhook():
                 handle_community_stories_rewards(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data == "community_stories_submit":
                 handle_community_stories_submit_prompt(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data.startswith("news_"):
+                handle_news_callback(callback_chat_id, callback_data)
             elif callback_chat_id and callback_data == "show_wallet":
                 handle_wallet(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data == "check_balance":
