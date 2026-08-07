@@ -6340,10 +6340,10 @@ async function loadMinigamesMaintenance() {
                                 ${submittedDate}
                             </td>
                             <td style="padding:0.75rem;">
-                                <button class="btn btn-primary" onclick="approveTrustpilotSubmission(${sub.id})" style="margin-right:0.5rem; padding:0.4rem 0.8rem; font-size:0.85rem;">
+                                <button class="btn btn-primary" onclick="approveTrustpilotSubmission('${sub.id}')" style="margin-right:0.5rem; padding:0.4rem 0.8rem; font-size:0.85rem;">
                                     ✅ Approve
                                 </button>
-                                <button class="btn btn-danger" onclick="rejectTrustpilotSubmission(${sub.id})" style="padding:0.4rem 0.8rem; font-size:0.85rem;">
+                                <button class="btn btn-danger" onclick="rejectTrustpilotSubmission('${sub.id}')" style="padding:0.4rem 0.8rem; font-size:0.85rem;">
                                     ❌ Decline
                                 </button>
                             </td>
@@ -6375,6 +6375,8 @@ async function loadMinigamesMaintenance() {
                     const row = document.getElementById(`trustpilot-row-${submissionId}`);
                     if (row) row.remove();
                     loadTrustpilotStats();
+                    // Reload pending list if no more pending submissions
+                    setTimeout(() => loadTrustpilotPendingSubmissions(), 300);
                 } else {
                     alert(`❌ Error: ${data.error}`);
                 }
@@ -6400,6 +6402,8 @@ async function loadMinigamesMaintenance() {
                     const row = document.getElementById(`trustpilot-row-${submissionId}`);
                     if (row) row.remove();
                     loadTrustpilotStats();
+                    // Reload pending list if no more pending submissions
+                    setTimeout(() => loadTrustpilotPendingSubmissions(), 300);
                 } else {
                     alert(`❌ Error: ${data.error}`);
                 }
