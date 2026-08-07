@@ -1501,31 +1501,50 @@ def handle_trustpilot_task(chat_id, telegram_user):
             submissions = stats.get("submissions", [])
             
             if has_completed:
-                # Task already completed - show simple message
+                # Task already completed - show clear message
                 text = (
                     "✅ <b>Task Completed!</b>\n\n"
                     "You have already completed this task.\n"
                     "Your review has been approved and reward disbursed.\n\n"
                     f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n\n"
+                    "💡 Tap 📊 Status or 🏆 Rewards for more info."
                 )
                 keyboard = _trustpilot_keyboard("completed")
             elif submissions:
                 latest = submissions[0]
                 status = latest.get("status", "unknown")
+                review_url = latest.get("review_url", "N/A")
+                submitted_at = latest.get("created_at", "")
+                decline_reason = latest.get("decline_reason", "")
+                
+                # Format submission date
+                if submitted_at:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(submitted_at.replace("Z", "+00:00"))
+                        submitted_at = dt.strftime("%Y-%m-%d %H:%M UTC")
+                    except:
+                        pass
+                
                 if status == "pending":
                     text = (
                         "⏳ <b>Submission Under Review</b>\n\n"
                         "Your Trustpilot review is pending admin approval.\n"
                         "You will receive your reward once approved.\n\n"
+                        f"📎 Your URL: <code>{review_url}</code>\n"
+                        f"📅 Submitted: {submitted_at}\n\n"
                         f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n\n"
+                        "⚠️ Please wait for admin approval (usually 24-48 hours).n"
+                        "Do NOT submit another review while this is pending."
                     )
+                    keyboard = _trustpilot_keyboard("pending")
                 elif status == "declined":
-                    # Show instructions again for declined users
                     text = (
                         "❌ <b>Submission Declined</b>\n\n"
                         "Your previous submission was declined.\n"
+                        f"📝 Reason: {decline_reason or 'No reason provided'}\n\n"
                         "You may submit a new review URL.\n\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         "📋 <b>Instructions</b>\n"
@@ -1536,7 +1555,7 @@ def handle_trustpilot_task(chat_id, telegram_user):
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         "⚠️ <b>IMPORTANT NOTICE</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "• Your review MUST be based on your REAL personal experience with GoodDollar\n"
+                        "• Your review MUST be based on your REAL personal experience\n"
                         "• Fake or dishonest reviews will be rejected\n"
                         "• Reviews must follow Trustpilot's community guidelines\n"
                         "• You can only complete this task ONCE\n"
@@ -1545,10 +1564,12 @@ def handle_trustpilot_task(chat_id, telegram_user):
                         f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
                         f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
                     )
-                    keyboard = _trustpilot_keyboard()
+                    keyboard = _trustpilot_keyboard("declined")
                 else:
                     text = (
                         f"ℹ️ <b>Status: {status.upper()}</b>\n\n"
+                        f"📎 Your URL: <code>{review_url}</code>\n"
+                        f"📅 Submitted: {submitted_at}\n\n"
                         f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
                         f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
                     )
@@ -1557,32 +1578,32 @@ def handle_trustpilot_task(chat_id, telegram_user):
                 # First time user - show full instructions
                 text = (
                     "⭐ <b>Trustpilot Review Task</b>\n\n"
+                    "Earn <b>1,000 G$</b> by leaving a genuine review on Trustpilot!\n\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "📋 <b>Instructions</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
                     "1️⃣ Go to <a href='https://www.trustpilot.com/review/gooddollar.org'>Trustpilot GoodDollar page</a> and write a genuine review based on your personal experience\n\n"
                     "2️⃣ Copy your review URL from the browser address bar\n\n"
-                    "3️⃣ Paste it here to submit\n\n"
+                    "3️⃣ Tap ⭐ Submit Review URL below to submit\n\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "⚠️ <b>IMPORTANT NOTICE</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    "• Your review MUST be based on your REAL personal experience with GoodDollar\n"
+                    "• Your review MUST be based on your REAL personal experience\n"
                     "• Fake or dishonest reviews will be rejected\n"
                     "• Reviews must follow Trustpilot's community guidelines\n"
-                    "• You can only complete this task ONCE\n"
-                    "• After approval, you cannot submit another review\n\n"
+                    "• You can only complete this task ONCE\n\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    f"Reward: <b>1,000 G$</b>"
                 )
                 keyboard = _trustpilot_keyboard()
         else:
             text = "⚠️ Could not load Trustpilot task status. Please try again later."
-            keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
+            keyboard = _trustpilot_keyboard()
     except Exception as exc:
         logger.error("❌ Telegram Trustpilot task failed: %s", exc)
         text = "⚠️ Trustpilot task could not be loaded. Please try again later."
-        keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
+        keyboard = _trustpilot_keyboard()
     
     send_message(chat_id, text, keyboard)
 
@@ -1767,19 +1788,42 @@ def handle_trustpilot_rewards(chat_id, telegram_user):
             summary = history.get("summary", {})
             total_earned = summary.get("total_earned", 0)
             transactions = history.get("transactions", [])
+            total_count = summary.get("total_count", 0)
             
             text = (
                 "🏆 <b>Your Trustpilot Review Rewards</b>\n\n"
                 f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
                 f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n"
-                f"Submissions: <b>{summary.get('transaction_count', 0)}</b>\n"
+                f"Total submissions: <b>{total_count}</b>\n"
             )
             
             if transactions:
-                text += "\n<b>Recent Activity:</b>\n"
+                text += "\n<b>📋 Submission History:</b>\n"
+                text += "━━━━━━━━━━━━━━━━━━━━\n"
                 for tx in transactions[:5]:
-                    status_emoji = "✅" if tx.get("status") == "approved" else ("⏳" if tx.get("status") == "pending" else "❌")
-                    text += f"{status_emoji} {tx.get('status', 'unknown').upper()} - {_format_gd_amount(tx.get('reward_amount', 0))}\n"
+                    status = tx.get("status", "unknown")
+                    status_emoji = "✅" if status == "approved" else ("⏳" if status == "pending" else "❌")
+                    
+                    # Format date
+                    created_at = tx.get("created_at", "")
+                    if created_at:
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                            created_at = dt.strftime("%Y-%m-%d")
+                        except:
+                            pass
+                    
+                    text += f"\n{status_emoji} <b>{status.upper()}</b>\n"
+                    text += f"   💰 {_format_gd_amount(tx.get('reward_amount', 0))}\n"
+                    text += f"   📅 {created_at}\n"
+                    
+                    if tx.get("tx_hash"):
+                        explorer_url = f"https://celoscan.io/tx/{tx.get('tx_hash')}"
+                        text += f"   🔗 <a href='{explorer_url}'>View TX</a>\n"
+            else:
+                text += "\nNo submission history yet.\n"
+                text += "Tap ⭐ Submit Review URL to earn 1,000 G$!"
         else:
             text = "⚠️ Could not load reward history. Please try again later."
     except Exception as exc:
