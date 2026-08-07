@@ -1470,6 +1470,8 @@ def _trustpilot_keyboard(status: str = None):
         {"text": "📊 Status", "callback_data": "trustpilot_status"},
         {"text": "🏆 Rewards", "callback_data": "trustpilot_rewards"},
     ]]
+    # Show "Submit Review URL" button only if not completed
+    # (allow for pending, declined, and first-time users)
     if status != "completed":
         keyboard.insert(0, [{"text": "⭐ Submit Review URL", "callback_data": "trustpilot_submit"}])
     return {"inline_keyboard": keyboard}
@@ -1604,15 +1606,66 @@ def handle_trustpilot_submit_prompt(chat_id, telegram_user):
             loop.close()
 
         if stats.get("has_completed"):
-            send_message(chat_id, "✅ You have already completed this task!", _trustpilot_keyboard("completed"))
+            # User already completed the task - show clear message
+            text = (
+                "✅ <b>Task Already Completed!</b>\n\n"
+                "You have already submitted and received your reward for this task.\n"
+                "This task can only be completed once per wallet.\n\n"
+                "💡 <b>What you can do:</b>\n"
+                "• Tap 📊 Status to view your submission details\n"
+                "• Tap 🏆 Rewards to view your reward history\n\n"
+                "Thank you for your review! 🙏"
+            )
+            send_message(chat_id, text, _trustpilot_keyboard("completed"))
             return
         
         if stats.get("submissions"):
             latest = stats["submissions"][0]
-            if latest.get("status") == "pending":
-                send_message(chat_id, "⏳ You have a pending submission awaiting admin review.", _trustpilot_keyboard("pending"))
+            status = latest.get("status", "unknown")
+            
+            if status == "pending":
+                # User has pending submission - show clear message with details
+                review_url = latest.get("review_url", "N/A")
+                submitted_at = latest.get("created_at", "")
+                if submitted_at:
+                    from datetime import datetime
+                    try:
+                        dt = datetime.fromisoformat(submitted_at.replace("Z", "+00:00"))
+                        submitted_at = dt.strftime("%Y-%m-%d %H:%M UTC")
+                    except:
+                        pass
+                
+                text = (
+                    "⏳ <b>Submission Under Review</b>\n\n"
+                    "You have a pending Trustpilot review submission awaiting admin approval.\n\n"
+                    f"📎 Your URL: <code>{review_url}</code>\n"
+                    f"📅 Submitted: {submitted_at}\n\n"
+                    "Your reward will be disbursed automatically once approved.\n"
+                    "Please be patient - approval usually takes 24-48 hours.\n\n"
+                    "💡 <b>What you can do:</b>\n"
+                    "• Tap 📊 Status to view your submission details\n"
+                    "• Tap 🏆 Rewards to view your reward history\n\n"
+                    "⚠️ Do NOT submit another review while this is pending."
+                )
+                send_message(chat_id, text, _trustpilot_keyboard("pending"))
+                return
+            
+            elif status == "declined":
+                # User had submission declined - allow re-submission
+                reason = latest.get("decline_reason", "No reason provided")
+                text = (
+                    "❌ <b>Previous Submission Declined</b>\n\n"
+                    f"📝 Reason: {reason}\n\n"
+                    "You may submit a new review URL. Please make sure:\n"
+                    "• Your review is based on REAL personal experience\n"
+                    "• It follows Trustpilot's community guidelines\n"
+                    "• The URL format is correct (from your Trustpilot profile page)\n\n"
+                    "Tap ⭐ Submit Review URL to try again."
+                )
+                send_message(chat_id, text, _trustpilot_keyboard("declined"))
                 return
 
+        # Start new submission session
         _TELEGRAM_TRUSTPILOT_SESSIONS[str(telegram_user_id)] = {
             "chat_id": chat_id,
             "wallet": saved_wallet,
