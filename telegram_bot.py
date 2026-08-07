@@ -1648,12 +1648,12 @@ def handle_trustpilot_text(chat_id, telegram_user, text) -> bool:
     review_url = (text or "").strip()
     
     # Validate URL format
-    if not review_url or "trustpilot.com/review" not in review_url.lower():
+    if not review_url or "trustpilot.com/users/" not in review_url.lower():
         send_message(
             chat_id,
             "⚠️ <b>Invalid URL format</b>\n\n"
             "Please send a valid Trustpilot review URL.\n"
-            "Example: https://www.trustpilot.com/review/gooddollar.org",
+            "Example: https://www.trustpilot.com/users/6a754d3c7b05027b6ccc3ee1",
             _trustpilot_keyboard(),
         )
         return True
