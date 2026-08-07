@@ -2000,41 +2000,70 @@ def webhook():
 
         if callback:
             callback_user = callback.get("from", {})
-            callback_chat_id = (callback.get("message") or {}).get("chat", {}).get("id")
+            # Get chat_id from message, with fallback to inline_message_id (for inline bot queries)
+            callback_message = callback.get("message") or {}
+            callback_chat_id = callback_message.get("chat", {}).get("id")
+            callback_message_id = callback_message.get("message_id")
             callback_data = callback.get("data", "")
-            requests.post(
-                f"{TELEGRAM_API}/answerCallbackQuery",
-                json={"callback_query_id": callback["id"]},
-                timeout=5,
-            )
-            if callback_chat_id and callback_data == "learn_earn_chat":
-                handle_earn(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "community_stories":
-                handle_community_stories(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "community_stories_status":
-                handle_community_stories(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "community_stories_rewards":
-                handle_community_stories_rewards(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "community_stories_submit":
-                handle_community_stories_submit_prompt(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "trustpilot_task":
-                handle_trustpilot_task(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "trustpilot_submit":
-                handle_trustpilot_submit_prompt(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "trustpilot_status":
-                handle_trustpilot_task(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "trustpilot_rewards":
-                handle_trustpilot_rewards(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data.startswith("news_"):
-                handle_news_callback(callback_chat_id, callback_data)
-            elif callback_chat_id and callback_data == "show_wallet":
-                handle_wallet(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data == "check_balance":
-                handle_balance(callback_chat_id, callback_user)
-            elif callback_chat_id and callback_data.startswith("le_mod_next:"):
-                handle_learn_earn_module_next(callback_chat_id, callback_user.get("id"), callback_data)
-            elif callback_chat_id and callback_data.startswith("le_ans:"):
-                handle_learn_earn_answer(callback_chat_id, callback_user.get("id"), callback_data)
+            callback_id = callback.get("id")
+            
+            # Log callback for debugging
+            logger.info(f"Received callback: data={callback_data}, chat_id={callback_chat_id}, message_id={callback_message_id}, callback_id={callback_id}")
+            
+            # Only process if we have a chat_id (for private/group chats)
+            if callback_chat_id:
+                try:
+                    requests.post(
+                        f"{TELEGRAM_API}/answerCallbackQuery",
+                        json={"callback_query_id": callback_id},
+                        timeout=5,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to answer callback query: {e}")
+                
+                if callback_data == "learn_earn_chat":
+                    handle_earn(callback_chat_id, callback_user)
+                elif callback_data == "community_stories":
+                    handle_community_stories(callback_chat_id, callback_user)
+                elif callback_data == "community_stories_status":
+                    handle_community_stories(callback_chat_id, callback_user)
+                elif callback_data == "community_stories_rewards":
+                    handle_community_stories_rewards(callback_chat_id, callback_user)
+                elif callback_data == "community_stories_submit":
+                    handle_community_stories_submit_prompt(callback_chat_id, callback_user)
+                elif callback_data == "trustpilot_task":
+                    handle_trustpilot_task(callback_chat_id, callback_user)
+                elif callback_data == "trustpilot_submit":
+                    handle_trustpilot_submit_prompt(callback_chat_id, callback_user)
+                elif callback_data == "trustpilot_status":
+                    handle_trustpilot_task(callback_chat_id, callback_user)
+                elif callback_data == "trustpilot_rewards":
+                    handle_trustpilot_rewards(callback_chat_id, callback_user)
+                elif callback_data.startswith("news_"):
+                    handle_news_callback(callback_chat_id, callback_data)
+                elif callback_data == "show_wallet":
+                    handle_wallet(callback_chat_id, callback_user)
+                elif callback_data == "check_balance":
+                    handle_balance(callback_chat_id, callback_user)
+                elif callback_data.startswith("le_mod_next:"):
+                    handle_learn_earn_module_next(callback_chat_id, callback_user.get("id"), callback_data)
+                elif callback_data.startswith("le_ans:"):
+                    handle_learn_earn_answer(callback_chat_id, callback_user.get("id"), callback_data)
+            else:
+                # For inline bots without chat_id - use answerCallbackQuery with error text
+                logger.warning(f"Callback received without chat_id: {callback_data}")
+                try:
+                    requests.post(
+                        f"{TELEGRAM_API}/answerCallbackQuery",
+                        json={
+                            "callback_query_id": callback_id,
+                            "text": "⚠️ This action is not available in inline mode. Please use the bot directly.",
+                            "show_alert": True
+                        },
+                        timeout=5,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to answer inline callback: {e}")
 
     except Exception as e:
         logger.error(f"Telegram webhook error: {e}")
