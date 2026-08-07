@@ -317,7 +317,7 @@
                     <h3>📋 Instructions</h3>
                     <ul>
                         <li>Write a <strong>genuine review</strong> about GoodDollar based on YOUR personal experience</li>
-                        <li>Visit <a href="https://www.trustpilot.com/review/gooddollar.org" target="_blank" style="color: #856404; font-weight: bold;">Trustpilot GoodDollar Page</a></li>
+                        <li>Visit <a href="https://www.trustpilot.com/users/your-user-id" target="_blank" style="color: #856404; font-weight: bold;">Trustpilot</a> and go to your user profile</li>
                         <li>Share your honest thoughts, feedback, or suggestions</li>
                         <li>Submit your review URL below after completing your review</li>
                     </ul>
@@ -353,10 +353,10 @@
                     <div class="form-group">
                         <label for="reviewUrl">Your Trustpilot Review URL</label>
                         <input type="url" id="reviewUrl" name="reviewUrl" 
-                               placeholder="https://www.trustpilot.com/review/gooddollar.org" 
+                               placeholder="https://www.trustpilot.com/users/your-user-id" 
                                required>
                         <p class="hint">Copy the full URL from your published Trustpilot review</p>
-                        <p class="example">Example: https://www.trustpilot.com/review/gooddollar.org</p>
+                        <p class="example">Example: https://www.trustpilot.com/users/6a754d3c7b05027b6ccc3ee1</p>
                     </div>
                     
                     <button type="submit" id="submitBtn" class="btn btn-primary">
@@ -441,7 +441,7 @@
             }
             
             // Validate URL format
-            if (!reviewUrl.includes('trustpilot.com/review')) {
+            if (!reviewUrl.includes('trustpilot.com/users/')) {
                 showMessage('Please enter a valid Trustpilot review URL', 'error');
                 return;
             }
