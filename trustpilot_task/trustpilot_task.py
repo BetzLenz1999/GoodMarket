@@ -10,9 +10,9 @@ from .blockchain import trustpilot_blockchain_service
 
 logger = logging.getLogger(__name__)
 
-# Trustpilot review URL regex pattern
+# Trustpilot review URL regex pattern - matches user profile URLs
 TRUSTPILOT_REVIEW_URL_PATTERN = re.compile(
-    r'^https?://(?:www\.)?trustpilot\.com/review/[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(?:\?.*)?$',
+    r'^https?://(?:www\.)?trustpilot\.com/users/[a-zA-Z0-9]+(?:\?.*)?$',
     re.IGNORECASE
 )
 
