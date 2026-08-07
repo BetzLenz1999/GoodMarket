@@ -10,9 +10,10 @@ from .blockchain import trustpilot_blockchain_service
 
 logger = logging.getLogger(__name__)
 
-# Trustpilot review URL regex pattern - matches user profile URLs
+# Trustpilot review URL regex pattern
+# Matches: https://www.trustpilot.com/reviews/682187e9b3ac2f2c0586dbaf
 TRUSTPILOT_REVIEW_URL_PATTERN = re.compile(
-    r'^https?://(?:www\.)?trustpilot\.com/users/[a-zA-Z0-9]+(?:\?.*)?$',
+    r'^https?://(?:www\.)?trustpilot\.com/reviews/[a-zA-Z0-9]+(?:\?.*)?$',
     re.IGNORECASE
 )
 
@@ -32,7 +33,11 @@ class TrustpilotTaskService:
         """Validate if URL is a valid Trustpilot review URL"""
         if not url:
             return False
-        return bool(TRUSTPILOT_REVIEW_URL_PATTERN.match(url.strip()))
+        url = url.strip()
+        if not TRUSTPILOT_REVIEW_URL_PATTERN.match(url):
+            logger.warning(f"Trustpilot URL validation failed: {url}")
+            return False
+        return True
 
     def mask_wallet(self, wallet: str) -> str:
         """Mask wallet address for logging"""
@@ -148,7 +153,7 @@ class TrustpilotTaskService:
                 logger.warning(f"❌ Invalid Trustpilot URL: {url}")
                 return {
                     'success': False,
-                    'error': 'Invalid Trustpilot review URL. Please use format: https://www.trustpilot.com/review/companyname'
+                    'error': 'Invalid Trustpilot review URL. Please use format: https://www.trustpilot.com/reviews/682187e9b3ac2f2c0586dbaf'
                 }
 
             # Check for duplicate submission (pending or approved)
