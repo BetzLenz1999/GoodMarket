@@ -33,6 +33,7 @@ TELEGRAM_LOGIN_TOKEN_MAX_AGE_SECONDS = int(os.getenv("TELEGRAM_LOGIN_TOKEN_MAX_A
 _WALLET_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _TELEGRAM_LEARN_EARN_SESSIONS = {}
 _TELEGRAM_COMMUNITY_STORIES_SESSIONS = {}
+_TELEGRAM_TRUSTPILOT_SESSIONS = {}
 _TELEGRAM_LEARN_EARN_LOCK = threading.RLock()
 _TELEGRAM_TIMER_UPDATE_SECONDS = int(os.getenv("TELEGRAM_TIMER_UPDATE_SECONDS", "10"))
 _TELEGRAM_MIN_LEARN_EARN_CONTRACT_BALANCE_GD = float(
@@ -291,6 +292,10 @@ def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
         keyboard.append([{
             "text": "🌟 Community Stories",
             "callback_data": "community_stories",
+        }])
+        keyboard.append([{
+            "text": "⭐ Trustpilot Review",
+            "callback_data": "trustpilot_task",
         }])
         keyboard.append([{"text": "📰 News", "callback_data": "news_latest"}])
         keyboard.append([{"text": "💰 Check balance", "callback_data": "check_balance"}])
@@ -1073,6 +1078,7 @@ def handle_help(chat_id, telegram_user=None):
         "/start — Save your wallet or open Learn &amp; Earn\n"
         "/earn — Start Learn &amp; Earn in this chat\n"
         "/stories — Community Stories instructions, status, and submission\n"
+        "/trustpilot — Submit a Trustpilot review to earn G$\n"
         "/news — Latest GoodMarket news\n"
         "/wallet — Show your saved wallet\n"
         "/balance — Check your Celo wallet balances\n"
@@ -1458,6 +1464,224 @@ def handle_community_stories_text(chat_id, telegram_user, text) -> bool:
     return True
 
 
+def _trustpilot_keyboard(status: str = None):
+    """Inline buttons for the Telegram Trustpilot Review flow."""
+    keyboard = [[
+        {"text": "📊 Status", "callback_data": "trustpilot_status"},
+        {"text": "🏆 Rewards", "callback_data": "trustpilot_rewards"},
+    ]]
+    if status != "completed":
+        keyboard.insert(0, [{"text": "⭐ Submit Review URL", "callback_data": "trustpilot_submit"}])
+    return {"inline_keyboard": keyboard}
+
+
+def handle_trustpilot_task(chat_id, telegram_user):
+    """Show Trustpilot Review task status and options."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "⭐ Please save your wallet with /start first.")
+        return
+
+    try:
+        from trustpilot_task.trustpilot_task import trustpilot_task_service
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            stats = loop.run_until_complete(trustpilot_task_service.get_task_stats(saved_wallet))
+        finally:
+            loop.close()
+
+        if stats.get("success"):
+            has_completed = stats.get("has_completed", False)
+            total_earned = stats.get("total_earned", 0)
+            submissions = stats.get("submissions", [])
+            
+            if has_completed:
+                status_text = "✅ <b>Task Completed!</b>\n\nYou have already completed this task.\nYour review has been approved and reward disbursed."
+                keyboard = _trustpilot_keyboard("completed")
+            elif submissions:
+                latest = submissions[0]
+                status = latest.get("status", "unknown")
+                if status == "pending":
+                    status_text = "⏳ <b>Submission Under Review</b>\n\nYour Trustpilot review is pending admin approval.\nYou will receive your reward once approved."
+                elif status == "declined":
+                    status_text = "❌ <b>Submission Declined</b>\n\nYour previous submission was declined.\nYou may submit a new review URL."
+                else:
+                    status_text = f"ℹ️ <b>Status: {status.upper()}</b>"
+                keyboard = _trustpilot_keyboard(status)
+            else:
+                status_text = "📝 <b>Trustpilot Review Task</b>\n\nShare your genuine experience with GoodDollar on Trustpilot.\nSubmit your review URL to earn a surprise reward!"
+                keyboard = _trustpilot_keyboard()
+            
+            text = (
+                f"{status_text}\n\n"
+                f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+            )
+        else:
+            text = "⚠️ Could not load Trustpilot task status. Please try again later."
+            keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
+    except Exception as exc:
+        logger.error("❌ Telegram Trustpilot task failed: %s", exc)
+        text = "⚠️ Trustpilot task could not be loaded. Please try again later."
+        keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
+    
+    send_message(chat_id, text, keyboard)
+
+
+def handle_trustpilot_submit_prompt(chat_id, telegram_user):
+    """Prompt a Telegram user to send a Trustpilot review URL."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "⭐ Please save your wallet with /start first.")
+        return
+
+    try:
+        from trustpilot_task.trustpilot_task import trustpilot_task_service
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            stats = loop.run_until_complete(trustpilot_task_service.get_task_stats(saved_wallet))
+        finally:
+            loop.close()
+
+        if stats.get("has_completed"):
+            send_message(chat_id, "✅ You have already completed this task!", _trustpilot_keyboard("completed"))
+            return
+        
+        if stats.get("submissions"):
+            latest = stats["submissions"][0]
+            if latest.get("status") == "pending":
+                send_message(chat_id, "⏳ You have a pending submission awaiting admin review.", _trustpilot_keyboard("pending"))
+                return
+
+        _TELEGRAM_TRUSTPILOT_SESSIONS[str(telegram_user_id)] = {
+            "chat_id": chat_id,
+            "wallet": saved_wallet,
+            "awaiting": "review_url",
+            "created_at": time.time(),
+        }
+        send_message(
+            chat_id,
+            "⭐ <b>Submit Trustpilot Review</b>\n\n"
+            "IMPORTANT: Your review must be based on your REAL personal experience with GoodDollar.\n\n"
+            "Fake reviews will be rejected.\n\n"
+            "Send your Trustpilot review URL (e.g., https://www.trustpilot.com/review/gooddollar.org)",
+            _trustpilot_keyboard(),
+        )
+    except Exception as exc:
+        logger.error("❌ Telegram Trustpilot submit prompt failed: %s", exc)
+        send_message(chat_id, "⚠️ Could not start Trustpilot submission. Please try again later.")
+
+
+def handle_trustpilot_text(chat_id, telegram_user, text) -> bool:
+    """Submit pending Trustpilot review URL. Returns True if handled."""
+    telegram_user_id = str(telegram_user.get("id"))
+    session_data = _TELEGRAM_TRUSTPILOT_SESSIONS.get(telegram_user_id)
+    if not session_data or session_data.get("awaiting") != "review_url":
+        return False
+
+    wallet = _normalize_wallet(session_data.get("wallet") or "")
+    if not wallet:
+        _TELEGRAM_TRUSTPILOT_SESSIONS.pop(telegram_user_id, None)
+        send_message(chat_id, "⚠️ Your Trustpilot session expired. Please try again with /trustpilot.")
+        return True
+
+    review_url = (text or "").strip()
+    
+    # Validate URL format
+    if not review_url or "trustpilot.com/review" not in review_url.lower():
+        send_message(
+            chat_id,
+            "⚠️ <b>Invalid URL format</b>\n\n"
+            "Please send a valid Trustpilot review URL.\n"
+            "Example: https://www.trustpilot.com/review/gooddollar.org",
+            _trustpilot_keyboard(),
+        )
+        return True
+
+    try:
+        from trustpilot_task.trustpilot_task import trustpilot_task_service
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(trustpilot_task_service.submit_review(wallet, review_url))
+        finally:
+            loop.close()
+
+        _TELEGRAM_TRUSTPILOT_SESSIONS.pop(telegram_user_id, None)
+
+        if result.get("success"):
+            send_message(
+                chat_id,
+                "✅ <b>Review Submitted!</b>\n\n"
+                "Your Trustpilot review URL has been submitted for admin review.\n"
+                "You will receive your reward once approved.\n\n"
+                "⏳ Please wait for admin approval.",
+                _trustpilot_keyboard("pending"),
+            )
+        else:
+            error = result.get("error", "Submission failed.")
+            if result.get("task_completed"):
+                send_message(chat_id, "✅ You have already completed this task!", _trustpilot_keyboard("completed"))
+            else:
+                send_message(
+                    chat_id,
+                    f"⚠️ <b>Submission Failed</b>\n\n{html.escape(str(error))}\n\n"
+                    "Use /trustpilot to try again.",
+                    _trustpilot_keyboard(),
+                )
+    except Exception as exc:
+        logger.error("❌ Telegram Trustpilot text submission failed: %s", exc)
+        _TELEGRAM_TRUSTPILOT_SESSIONS.pop(telegram_user_id, None)
+        send_message(chat_id, "⚠️ Submission failed. Please try again with /trustpilot.")
+
+    return True
+
+
+def handle_trustpilot_rewards(chat_id, telegram_user):
+    """Show Trustpilot task reward history for a Telegram wallet."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "⭐ Please save your wallet with /start first.")
+        return
+
+    try:
+        from trustpilot_task.trustpilot_task import trustpilot_task_service
+        history = trustpilot_task_service.get_transaction_history(saved_wallet, limit=10)
+        
+        if history.get("success"):
+            summary = history.get("summary", {})
+            total_earned = summary.get("total_earned", 0)
+            transactions = history.get("transactions", [])
+            
+            text = (
+                "🏆 <b>Your Trustpilot Review Rewards</b>\n\n"
+                f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n"
+                f"Submissions: <b>{summary.get('transaction_count', 0)}</b>\n"
+            )
+            
+            if transactions:
+                text += "\n<b>Recent Activity:</b>\n"
+                for tx in transactions[:5]:
+                    status_emoji = "✅" if tx.get("status") == "approved" else ("⏳" if tx.get("status") == "pending" else "❌")
+                    text += f"{status_emoji} {tx.get('status', 'unknown').upper()} - {_format_gd_amount(tx.get('reward_amount', 0))}\n"
+        else:
+            text = "⚠️ Could not load reward history. Please try again later."
+    except Exception as exc:
+        logger.error("❌ Telegram Trustpilot rewards failed: %s", exc)
+        text = "⚠️ Reward history could not be loaded. Please try again later."
+    
+    send_message(chat_id, text, _trustpilot_keyboard())
+
+
 def handle_wallet(chat_id, telegram_user):
     """Handle /wallet command — show or request saved wallet."""
     telegram_user_id = telegram_user.get("id")
@@ -1658,6 +1882,10 @@ def webhook():
                 handle_balance(chat_id, telegram_user)
             elif text.startswith("/change_wallet"):
                 handle_change_wallet(chat_id)
+            elif text.startswith("/trustpilot"):
+                handle_trustpilot_task(chat_id, telegram_user)
+            elif handle_trustpilot_text(chat_id, telegram_user, text):
+                pass
             elif handle_community_stories_text(chat_id, telegram_user, text):
                 pass
             else:
@@ -1682,6 +1910,14 @@ def webhook():
                 handle_community_stories_rewards(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data == "community_stories_submit":
                 handle_community_stories_submit_prompt(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "trustpilot_task":
+                handle_trustpilot_task(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "trustpilot_submit":
+                handle_trustpilot_submit_prompt(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "trustpilot_status":
+                handle_trustpilot_task(callback_chat_id, callback_user)
+            elif callback_chat_id and callback_data == "trustpilot_rewards":
+                handle_trustpilot_rewards(callback_chat_id, callback_user)
             elif callback_chat_id and callback_data.startswith("news_"):
                 handle_news_callback(callback_chat_id, callback_data)
             elif callback_chat_id and callback_data == "show_wallet":
