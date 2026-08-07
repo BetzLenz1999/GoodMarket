@@ -320,6 +320,58 @@ class TrustpilotTaskService:
                 'total_count': 0
             }
 
+    def get_admin_stats(self) -> Dict[str, Any]:
+        """Get Trustpilot task statistics for admin dashboard"""
+        try:
+            if not self.supabase:
+                return {
+                    'success': False,
+                    'error': 'Database not available',
+                    'pending_count': 0,
+                    'approved_count': 0,
+                    'total_reward': 0
+                }
+
+            # Get pending count
+            pending_result = safe_supabase_operation(
+                lambda: self.supabase.table('trustpilot_task_log')
+                    .select('id')
+                    .eq('status', 'pending')
+                    .execute(),
+                fallback_result=None,
+                operation_name="get pending trustpilot count"
+            )
+            pending_count = len(pending_result.data) if pending_result and pending_result.data else 0
+
+            # Get approved count and total reward
+            approved_result = safe_supabase_operation(
+                lambda: self.supabase.table('trustpilot_task_log')
+                    .select('reward_amount')
+                    .eq('status', 'approved')
+                    .execute(),
+                fallback_result=None,
+                operation_name="get approved trustpilot count"
+            )
+            approved_count = len(approved_result.data) if approved_result and approved_result.data else 0
+            total_reward = sum(float(r.get('reward_amount', 0)) for r in (approved_result.data or []) if r.get('reward_amount'))
+
+            return {
+                'success': True,
+                'pending_count': pending_count,
+                'approved_count': approved_count,
+                'total_reward': total_reward
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error getting admin stats: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'pending_count': 0,
+                'approved_count': 0,
+                'total_reward': 0
+            }
+
     async def approve_submission(self, submission_id: str, admin_wallet: str) -> Dict[str, Any]:
         """Admin approves a Trustpilot submission - disburses 1000 G$ reward"""
         try:
@@ -590,6 +642,25 @@ def init_trustpilot_task(app):
 
             except Exception as e:
                 logger.error(f"❌ Trustpilot pending submissions error: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+
+        @app.route('/api/trustpilot-task/admin/stats', methods=['GET'])
+        def get_trustpilot_stats():
+            """Get Trustpilot task statistics for admin dashboard"""
+            try:
+                wallet_address = session.get('wallet_address') or session.get('wallet')
+                if not wallet_address or not session.get('verified'):
+                    return jsonify({'error': 'Not authenticated'}), 401
+
+                from supabase_client import is_admin
+                if not is_admin(wallet_address):
+                    return jsonify({'error': 'Admin access required'}), 403
+
+                result = trustpilot_task_service.get_admin_stats()
+                return jsonify(result), 200
+
+            except Exception as e:
+                logger.error(f"❌ Trustpilot stats error: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
 
         @app.route('/api/trustpilot-task/admin/approve', methods=['POST'])
