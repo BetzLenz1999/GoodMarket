@@ -751,6 +751,12 @@
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('trustpilot-task-section')">
+                        <span class="menu-icon">⭐</span>
+                        <span>Trustpilot Review</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a class="menu-link" onclick="showSection('collaboration-review-section')">
                         <span class="menu-icon">🤝</span>
                         <span>Collaboration Review</span>
@@ -1643,6 +1649,42 @@ CORRECT: C
                 <div class="content-box">
                     <h2 style="color: #fbbf24; margin-bottom: 1rem;">⏳ Pending Submissions</h2>
                     <div id="discourse-pending-content">
+                        <div class="loading"><div class="spinner"></div><p>Loading submissions...</p></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Trustpilot Review Section -->
+            <section id="trustpilot-task-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">⭐ Trustpilot Review</h1>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Review and approve Trustpilot review submissions from users</p>
+                </div>
+
+                <!-- Stats Box -->
+                <div class="content-box" style="margin-bottom: 2rem;">
+                    <h2 style="margin-bottom: 1rem;">📊 Overview</h2>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 1rem; text-align: center;">
+                            <div style="font-size: 2rem; font-weight: bold; color: #10b981;" id="trustpilot-pending-count">-</div>
+                            <div style="color: rgba(241, 245, 249, 0.7); font-size: 0.9rem;">Pending Review</div>
+                        </div>
+                        <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 1rem; text-align: center;">
+                            <div style="font-size: 2rem; font-weight: bold; color: #3b82f6;" id="trustpilot-approved-count">-</div>
+                            <div style="color: rgba(241, 245, 249, 0.7); font-size: 0.9rem;">Approved</div>
+                        </div>
+                        <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3); border-radius: 8px; padding: 1rem; text-align: center;">
+                            <div style="font-size: 2rem; font-weight: bold; color: #fbbf24;" id="trustpilot-total-reward">-</div>
+                            <div style="color: rgba(241, 245, 249, 0.7); font-size: 0.9rem;">Total G$ Disbursed</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" onclick="loadTrustpilotStats()" style="margin-top: 1rem;">🔄 Refresh Stats</button>
+                </div>
+
+                <!-- Pending Submissions Box -->
+                <div class="content-box">
+                    <h2 style="color: #fbbf24; margin-bottom: 1rem;">⏳ Pending Submissions</h2>
+                    <div id="trustpilot-pending-content">
                         <div class="loading"><div class="spinner"></div><p>Loading submissions...</p></div>
                     </div>
                 </div>
@@ -6248,6 +6290,134 @@ async function loadMinigamesMaintenance() {
                 alert('❌ Error rejecting submission: ' + error.message);
             }
         }
+
+        // ============================================================
+        // TRUSTPILOT REVIEW ADMIN FUNCTIONS
+        // ============================================================
+        async function loadTrustpilotStats() {
+            try {
+                const response = await fetch('/api/trustpilot-task/admin/stats');
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('trustpilot-pending-count').textContent = data.pending_count || 0;
+                    document.getElementById('trustpilot-approved-count').textContent = data.approved_count || 0;
+                    document.getElementById('trustpilot-total-reward').textContent = (data.total_reward || 0).toLocaleString();
+                }
+            } catch (error) {
+                console.error('Error loading Trustpilot stats:', error);
+            }
+        }
+
+        async function loadTrustpilotPendingSubmissions() {
+            const contentDiv = document.getElementById('trustpilot-pending-content');
+            try {
+                const response = await fetch('/api/trustpilot-task/admin/pending');
+                const data = await response.json();
+                if (data.success && data.submissions && data.submissions.length > 0) {
+                    let html = `<table style="width:100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                                <th style="text-align:left; padding:0.75rem; color:rgba(241,245,249,0.7);">Wallet</th>
+                                <th style="text-align:left; padding:0.75rem; color:rgba(241,245,249,0.7);">Review URL</th>
+                                <th style="text-align:left; padding:0.75rem; color:rgba(241,245,249,0.7);">Submitted</th>
+                                <th style="text-align:left; padding:0.75rem; color:rgba(241,245,249,0.7);">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+                    data.submissions.forEach(sub => {
+                        const walletShort = sub.wallet_address ? `${sub.wallet_address.substring(0, 6)}...${sub.wallet_address.substring(38)}` : 'N/A';
+                        const submittedDate = sub.created_at ? new Date(sub.created_at).toLocaleString() : 'N/A';
+                        html += `<tr id="trustpilot-row-${sub.id}" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding:0.75rem;">
+                                <code style="font-size:0.85rem; color:#60a5fa;">${walletShort}</code>
+                            </td>
+                            <td style="padding:0.75rem;">
+                                <a href="${sub.review_url}" target="_blank" style="color:#10b981; word-break:break-all;">
+                                    ${sub.review_url.substring(0, 40)}${sub.review_url.length > 40 ? '...' : ''}
+                                </a>
+                            </td>
+                            <td style="padding:0.75rem; color:rgba(241,245,249,0.6); font-size:0.85rem;">
+                                ${submittedDate}
+                            </td>
+                            <td style="padding:0.75rem;">
+                                <button class="btn btn-primary" onclick="approveTrustpilotSubmission(${sub.id})" style="margin-right:0.5rem; padding:0.4rem 0.8rem; font-size:0.85rem;">
+                                    ✅ Approve
+                                </button>
+                                <button class="btn btn-danger" onclick="rejectTrustpilotSubmission(${sub.id})" style="padding:0.4rem 0.8rem; font-size:0.85rem;">
+                                    ❌ Decline
+                                </button>
+                            </td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table>';
+                    contentDiv.innerHTML = html;
+                } else {
+                    contentDiv.innerHTML = '<p style="color:#10b981; font-size:1.1rem;">✅ No pending submissions</p>';
+                }
+            } catch (error) {
+                console.error('Error loading Trustpilot pending submissions:', error);
+                contentDiv.innerHTML = '<p style="color:#ef4444;">Error loading submissions. Please try again.</p>';
+            }
+        }
+
+        async function approveTrustpilotSubmission(submissionId) {
+            if (!confirm('Approve this Trustpilot review submission and disburse the reward?')) return;
+
+            try {
+                const response = await fetch('/api/trustpilot-task/admin/approve', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({submission_id: submissionId})
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert(`✅ Submission Approved!\n\n💰 Amount: ${data.reward_amount} G$\nTX: ${data.tx_hash || 'N/A'}`);
+                    const row = document.getElementById(`trustpilot-row-${submissionId}`);
+                    if (row) row.remove();
+                    loadTrustpilotStats();
+                } else {
+                    alert(`❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error approving Trustpilot submission:', error);
+                alert('❌ Error approving submission: ' + error.message);
+            }
+        }
+
+        async function rejectTrustpilotSubmission(submissionId) {
+            const reason = prompt('Enter rejection reason (optional):');
+            if (reason === null) return;
+
+            try {
+                const response = await fetch('/api/trustpilot-task/admin/decline', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({submission_id: submissionId, reason: reason})
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert('✅ Submission declined.');
+                    const row = document.getElementById(`trustpilot-row-${submissionId}`);
+                    if (row) row.remove();
+                    loadTrustpilotStats();
+                } else {
+                    alert(`❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Error rejecting Trustpilot submission:', error);
+                alert('❌ Error rejecting submission: ' + error.message);
+            }
+        }
+
+        // Auto-load Trustpilot data when section is shown
+        const originalShowSection = window.showSection;
+        window.showSection = function(sectionId) {
+            originalShowSection(sectionId);
+            if (sectionId === 'trustpilot-task-section') {
+                loadTrustpilotStats();
+                loadTrustpilotPendingSubmissions();
+            }
+        };
 
         // ============================================================
         // COLLABORATION REVIEW ADMIN FUNCTIONS
