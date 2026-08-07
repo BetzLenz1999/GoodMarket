@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trustpilot Review Task - GoodMarket</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 550px;
+            width: 100%;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 30px;
+            text-align: center;
+            color: white;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+        
+        .trustpilot-badge {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .trustpilot-logo {
+            font-weight: bold;
+            color: #00b67a;
+            font-size: 20px;
+        }
+        
+        .reward-badge {
+            background: #00b67a;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .instructions-box {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .instructions-box h3 {
+            color: #856404;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .instructions-box ul {
+            color: #856404;
+            padding-left: 20px;
+            line-height: 1.8;
+        }
+        
+        .instructions-box li {
+            margin-bottom: 5px;
+        }
+        
+        .important-notice {
+            background: #f8d7da;
+            border: 2px solid #f5c6cb;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .important-notice h3 {
+            color: #721c24;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .important-notice p {
+            color: #721c24;
+            line-height: 1.6;
+            font-weight: 500;
+        }
+        
+        .important-notice .warning-text {
+            background: #721c24;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .form-group .hint {
+            font-size: 13px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .form-group .example {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 13px;
+            margin-top: 8px;
+            color: #333;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+            margin-top: 10px;
+        }
+        
+        .message {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .message.success {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            color: #155724;
+        }
+        
+        .message.error {
+            background: #f8d7da;
+            border: 2px solid #dc3545;
+            color: #721c24;
+        }
+        
+        .message.pending {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            color: #856404;
+        }
+        
+        .message.show {
+            display: block;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 30px;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Status States */
+        .status-completed {
+            text-align: center;
+            padding: 40px 20px;
+        }
+        
+        .status-completed .icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+        
+        .status-completed h2 {
+            color: #28a745;
+            margin-bottom: 10px;
+        }
+        
+        .status-completed p {
+            color: #666;
+        }
+        
+        .status-completed .reward-info {
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        
+        .status-completed .reward-info .amount {
+            font-size: 24px;
+            font-weight: bold;
+            color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⭐ Trustpilot Review Task</h1>
+            <p>Share Your Experience with GoodDollar</p>
+            <div class="trustpilot-badge">
+                <span class="trustpilot-logo">Trustpilot</span>
+                <span class="reward-badge">🎁 Surprise Reward!</span>
+            </div>
+        </div>
+        
+        <div class="content">
+            <!-- Task Completed State -->
+            <div id="completedState" class="status-completed" style="display: none;">
+                <div class="icon">✅</div>
+                <h2>Task Completed!</h2>
+                <p>You have already completed this task.</p>
+                <div class="reward-info">
+                    <p>Your Review URL:</p>
+                    <p class="amount" id="completedUrl"></p>
+                </div>
+            </div>
+            
+            <!-- Task Form State -->
+            <div id="taskForm">
+                <!-- Instructions -->
+                <div class="instructions-box">
+                    <h3>📋 Instructions</h3>
+                    <ul>
+                        <li>Write a <strong>genuine review</strong> about GoodDollar based on YOUR personal experience</li>
+                        <li>Visit <a href="https://www.trustpilot.com/review/gooddollar.org" target="_blank" style="color: #856404; font-weight: bold;">Trustpilot GoodDollar Page</a></li>
+                        <li>Share your honest thoughts, feedback, or suggestions</li>
+                        <li>Submit your review URL below after completing your review</li>
+                    </ul>
+                </div>
+                
+                <!-- Important Notice -->
+                <div class="important-notice">
+                    <h3>⚠️ IMPORTANT NOTICE</h3>
+                    <p>
+                        Your review must be <strong>100% based on your real, personal experience</strong> with GoodDollar. 
+                        Fake, misleading, or inauthentic reviews will not be tolerated.
+                    </p>
+                    <p style="margin-top: 10px;">
+                        GoodDollar management actively monitors reviews on Trustpilot. 
+                        We reserve the right to reject submissions that appear to be:
+                    </p>
+                    <ul style="margin-top: 10px; padding-left: 20px; color: #721c24;">
+                        <li>Fabricated or not based on actual experience</li>
+                        <li>Copied from other sources</li>
+                        <li>Containing false or misleading claims</li>
+                        <li>Written solely for the reward incentive</li>
+                    </ul>
+                    <div class="warning-text">
+                        🚫 FAKE REVIEWS WILL BE REJECTED
+                    </div>
+                </div>
+                
+                <!-- Message Area -->
+                <div id="messageArea" class="message"></div>
+                
+                <!-- Submit Form -->
+                <form id="submitForm">
+                    <div class="form-group">
+                        <label for="reviewUrl">Your Trustpilot Review URL</label>
+                        <input type="url" id="reviewUrl" name="reviewUrl" 
+                               placeholder="https://www.trustpilot.com/review/gooddollar.org" 
+                               required>
+                        <p class="hint">Copy the full URL from your published Trustpilot review</p>
+                        <p class="example">Example: https://www.trustpilot.com/review/gooddollar.org</p>
+                    </div>
+                    
+                    <button type="submit" id="submitBtn" class="btn btn-primary">
+                        Submit Review URL
+                    </button>
+                    
+                    <button type="button" id="cancelBtn" class="btn btn-secondary" onclick="window.close()">
+                        Cancel
+                    </button>
+                </form>
+                
+                <!-- Loading State -->
+                <div id="loadingState" class="loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Submitting your review URL...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = '/api/trustpilot-task';
+        
+        // Check task status on page load
+        async function checkStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    if (data.has_completed) {
+                        // User already completed task - show completed state
+                        document.getElementById('taskForm').style.display = 'none';
+                        document.getElementById('completedState').style.display = 'block';
+                        document.getElementById('completedUrl').textContent = data.completed_record?.review_url || 'Your approved review';
+                    } else {
+                        // User can do the task
+                        document.getElementById('taskForm').style.display = 'block';
+                        document.getElementById('completedState').style.display = 'none';
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking status:', error);
+            }
+        }
+        
+        // Show message
+        function showMessage(message, type) {
+            const messageArea = document.getElementById('messageArea');
+            messageArea.textContent = message;
+            messageArea.className = `message ${type} show`;
+            
+            // Auto-hide after 10 seconds for success/pending messages
+            if (type === 'success' || type === 'pending') {
+                setTimeout(() => {
+                    messageArea.classList.remove('show');
+                }, 10000);
+            }
+        }
+        
+        // Form submission
+        document.getElementById('submitForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const reviewUrl = document.getElementById('reviewUrl').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            
+            if (!reviewUrl) {
+                showMessage('Please enter your Trustpilot review URL', 'error');
+                return;
+            }
+            
+            // Validate URL format
+            if (!reviewUrl.includes('trustpilot.com/review')) {
+                showMessage('Please enter a valid Trustpilot review URL', 'error');
+                return;
+            }
+            
+            // Show loading state
+            document.getElementById('submitForm').style.display = 'none';
+            document.getElementById('loadingState').style.display = 'block';
+            
+            try {
+                const response = await fetch(`${API_BASE}/submit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ trustpilot_url: reviewUrl })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(
+                        '✅ Your review URL has been submitted for admin review!\n\n' +
+                        '⏳ Please wait for approval. Once approved, your 1000 G$ reward will be automatically disbursed to your wallet.\n\n' +
+                        '📧 You will be notified when your submission is reviewed.',
+                        'pending'
+                    );
+                    
+                    // Hide the form permanently after successful submission
+                    document.getElementById('loadingState').innerHTML = `
+                        <div style="text-align: center;">
+                            <div style="font-size: 50px; margin-bottom: 15px;">⏳</div>
+                            <h3 style="color: #856404; margin-bottom: 10px;">Submission Received!</h3>
+                            <p style="color: #666;">Your review is pending admin approval.</p>
+                            <p style="color: #666; margin-top: 10px;">You will receive a reward once approved.</p>
+                            <p style="color: #999; font-size: 13px; margin-top: 20px;">This window can now be closed.</p>
+                        </div>
+                    `;
+                } else {
+                    // Show error and restore form
+                    showMessage(data.error || 'Failed to submit review URL', 'error');
+                    document.getElementById('loadingState').style.display = 'none';
+                    document.getElementById('submitForm').style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error submitting:', error);
+                showMessage('An error occurred. Please try again.', 'error');
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('submitForm').style.display = 'block';
+            }
+        });
+        
+        // Initialize
+        checkStatus();
+    </script>
+</body>
+</html>
