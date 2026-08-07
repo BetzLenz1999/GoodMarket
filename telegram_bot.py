@@ -1476,7 +1476,7 @@ def _trustpilot_keyboard(status: str = None):
 
 
 def handle_trustpilot_task(chat_id, telegram_user):
-    """Show Trustpilot Review task status and options."""
+    """Show Trustpilot Review task with full instructions."""
     telegram_user_id = telegram_user.get("id")
     saved_wallet = _get_saved_wallet(telegram_user_id)
     if not saved_wallet:
@@ -1499,27 +1499,81 @@ def handle_trustpilot_task(chat_id, telegram_user):
             submissions = stats.get("submissions", [])
             
             if has_completed:
-                status_text = "✅ <b>Task Completed!</b>\n\nYou have already completed this task.\nYour review has been approved and reward disbursed."
+                # Task already completed - show simple message
+                text = (
+                    "✅ <b>Task Completed!</b>\n\n"
+                    "You have already completed this task.\n"
+                    "Your review has been approved and reward disbursed.\n\n"
+                    f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                )
                 keyboard = _trustpilot_keyboard("completed")
             elif submissions:
                 latest = submissions[0]
                 status = latest.get("status", "unknown")
                 if status == "pending":
-                    status_text = "⏳ <b>Submission Under Review</b>\n\nYour Trustpilot review is pending admin approval.\nYou will receive your reward once approved."
+                    text = (
+                        "⏳ <b>Submission Under Review</b>\n\n"
+                        "Your Trustpilot review is pending admin approval.\n"
+                        "You will receive your reward once approved.\n\n"
+                        f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    )
                 elif status == "declined":
-                    status_text = "❌ <b>Submission Declined</b>\n\nYour previous submission was declined.\nYou may submit a new review URL."
+                    # Show instructions again for declined users
+                    text = (
+                        "❌ <b>Submission Declined</b>\n\n"
+                        "Your previous submission was declined.\n"
+                        "You may submit a new review URL.\n\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "📋 <b>Instructions</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "1️⃣ Go to Trustpilot and write a genuine review about GoodDollar based on your personal experience\n\n"
+                        "2️⃣ Copy your review URL from the browser address bar\n\n"
+                        "3️⃣ Paste it here to submit\n\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        "⚠️ <b>IMPORTANT NOTICE</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "• Your review MUST be based on your REAL personal experience with GoodDollar\n"
+                        "• Fake or dishonest reviews will be rejected\n"
+                        "• Reviews must follow Trustpilot's community guidelines\n"
+                        "• You can only complete this task ONCE\n"
+                        "• After approval, you cannot submit another review\n\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n"
+                        f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    )
+                    keyboard = _trustpilot_keyboard()
                 else:
-                    status_text = f"ℹ️ <b>Status: {status.upper()}</b>"
-                keyboard = _trustpilot_keyboard(status)
+                    text = (
+                        f"ℹ️ <b>Status: {status.upper()}</b>\n\n"
+                        f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    )
+                    keyboard = _trustpilot_keyboard()
             else:
-                status_text = "📝 <b>Trustpilot Review Task</b>\n\nShare your genuine experience with GoodDollar on Trustpilot.\nSubmit your review URL to earn a surprise reward!"
+                # First time user - show full instructions
+                text = (
+                    "⭐ <b>Trustpilot Review Task</b>\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "📋 <b>Instructions</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "1️⃣ Go to Trustpilot and write a genuine review about GoodDollar based on your personal experience\n\n"
+                    "2️⃣ Copy your review URL from the browser address bar\n\n"
+                    "3️⃣ Paste it here to submit\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "⚠️ <b>IMPORTANT NOTICE</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "• Your review MUST be based on your REAL personal experience with GoodDollar\n"
+                    "• Fake or dishonest reviews will be rejected\n"
+                    "• Reviews must follow Trustpilot's community guidelines\n"
+                    "• You can only complete this task ONCE\n"
+                    "• After approval, you cannot submit another review\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                )
                 keyboard = _trustpilot_keyboard()
-            
-            text = (
-                f"{status_text}\n\n"
-                f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
-            )
         else:
             text = "⚠️ Could not load Trustpilot task status. Please try again later."
             keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
