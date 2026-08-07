@@ -299,7 +299,7 @@
         </div>
         
         <div class="content">
-            <!-- Task Completed State -->
+            <!-- Task Completed State (hidden by default) -->
             <div id="completedState" class="status-completed" style="display: none;">
                 <div class="icon">✅</div>
                 <h2>Task Completed!</h2>
@@ -310,8 +310,8 @@
                 </div>
             </div>
             
-            <!-- Task Form State -->
-            <div id="taskForm">
+            <!-- Task Form State (visible by default until proven otherwise) -->
+            <div id="taskForm" style="display: block;">
                 <!-- Instructions -->
                 <div class="instructions-box">
                     <h3>📋 Instructions</h3>
@@ -384,22 +384,33 @@
         async function checkStatus() {
             try {
                 const response = await fetch(`${API_BASE}/status`);
+                
+                // If not authenticated (401), show error and hide form
+                if (response.status === 401) {
+                    showMessage('Please log in to access this task', 'error');
+                    document.getElementById('taskForm').style.display = 'none';
+                    document.getElementById('completedState').style.display = 'none';
+                    return;
+                }
+                
                 const data = await response.json();
                 
-                if (data.success) {
-                    if (data.has_completed) {
-                        // User already completed task - show completed state
-                        document.getElementById('taskForm').style.display = 'none';
-                        document.getElementById('completedState').style.display = 'block';
-                        document.getElementById('completedUrl').textContent = data.completed_record?.review_url || 'Your approved review';
-                    } else {
-                        // User can do the task
-                        document.getElementById('taskForm').style.display = 'block';
-                        document.getElementById('completedState').style.display = 'none';
-                    }
+                // Only show completed state if explicitly has_completed: true
+                if (data.success && data.has_completed === true) {
+                    // User already completed task - show completed state
+                    document.getElementById('taskForm').style.display = 'none';
+                    document.getElementById('completedState').style.display = 'block';
+                    document.getElementById('completedUrl').textContent = data.completed_record?.review_url || 'Your approved review';
+                } else {
+                    // User can do the task (no record, or has_completed: false)
+                    document.getElementById('taskForm').style.display = 'block';
+                    document.getElementById('completedState').style.display = 'none';
                 }
             } catch (error) {
                 console.error('Error checking status:', error);
+                // On any error, show the form so user can still submit
+                document.getElementById('taskForm').style.display = 'block';
+                document.getElementById('completedState').style.display = 'none';
             }
         }
         
