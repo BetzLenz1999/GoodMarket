@@ -591,6 +591,13 @@ if not init_discourse_task(app):
 else:
     logger.info("✅ Discourse Task initialized successfully")
 
+# Initialize Trustpilot Task
+from trustpilot_task import init_trustpilot_task
+if not init_trustpilot_task(app):
+    logger.warning("⚠️ Trustpilot Task initialization failed")
+else:
+    logger.info("✅ Trustpilot Task initialized successfully")
+
 
 # Initialize News Feed first
 from news_feed import init_news_feed, news_feed_service
