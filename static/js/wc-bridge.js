@@ -556,7 +556,30 @@
         });
     }
 
-    // RPC call with fallback - tries each URL until one succeeds
+    // Build an EIP-1193-shaped error from a JSON-RPC error object so ethers v6
+    // can decode the revert reason. ethers v6 specifically requires `error.data`
+    // to hold the 0x-prefixed revert bytes; if it's missing, ethers throws the
+    // opaque "missing revert data in call exception" — which is exactly the
+    // failure users hit when selling G$ on GoodReserve / swapping on Uniswap
+    // through a WalletConnect-bridged read. Public Celo RPC nodes are
+    // inconsistent: some return `data` on reverts, some don't. Preserving
+    // both `code` and `data` (and falling through to the next RPC URL when
+    // `data` is absent) maximises the chance ethers recovers the real reason.
+    function _rpcErrorFromJsonRpcError(rpcErr) {
+        var msg = (rpcErr && rpcErr.message) || "RPC error";
+        var code = (rpcErr && typeof rpcErr.code === "number") ? rpcErr.code : -32603;
+        var e = new Error(msg);
+        e.code = code;
+        if (rpcErr && rpcErr.data !== undefined && rpcErr.data !== null) e.data = rpcErr.data;
+        return e;
+    }
+
+    // RPC call with fallback - tries each URL until one succeeds.
+    // Reverts that already carry `data` (revert bytes) are thrown immediately —
+    // every other node would return the same deterministic EVM revert, so
+    // retrying only wastes time. Reverts WITHOUT `data` DO fall through, since
+    // a different Celo RPC provider may format the same revert with the `data`
+    // blob ethers needs to decode the reason.
     function _celoJsonRpcWithFallback(urls, method, params) {
         var lastError = new Error('All RPC endpoints failed');
         return new Promise(function(resolve, reject) {
@@ -579,8 +602,12 @@
                     return resp.json();
                 }).then(function (data) {
                     if (data.error) {
-                        lastError = new Error(data.error.message || "RPC error");
-                        tryNext(index + 1); // Try next URL
+                        var e = _rpcErrorFromJsonRpcError(data.error);
+                        lastError = e;
+                        // Revert with revert-bytes already attached → no point
+                        // trying more nodes; throw so ethers can decode it.
+                        if (data.error.data != null) { reject(e); return; }
+                        tryNext(index + 1); // Try next URL (may carry the data)
                     } else {
                         resolve(data.result);
                     }
