@@ -2,13 +2,19 @@
 import os
 import logging
 import re
+import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
-from supabase_client import get_supabase_client, safe_supabase_operation
+from supabase_client import get_supabase_client, get_supabase_admin_client, safe_supabase_operation
 from cache_utils import supabase_cache
 from .blockchain import trustpilot_blockchain_service
 
 logger = logging.getLogger(__name__)
+
+# Telegram Bot API configuration for admin-action notifications.
+# Imported lazily (not from telegram_bot) to avoid circular imports.
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}" if TELEGRAM_BOT_TOKEN else ""
 
 # Trustpilot review URL regex pattern
 # Matches: https://www.trustpilot.com/reviews/682187e9b3ac2f2c0586dbaf
@@ -44,6 +50,58 @@ class TrustpilotTaskService:
         if not wallet or len(wallet) < 10:
             return wallet
         return wallet[:6] + "..." + wallet[-4:]
+
+    def _get_telegram_chat_id(self, wallet_address: str) -> Optional[str]:
+        """Look up a user's Telegram chat id from their wallet address.
+
+        Uses the service-role client so RLS does not block the reverse lookup.
+        Returns the most recently seen chat_id for the wallet, or None.
+        """
+        if not wallet_address:
+            return None
+        wallet = wallet_address.lower().strip()
+        supabase = get_supabase_admin_client() or self.supabase
+        if not supabase:
+            return None
+        try:
+            result = safe_supabase_operation(
+                lambda: supabase.table('telegram_wallet_sessions')
+                    .select('telegram_chat_id')
+                    .eq('wallet_address', wallet)
+                    .order('last_seen_at', desc=True)
+                    .limit(1)
+                    .execute(),
+                fallback_result=None,
+                operation_name="lookup telegram chat_id for trustpilot notification"
+            )
+            if result and result.data:
+                return result.data[0].get('telegram_chat_id')
+        except Exception as e:
+            logger.warning(f"⚠️ Could not resolve Telegram chat_id for {self.mask_wallet(wallet)}: {e}")
+        return None
+
+    def _notify_user(self, chat_id: str, text: str) -> bool:
+        """Best-effort push of a Telegram message to a user's chat.
+
+        Never raises — notification failures must not break the admin
+        approve/decline flow. Returns True on success, False otherwise.
+        """
+        if not chat_id or not TELEGRAM_API:
+            return False
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+        }
+        try:
+            resp = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload, timeout=10)
+            if resp.ok:
+                logger.info(f"📬 Trustpilot notification sent to chat {chat_id}")
+                return True
+            logger.warning(f"⚠️ Telegram notify failed ({resp.status_code}): {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"⚠️ Telegram notify error: {e}")
+        return False
 
     async def get_task_stats(self, wallet_address: str) -> Dict[str, Any]:
         """Get Trustpilot task status for a user"""
@@ -440,13 +498,26 @@ class TrustpilotTaskService:
 
             logger.info(f"✅ Trustpilot submission approved: {reward_amount} G$ to {self.mask_wallet(wallet_address)}")
 
+            # Best-effort Telegram notification to the user that their review was approved
+            chat_id = self._get_telegram_chat_id(wallet_address)
+            if chat_id:
+                self._notify_user(
+                    chat_id,
+                    f"✅ <b>Trustpilot Review Approved!</b>\n\n"
+                    f"Your Trustpilot review has been approved by the admin.\n"
+                    f"Reward of <b>{reward_amount:.0f} G$</b> has been sent to your wallet.\n\n"
+                    f"Wallet: <code>{self.mask_wallet(wallet_address)}</code>\n"
+                    f"Thank you for sharing your experience! 🙌"
+                )
+
             return {
                 'success': True,
                 'message': f'✅ Approved! {reward_amount} G$ disbursed to {self.mask_wallet(wallet_address)}',
                 'reward_amount': reward_amount,
                 'tx_hash': disbursement_result.get('tx_hash'),
                 'explorer_url': disbursement_result.get('explorer_url'),
-                'recipient': wallet_address
+                'recipient': wallet_address,
+                'notified': bool(chat_id)
             }
 
         except Exception as e:
@@ -463,6 +534,24 @@ class TrustpilotTaskService:
             if not self.supabase:
                 return {'success': False, 'error': 'Database not available'}
 
+            # Fetch the submission so we can notify the user afterwards
+            submission_result = safe_supabase_operation(
+                lambda: self.supabase.table('trustpilot_task_log')
+                    .select('id, wallet_address, status')
+                    .eq('id', submission_id)
+                    .eq('status', 'pending')
+                    .single()
+                    .execute(),
+                fallback_result=None,
+                operation_name=f"get trustpilot submission for decline {submission_id}"
+            )
+
+            if not submission_result or not submission_result.data:
+                return {'success': False, 'error': 'Submission not found or already processed'}
+
+            wallet_address = submission_result.data.get('wallet_address')
+            decline_reason = reason or 'No reason provided'
+
             # Update status to declined
             safe_supabase_operation(
                 lambda: self.supabase.table('trustpilot_task_log')
@@ -470,7 +559,7 @@ class TrustpilotTaskService:
                         'status': 'declined',
                         'declined_by': admin_wallet,
                         'declined_at': datetime.now(timezone.utc).isoformat(),
-                        'decline_reason': reason or 'No reason provided',
+                        'decline_reason': decline_reason,
                         'updated_at': datetime.now(timezone.utc).isoformat()
                     })
                     .eq('id', submission_id)
@@ -482,10 +571,24 @@ class TrustpilotTaskService:
 
             logger.info(f"✅ Trustpilot submission declined: {submission_id}")
 
+            # Best-effort Telegram notification to the user that their review was declined
+            notified = False
+            if wallet_address:
+                chat_id = self._get_telegram_chat_id(wallet_address)
+                if chat_id:
+                    notified = self._notify_user(
+                        chat_id,
+                        "❌ <b>Trustpilot Review Declined</b>\n\n"
+                        "Your Trustpilot review submission was declined by the admin.\n"
+                        f"📝 Reason: {decline_reason}\n\n"
+                        "You may submit a new review URL using /trustpilot."
+                    )
+
             return {
                 'success': True,
                 'message': 'Submission declined',
-                'submission_id': submission_id
+                'submission_id': submission_id,
+                'notified': notified
             }
 
         except Exception as e:
