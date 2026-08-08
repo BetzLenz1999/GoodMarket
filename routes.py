@@ -3161,6 +3161,14 @@ def send_broadcast_message():
                 action_details={"title": title, "message_length": len(message)}
             )
 
+            # Best-effort Telegram push to all Telegram bot users (runs in background
+            # so the admin request is not held up by a large audience).
+            try:
+                from telegram_notify import broadcast_message_async
+                broadcast_message_async(title, message)
+            except Exception as tg_err:
+                logger.warning(f"⚠️ Telegram broadcast push failed (DB broadcast still saved): {tg_err}")
+
             logger.info(f"✅ Broadcast message sent by admin {admin_wallet[:8]}...")
             return jsonify({
                 "success": True,
