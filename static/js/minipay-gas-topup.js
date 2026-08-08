@@ -151,19 +151,62 @@
     }
 
     // ─── Balance reads (raw eth_call/eth_getBalance, no ethers needed) ────
+    // MiniPay's injected provider is the only signer but is often a thin
+    // relay: when the wallet's balance is very low (the exact scenario we're
+    // checking for) eth_call/eth_getBalance against it can fail or return
+    // bare errors with no `data`. Fall back to public Celo RPCs so a flaky
+    // wallet provider never makes us misread balances and block the gas
+    // request flow ("kapag low balance hindi rin working").
+    const CELO_RPC_FALLBACKS = [
+        'https://forno.celo.org',
+        'https://rpc.ankr.com/celo',
+        'https://celo-rpc.publicnode.com'
+    ];
+
+    function _rpcFetch(url, method, params) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params: params || [] })
+        }).then(function (r) { return r.json(); });
+    }
+
+    async function _rpcWithFallback(method, params, provider) {
+        // Try the wallet provider first (authoritative for the user's state),
+        // then fall through to public RPCs if it errors.
+        if (provider && typeof provider.request === 'function') {
+            try {
+                return await provider.request({ method: method, params: params });
+            } catch (_) { /* fall through to public RPC */ }
+        }
+        for (let i = 0; i < CELO_RPC_FALLBACKS.length; i++) {
+            try {
+                const body = await _rpcFetch(CELO_RPC_FALLBACKS[i], method, params);
+                if (body && body.error) {
+                    if (body.error.data != null) {
+                        const e = new Error(body.error.message || 'RPC error');
+                        e.data = body.error.data;
+                        throw e;
+                    }
+                    continue; // try next RPC (may carry revert data)
+                }
+                if (body && body.result !== undefined) return body.result;
+            } catch (e) {
+                if (e && e.data != null) throw e; // revert with data — stop retrying
+            }
+        }
+        return null;
+    }
+
     async function _ethCall(provider, to, data) {
-        return await provider.request({
-            method: 'eth_call',
-            params: [{ to: to, data: data }, 'latest'],
-        });
+        // Prefer the wallet provider (same chain context), fall back to public RPCs.
+        const res = await _rpcWithFallback('eth_call', [{ to: to, data: data }, 'latest'], provider);
+        return res;
     }
 
     async function _getCeloBalance(provider, walletAddr) {
         try {
-            const hex = await provider.request({
-                method: 'eth_getBalance',
-                params: [walletAddr, 'latest'],
-            });
+            const hex = await _rpcWithFallback('eth_getBalance', [walletAddr, 'latest'], provider);
             return BigInt(hex || '0x0');
         } catch (_) { return 0n; }
     }
@@ -419,6 +462,59 @@
         return /reject|denied|user denied|user rejected/.test(msg);
     }
 
+    // Decode a 0x revert blob (Error(string) / Panic / custom selector) into a
+    // short human string. Used to upgrade the generic "Swap reverted on-chain."
+    // / "Approve reverted on-chain." messages — and the wallet's opaque
+    // "missing revert data" — into something actionable when the user is in the
+    // low-balance gas top-up flow.
+    function _decodeRevertData(hex) {
+        if (typeof hex !== 'string') return '';
+        let h = hex.toLowerCase();
+        if (h === '0x' || h === '') return '';
+        if (h.indexOf('0x') === 0) h = h.slice(2);
+        if (h.length < 8) return '';
+        const sel = h.slice(0, 8);
+        const hexToUtf8 = (seg) => {
+            const bytes = [];
+            for (let i = 0; i < seg.length; i += 2) bytes.push(parseInt(seg.substr(i, 2), 16));
+            try { return decodeURIComponent(escape(String.fromCharCode.apply(null, bytes))); } catch (_) { return ''; }
+        };
+        if (sel === '08c379a0') {
+            // Error(string): [selector][offset 0x20][uint256 len][string bytes]
+            if (h.length < 136) return 'reverted';
+            const len = parseInt(h.slice(72, 136), 16);
+            if (!isFinite(len) || len <= 0) return 'reverted';
+            return hexToUtf8(h.slice(136, 136 + len * 2)) || 'reverted';
+        }
+        if (sel === '4e487b71') {
+            const code = h.length >= 72 ? parseInt(h.slice(h.length - 64), 16) : 0;
+            return 'panic 0x' + (code || 0).toString(16);
+        }
+        return 'reverted (0x' + sel + ')';
+    }
+
+    // Build a friendly message from a wallet/RPC error encountered during the
+    // gas top-up approve/swap. Surfaces the decoded revert reason when the
+    // error carries a `data` blob; otherwise maps the common low-balance
+    // causes to clear guidance.
+    function _friendlyGasSwapError(err, opLabel) {
+        const rawMsg = String((err && (err.message || err.shortMessage)) || '');
+        const lower = rawMsg.toLowerCase();
+        if (_isUserRejected(err)) return 'Cancelled in wallet.';
+        // Decode revert bytes if present.
+        const reason = _decodeRevertData(err && err.data);
+        if (reason) return opLabel + ' failed on-chain: ' + reason + '.';
+        if (/missing revert data|call exception/i.test(lower)) {
+            return opLabel + ' was rejected on-chain. This usually means the ' +
+                'wallet did not have enough CELO / stablecoin for the swap and ' +
+                'its gas. Please add a little cUSD or CELO and retry.';
+        }
+        if (/insufficient funds|insufficient balance|exceeds balance/i.test(lower)) {
+            return 'Not enough balance to pay for ' + opLabel + '. Please top up CELO or cUSD and retry.';
+        }
+        return opLabel + ' failed: ' + (rawMsg || 'unknown error');
+    }
+
     function _sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -659,7 +755,14 @@
                 throw new Error('Approve tx receipt timeout.');
             }
             if (approveReceipt.status === '0x0') {
-                throw new Error('Approve reverted on-chain.');
+                // Approve reverted — try to surface the real reason. MiniPay
+                // receipts sometimes carry revert data in `receipt.revertReason`
+                // / `receipt.output`; otherwise the message stays generic but
+                // is still clearer than the wallet's "missing revert data".
+                const reason = _decodeRevertData(approveReceipt.revertReason || approveReceipt.output);
+                const e = new Error(reason ? ('Approve failed on-chain: ' + reason + '.') : 'Approve reverted on-chain. The wallet may not have enough stablecoin for gas. Please add cUSD/USDT/USDC and retry.');
+                e._gasSwapFriendly = true;
+                throw e;
             }
         }
 
@@ -694,7 +797,12 @@
                 if (progress) progress.update('Swap submitted, waiting for confirmation…');
                 const receipt = await _waitForReceipt(provider, swapTxHash, 60);
                 if (!receipt) throw new Error('Swap tx receipt timeout.');
-                if (receipt.status === '0x0') throw new Error('Swap reverted on-chain.');
+                if (receipt.status === '0x0') {
+                    const reason = _decodeRevertData(receipt.revertReason || receipt.output);
+                    const e = new Error(reason ? ('Swap failed on-chain: ' + reason + '.') : 'Swap reverted on-chain. The wallet may not have enough CELO/stablecoin. Please top up and retry.');
+                    e._gasSwapFriendly = true;
+                    throw e;
+                }
                 return swapTxHash;
             } catch (err) {
                 lastErr = err;
@@ -702,7 +810,13 @@
                 console.warn('[MPGasTopUp] swap fee=' + fee + ' failed:', err && (err.message || err));
             }
         }
-        throw lastErr || new Error('All Uniswap V3 fee tiers failed for CELO -> cUSD.');
+        // All fee tiers failed — wrap the last error in a friendly message so
+        // the user sees a clear cause instead of an opaque "missing revert data".
+        const friendly = _friendlyGasSwapError(lastErr, 'CELO → cUSD swap');
+        const wrapped = new Error(friendly);
+        wrapped._gasSwapFriendly = true;
+        wrapped.cause = lastErr;
+        throw wrapped;
     }
 
     // ─── Public: ensureToppedUp ───────────────────────────────────────────
@@ -947,12 +1061,16 @@
                 return { proceed: false, cancelled: true };
             }
             console.error('[MPGasTopUp] swap error:', err);
+            // If the swap path already shaped a friendly, actionable message
+            // (decoded revert reason / low-balance hint), surface it verbatim
+            // instead of the wallet's opaque "missing revert data".
+            const alertMsg = err && err._gasSwapFriendly
+                ? msg
+                : ('⚠️ CELO → cUSD swap failed: ' + msg + '\n\n'
+                    + 'Please try again or add cUSD to your wallet manually for MiniPay gas.');
             try {
                 if (typeof global.alert === 'function') {
-                    global.alert(
-                        '⚠️ CELO → cUSD swap failed: ' + msg + '\n\n'
-                        + 'Please try again or add cUSD to your wallet manually for MiniPay gas.'
-                    );
+                    global.alert(alertMsg);
                 }
             } catch (_) { /* ignore */ }
             return { proceed: false, error: msg };
