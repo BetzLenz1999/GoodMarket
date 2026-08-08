@@ -99,7 +99,76 @@
     }
 
     function _isReverted(joined) {
-        return /execution reverted|call exception|transaction reverted/i.test(joined);
+        // "missing revert data in call exception" is ethers v6's opaque
+        // wrapper for an eth_call/eth_estimateGas that reverted with no
+        // recoverable `data` blob. It IS a revert from the user's POV —
+        // treat it as one so we show actionable copy instead of a cryptic
+        // technical string.
+        return /execution reverted|call exception|transaction reverted|missing revert data|missing revert|eth_call revert|intrinsic gas too low/i.test(joined);
+    }
+
+    // Decode a 0x-prefixed revert `data` blob into a human string.
+    // Handles:
+    //   - Error(string)  selector 0x08c379a0
+    //   - Panic(uint256) selector 0x4e487b71
+    //   - Custom errors (returns the 4-byte selector when undecodable)
+    // Returns "" when the input is not a recognisable revert payload.
+    function _decodeRevertData(hex) {
+        if (typeof hex !== "string") return "";
+        var h = hex.toLowerCase();
+        if (h === "0x" || h === "" ) return "";
+        if (h.indexOf("0x") === 0) h = h.slice(2);
+        if (h.length < 8) return "";
+        var sel = h.slice(0, 8);
+        function _hexToUtf8(seg) {
+            var bytes = [];
+            for (var i = 0; i < seg.length; i += 2) bytes.push(parseInt(seg.substr(i, 2), 16));
+            try { return decodeURIComponent(escape(String.fromCharCode.apply(null, bytes))); } catch (_) { return ""; }
+        }
+        if (sel === "08c379a0") {
+            // Error(string) ABI layout (after stripping 0x):
+            //   [0..8)    selector
+            //   [8..72)   offset (0x20)
+            //   [72..136) uint256 string length
+            //   [136..)   string bytes, left-padded to 32
+            if (h.length < 136) return "execution reverted";
+            var lenHex = h.slice(72, 136);
+            var len = parseInt(lenHex, 16);
+            if (!isFinite(len) || len <= 0) return "execution reverted";
+            var strHex = h.slice(136, 136 + len * 2);
+            var msg = _hexToUtf8(strHex);
+            return msg ? ("execution reverted: " + msg) : "execution reverted";
+        }
+        if (sel === "4e487b71") {
+            // Panic(uint256): code in the last 32-byte word
+            var panicCode = h.length >= 72 ? parseInt(h.slice(h.length - 64), 16) : 0;
+            var known = {
+                0x01: "assertion failed",
+                0x11: "arithmetic overflow/underflow",
+                0x12: "division or modulo by zero",
+                0x21: "enum conversion out of bounds",
+                0x22: "incorrect array storage encoding",
+                0x31: "pop on empty array",
+                0x32: "array access out of bounds",
+                0x41: "out of memory",
+                0x51: "uninitialized function pointer"
+            };
+            var label = known[panicCode] || ("panic code 0x" + (panicCode || 0).toString(16));
+            return "panic: " + label;
+        }
+        // Custom error — surface the selector so support can look it up.
+        return "execution reverted (selector 0x" + sel + ")";
+    }
+
+    function _revertReasonFromError(err) {
+        var info = _spelunk(err);
+        // Prefer an explicit .data revert blob carried on the error.
+        var pieces = [err && err.data, info && info.joined];
+        for (var i = 0; i < pieces.length; i++) {
+            var decoded = _decodeRevertData(pieces[i]);
+            if (decoded) return decoded;
+        }
+        return "";
     }
 
     function _isNetworkIssue(joined) {
@@ -179,7 +248,19 @@
         if (_isAllowanceIssue(joined)) return "Token approval is missing or too low. Please re-approve and try again.";
         if (_isGasIssue(joined)) return "Transaction needs more gas. Please try again or contact support.";
         if (_isNetworkIssue(joined)) return "Network error. Please check your connection and try again.";
-        if (_isReverted(joined)) return "Transaction was rejected on-chain. Please check the inputs and try again.";
+        if (_isReverted(joined)) {
+            // Try to recover a concrete revert reason. When the wallet/RPC
+            // omitted the `data` blob (the "missing revert data" case) we
+            // can't decode anything, so guide the user toward the most
+            // common real causes (allowance, slippage, balance) instead of
+            // dumping the raw ethers string.
+            var reason = _revertReasonFromError(err);
+            if (reason && reason.indexOf("selector") === -1 && reason.indexOf("execution reverted: ") === 0) {
+                return "Transaction was rejected on-chain: " + reason.replace("execution reverted: ", "") + ". Check the inputs and try again.";
+            }
+            if (_isAllowanceIssue(joined)) return "Token approval is missing or too low. Please re-approve and try again.";
+            return "Transaction was rejected on-chain. Please check the amount, approve the token if needed, and try again.";
+        }
 
         // Generic ethers wrapper — try to recover the inner message
         if (/could not coalesce error/i.test(msg)) {
@@ -206,5 +287,62 @@
         return _isUserRejection(info.code, info.joined || "");
     }
 
-    global.GMTxError = { format: format, isUserRejection: isUserRejection, asFriendly: asFriendly };
+    // Run a read-only eth_call against a Celo RPC endpoint to recover the real
+    // revert reason for a transaction that the wallet/RPC reported as
+    // "missing revert data". Returns a decoded reason string, or "" when the
+    // call doesn't revert or the reason can't be decoded. `to`/`data`/`from`/
+    // `value` come from the failing tx params; multiple RPC URLs are tried so a
+    // node that omits the `data` blob on reverts doesn't block decoding.
+    function _simulateCallCelo(params) {
+        var to = params && params.to;
+        var data = (params && params.data) || "0x";
+        var from = (params && params.from) || "0x0000000000000000000000000000000000000000";
+        var value = (params && params.value) || "0x0";
+        if (!to) return Promise.resolve("");
+        var urls = [
+            "https://forno.celo.org",
+            "https://rpc.ankr.com/celo",
+            "https://celo-rpc.publicnode.com"
+        ];
+        function tryUrl(i) {
+            if (i >= urls.length) return Promise.resolve("");
+            return fetch(urls[i], {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    jsonrpc: "2.0", id: Date.now(),
+                    method: "eth_call",
+                    params: [{ to: to, data: data, from: from, value: value }, "latest"]
+                })
+            }).then(function (r) { return r.json(); }).then(function (body) {
+                if (body && body.error) {
+                    var d = (body.error.data != null) ? body.error.data
+                          : (typeof body.error.message === "string" ? body.error.message : "");
+                    var decoded = _decodeRevertData(d);
+                    if (decoded) return decoded;
+                    // No data blob from this node → try the next RPC URL.
+                    return tryUrl(i + 1);
+                }
+                if (body && typeof body.result === "string") {
+                    // Call succeeded in simulation → the real tx should not
+                    // revert for static reasons. (May still fail at submit due
+                    // to gas/nonce.) No revert reason to report.
+                    return "";
+                }
+                return tryUrl(i + 1);
+            }).catch(function () { return tryUrl(i + 1); });
+        }
+        return tryUrl(0);
+    }
+
+    global.GMTxError = {
+        format: format,
+        isUserRejection: isUserRejection,
+        asFriendly: asFriendly,
+        // Exposed so swap.html / wallet.html can decode revert bytes directly
+        // and run a fallback simulation when ethers reports "missing revert data".
+        decodeRevertData: _decodeRevertData,
+        revertReasonFromError: _revertReasonFromError,
+        simulateCallCelo: _simulateCallCelo
+    };
 })(typeof window !== "undefined" ? window : globalThis);
