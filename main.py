@@ -624,6 +624,18 @@ try:
 except Exception as e:
     logger.error(f"❌ Telegram Learn & Earn timer scheduler initialization failed: {e}")
 
+# Daily Telegram UBI reminder (env-gated, default off). Fires shortly after the
+# 12:00 UTC UBI claim reset and nudges linked wallets that can claim (or need
+# to verify first). One reminder per wallet per UTC day via a dedup column.
+try:
+    from ubi_reminder import init_ubi_reminder_scheduler
+    if init_ubi_reminder_scheduler(app):
+        logger.info("✅ Telegram UBI reminder scheduler started")
+    else:
+        logger.info("ℹ️ Telegram UBI reminder scheduler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ Telegram UBI reminder scheduler initialization failed: {e}")
+
 # Initialize G$ Savings
 logger.info("💰 Initializing G$ Savings system...")
 if init_savings(app):
