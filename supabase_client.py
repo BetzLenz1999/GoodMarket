@@ -783,6 +783,13 @@ CREATE TRIGGER update_payment_links_updated_at
     BEFORE UPDATE ON payment_links
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Telegram UBI reminder dedup: one reminder per wallet per UTC day.
+-- The UBI claiming window resets daily at 12:00 UTC, so the reminder scheduler
+-- writes today's UTC date here after a reminder is sent to avoid repeats.
+ALTER TABLE telegram_wallet_sessions ADD COLUMN IF NOT EXISTS ubi_reminder_sent_date DATE;
+CREATE INDEX IF NOT EXISTS idx_telegram_wallet_sessions_ubi_reminder_date
+    ON telegram_wallet_sessions(ubi_reminder_sent_date);
 """
 
 class SupabaseLogger:
