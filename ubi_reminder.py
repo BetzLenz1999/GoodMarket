@@ -61,14 +61,17 @@ def _get_sessions_to_remind():
         return []
     try:
         today = _today_utc()
-        # Use a filter on the dedup column. Rows where the column is NULL or
-        # older than today are eligible; we exclude is_eq today explicitly.
+        # Eligible = not yet reminded today. The dedup column is NULL for all
+        # rows that have never been reminded, so we must include NULLs — a bare
+        # `.neq(col, today)` drops NULL rows in PostgREST (NULL != x → NULL,
+        # not true), which would silently skip every existing user. Combine
+        # `IS NULL` with `!= today` via an OR filter instead.
         result = (
             supabase.table("telegram_wallet_sessions")
             .select("telegram_chat_id, wallet_address")
             .not_.is_("telegram_chat_id", "null")
             .neq("telegram_chat_id", "")
-            .neq("ubi_reminder_sent_date", today)
+            .or_(f"ubi_reminder_sent_date.is.null,ubi_reminder_sent_date.neq.{today}")
             .order("last_seen_at", desc=True)
             .limit(_MAX_USERS)
             .execute()
