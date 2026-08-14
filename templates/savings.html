@@ -1216,12 +1216,20 @@
         'eth_signTypedData_v4',
     ]);
 
-    // RPC call with fallback support - tries each URL until one succeeds
+    // RPC call with fallback support - tries each URL until one succeeds.
+    // Mirrors wc-bridge.js `_celoJsonRpcWithFallback`: a JSON-RPC revert that
+    // already carries `error.data` (the 0x revert bytes) is thrown immediately
+    // so ethers.js can decode the reason — reverts WITHOUT `data` fall through
+    // to the next URL, since a different Celo node may format the same revert
+    // with the `data` blob. Preserving `error.code` + `error.data` here is what
+    // stops ethers v6 from collapsing the failure into the opaque
+    // "missing revert data in call exception" / "RPC endpoint returned HTTP
+    // client error" strings users used to see on the approve / save path.
     async function _rpcCallWithFallback(urls, method, params) {
         const lastError = new Error('All RPC endpoints failed');
-        for (const url of urls) {
+        for (let i = 0; i < urls.length; i++) {
             try {
-                const resp = await fetch(url, {
+                const resp = await fetch(urls[i], {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1233,12 +1241,19 @@
                 });
                 const data = await resp.json();
                 if (data && data.error) {
-                    throw new Error(data.error.message || 'Celo RPC error');
+                    const e = new Error(data.error.message || 'Celo RPC error');
+                    e.code = (typeof data.error.code === 'number') ? data.error.code : -32603;
+                    if (data.error.data !== undefined && data.error.data !== null) e.data = data.error.data;
+                    lastError = e;
+                    // Revert bytes present → deterministic; no point retrying.
+                    if (data.error.data != null) throw e;
+                    continue; // try next URL (may carry the data blob)
                 }
                 return data ? data.result : null;
             } catch (e) {
+                // A revert we already shaped with .data must propagate as-is.
+                if (e && e.data != null) throw e;
                 lastError = e;
-                // Try next URL
             }
         }
         throw lastError;
@@ -1340,6 +1355,80 @@
             // without round-tripping to a wallet that doesn't speak those.
             return _wcCeloJsonRpc(method, params || []);
         }
+    }
+
+    // When the wallet / RPC reports a savings approve / save / withdraw / pool
+    // revert as the opaque "missing revert data" or "RPC endpoint returned
+    // HTTP client error" (ethers v6 fires these whenever an eth_call /
+    // eth_estimateGas reverted without a recoverable `data` blob, or the
+    // wallet's RPC returned an HTTP 4xx), re-run the EXACT same calldata as a
+    // read-only eth_call against several public Celo RPC endpoints. At least
+    // one will typically return the revert `data` blob, which we decode into a
+    // human reason. Also checks ERC-20 allowance + balance so the most common
+    // real causes (missing approval, insufficient balance) surface a clear
+    // hint even when no revert bytes are recoverable.
+    //
+    // Mirrors swap.html `_enrichSwapError` so the savings page reaches parity
+    // with the fix layers already applied to wc-bridge.js / swap.html.
+    //
+    // `simParams`: { to, data, from, value } of the failing tx.
+    // `ctx`: { tokenAddr, spender, amountIn, tokenSymbol, decimals } optional,
+    //        used for the allowance/balance diagnostic.
+    async function _enrichSavingsError(err, simParams, ctx) {
+        if (!err) return err;
+        const joined = String(err.message || err.shortMessage || err.reason || "");
+        const looksRevert = /revert|missing revert data|call exception|missing revert|HTTP client error|http error|server error|rate.?limit|429/i.test(joined);
+        // If ethers already decoded a concrete reason, trust it.
+        if (looksRevert && err.reason && /reverted/i.test(err.reason) && err.data) {
+            return err;
+        }
+        if (looksRevert && window.GMTxError && GMTxError.revertReasonFromError) {
+            const existing = GMTxError.revertReasonFromError(err);
+            if (existing && existing.indexOf("selector") === -1) return err;
+        }
+        // Try to recover the real revert reason via simulation.
+        if (looksRevert && simParams && window.GMTxError && GMTxError.simulateCallCelo) {
+            try {
+                const reason = await GMTxError.simulateCallCelo(simParams);
+                if (reason) {
+                    err._gmFriendly = true;
+                    err.message = "Transaction reverted on-chain: " + reason +
+                        ". Please check the amount and token approval, then try again.";
+                    return err;
+                }
+            } catch (_) { /* fall through to diagnostic */ }
+        }
+        // Diagnostic: allowance / balance shortfall is the most common real
+        // cause behind an opaque revert on approve / save.
+        if (ctx && ctx.tokenAddr && ctx.spender && ctx.amountIn) {
+            try {
+                const rp = getReadProvider();
+                const tk = new ethers.Contract(ctx.tokenAddr, [
+                    "function allowance(address,address) view returns (uint256)",
+                    "function balanceOf(address) view returns (uint256)"
+                ], rp);
+                const [allow, bal] = await Promise.all([
+                    tk.allowance(simParams.from || WALLET, ctx.spender),
+                    tk.balanceOf(simParams.from || WALLET)
+                ]);
+                const dec = ctx.decimals || 18;
+                if (allow < ctx.amountIn) {
+                    err._gmFriendly = true;
+                    err.message = "Token approval is too low for this transaction. " +
+                        "Please re-approve " + (ctx.tokenSymbol || "the token") + " and try again.";
+                    return err;
+                }
+                if (bal < ctx.amountIn) {
+                    err._gmFriendly = true;
+                    const balH = parseFloat(ethers.formatUnits(bal, dec)).toFixed(4);
+                    const needH = parseFloat(ethers.formatUnits(ctx.amountIn, dec)).toFixed(4);
+                    err.message = "Insufficient " + (ctx.tokenSymbol || "token") +
+                        " balance: have " + balH + ", need " + needH + ". Try a smaller amount.";
+                    return err;
+                }
+            } catch (_) { /* ignore diagnostic failure */ }
+        }
+        return err;
     }
 
     // Trust Wallet mobile-specific provider discovery for savings actions.
@@ -1800,6 +1889,19 @@
                     `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
                     `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
             } else {
+                try {
+                    const approveIface = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+                    await _enrichSavingsError(err, {
+                        to: tokenAddr,
+                        data: approveIface.encodeFunctionData("approve", [SAVINGS_CONTRACT, amtWei]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: sym,
+                        decimals: selectedToken.decimals
+                    });
+                } catch (_) { /* keep original error */ }
                 const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
                 showAlert('saveAlert', 'error', '❌ Approval failed: ' + friendly);
             }
@@ -1894,6 +1996,19 @@
                     `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
                     `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
             } else {
+                try {
+                    const depositIface = new ethers.Interface(["function depositSavings(address token, uint256 amount, uint256 lockDays) external"]);
+                    await _enrichSavingsError(err, {
+                        to: SAVINGS_CONTRACT,
+                        data: depositIface.encodeFunctionData("depositSavings", [selectedToken.address, amtWei, BigInt(selectedDays)]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr: selectedToken.address, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: sym,
+                        decimals: selectedToken.decimals
+                    });
+                } catch (_) { /* keep original error */ }
                 const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
                 showAlert('saveAlert', 'error', '❌ Save failed: ' + friendly);
             }
@@ -1952,6 +2067,19 @@
                     `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
                     `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
             } else {
+                try {
+                    const withdrawIface = new ethers.Interface(["function withdraw(address token, uint256 lockDays) external"]);
+                    const tMeta = tokenMetaForAddress(tokenAddr);
+                    await _enrichSavingsError(err, {
+                        to: contractAddr,
+                        data: withdrawIface.encodeFunctionData("withdraw", [tokenAddr, BigInt(lockDays)]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr, spender: contractAddr,
+                        tokenSymbol: tMeta.symbol, decimals: tMeta.decimals
+                    });
+                } catch (_) { /* keep original error */ }
                 const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
                 showAlert('depositsAlert', 'error', '❌ Withdrawal failed: ' + friendly);
             }
@@ -2341,6 +2469,18 @@
                     `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
                     `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
             } else {
+                try {
+                    const approveIface = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+                    await _enrichSavingsError(err, {
+                        to: GD_CONTRACT,
+                        data: approveIface.encodeFunctionData("approve", [SAVINGS_CONTRACT, amtWei]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr: GD_CONTRACT, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: 'G$', decimals: 18
+                    });
+                } catch (_) { /* keep original error */ }
                 const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
                 showAlert('sponsorAlert', 'error', '❌ Approval failed: ' + friendly);
             }
@@ -2430,6 +2570,18 @@
                     `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
                     `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
             } else {
+                try {
+                    const fundIface = new ethers.Interface(["function fundRewardPool(uint256 amount) external"]);
+                    await _enrichSavingsError(err, {
+                        to: SAVINGS_CONTRACT,
+                        data: fundIface.encodeFunctionData("fundRewardPool", [amtWei]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr: GD_CONTRACT, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: 'G$', decimals: 18
+                    });
+                } catch (_) { /* keep original error */ }
                 const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
                 showAlert('sponsorAlert', 'error', '❌ Transaction failed: ' + friendly);
             }
