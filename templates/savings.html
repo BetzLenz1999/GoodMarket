@@ -1574,6 +1574,21 @@
         return false;
     }
 
+    // Trust Wallet's injected Celo provider mis-estimates gas for the
+    // ethers.BrowserProvider auto preflight, so approve/save/withdraw txs land
+    // in Trust with an inadequate gas limit and the wallet rejects them. For
+    // Trust Wallet mobile we therefore use the raw eth_sendTransaction path
+    // (_trustWalletTx) with an explicit, padded gas limit — same proven
+    // approach MiniPay uses. MetaMask and other injected wallets keep the
+    // standard ethers.Contract(signer) path (their RPC answers preflight calls
+    // correctly). PREFER_WC_SIGNING users never hit this (they use the WC shim).
+    function _useTrustWalletRawTx() {
+        if (!_isTrustWalletMobileContext()) return false;
+        if (PREFER_WC_SIGNING) return false;
+        const ep = _getEthProvider();
+        return !!(ep && (ep.isTrust || ep.isTrustWallet));
+    }
+
     // Celo Mainnet fee-currency addresses accepted by MiniPay as the
     // `feeCurrency` field on eth_sendTransaction. USDT and USDC require their
     // adapter address (NOT the token address). USDm/cUSD is used as-is.
@@ -1722,6 +1737,78 @@
         throw richErr;
     }
 
+    // ── Trust Wallet raw-tx helper ──
+    // Trust Wallet's injected Celo provider handles ethers.js BrowserProvider
+    // auto gas-estimation inconsistently — eth_estimateGas can return a too-low
+    // or zero estimate, so the approve / deposit / withdraw tx is submitted to
+    // Trust with an inadequate gas limit and the wallet rejects it with
+    // "Transaction failed". MetaMask works because its RPC answers read-only
+    // preflight calls correctly; MiniPay works because _miniPayTx sets an
+    // explicit gas limit with 40% headroom. Trust Wallet fell through to the
+    // generic ethers.Contract(signer) path with neither protection.
+    //
+    // For Trust Wallet mobile, bypass ethers entirely for tx submission (we
+    // still use ethers.Interface to encode the calldata) and send a raw
+    // eth_sendTransaction with an explicitly estimated + padded gas limit —
+    // the same proven approach MiniPay / claim / send-link use, minus the
+    // CIP-64 feeCurrency rotation (Trust pays gas in CELO).
+    async function _trustWalletTx(toAddr, abiFragment, args, valueHex) {
+        const ep = _getEthProvider();
+        if (!ep) throw new Error('No Trust Wallet provider available.');
+
+        const accounts = await ep.request({ method: 'eth_requestAccounts' });
+        const from = (accounts && accounts[0]) || WALLET;
+        if (from && WALLET && from.toLowerCase() !== WALLET.toLowerCase()) {
+            throw new Error(
+                'Wrong Trust Wallet account. Please switch to ' +
+                WALLET.slice(0, 6) + '…' + WALLET.slice(-4) + ' and try again.'
+            );
+        }
+
+        const iface = new ethers.Interface([abiFragment]);
+        const fnName = abiFragment.match(/function (\w+)/)[1];
+        const data = iface.encodeFunctionData(fnName, args);
+        const value = valueHex || '0x0';
+
+        let gasHex;
+        let gasEstimateError = null;
+        try {
+            const est = await ep.request({
+                method: 'eth_estimateGas',
+                params: [{ from, to: toAddr, data, value }],
+            });
+            const estimated = typeof est === 'string' ? BigInt(est) : BigInt(Number(est));
+            // 40% headroom — on-chain state can shift between estimate and mine.
+            gasHex = '0x' + (estimated * 140n / 100n).toString(16);
+        } catch (gasErr) {
+            gasHex = '0x7A120'; // 500 000 — safe fallback for approve / deposit / withdraw
+            gasEstimateError = gasErr;
+        }
+
+        const txParams = { from, to: toAddr, data, value, gas: gasHex };
+        try {
+            const txHash = await ep.request({
+                method: 'eth_sendTransaction',
+                params: [txParams],
+            });
+            await _miniPayWaitForReceipt(ep, txHash);
+            return txHash;
+        } catch (err) {
+            const code = err && err.code;
+            const rawMsg = (err && (err.message || (err.data && err.data.message))) || '';
+            const msg = rawMsg.toLowerCase();
+            // Surface a diagnostic so _enrichSavingsError + the catch block
+            // can recover the real revert reason via simulation.
+            if (gasEstimateError) {
+                err._gmGasEstimateFailed = true;
+            }
+            if (code === 4001 || /reject|denied by user|user denied/i.test(msg)) {
+                throw err;
+            }
+            throw err;
+        }
+    }
+
 
     async function _getPrivyProviderIfPreferred(options = {}) {
         if (!IS_PRIVY_LOGIN) return null;
@@ -1864,6 +1951,18 @@
                 return;
             }
 
+            if (_useTrustWalletRawTx()) {
+                showAlert('saveAlert', 'info', `<span class="spinner"></span> Confirm the approve in Trust Wallet…`);
+                const txHash = await _trustWalletTx(tokenAddr,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('saveAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                document.getElementById('saveBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
             showAlert('saveAlert', 'info', '<span class="spinner"></span> Check your wallet — click it to open if nothing pops up…');
             const signer = await getSigner();
             await ensureCeloNetwork();
@@ -1977,6 +2076,15 @@
                 return;
             }
 
+            if (_useTrustWalletRawTx()) {
+                showAlert('saveAlert', 'info', '<span class="spinner"></span> Confirm the save transaction in Trust Wallet…');
+                const txHash = await _trustWalletTx(SAVINGS_CONTRACT,
+                    "function depositSavings(address token, uint256 amount, uint256 lockDays) external",
+                    args);
+                onSuccess(txHash);
+                return;
+            }
+
             const signer = await getSigner();
             await ensureCeloNetwork();
 
@@ -2036,6 +2144,16 @@
             if (_isMiniPay()) {
                 showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in MiniPay…');
                 const txHash = await _miniPayTx(contractAddr, fn, args);
+                showAlert('depositsAlert', 'success',
+                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                loadDeposits(); loadStats(); refreshMySlots();
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in Trust Wallet…');
+                const txHash = await _trustWalletTx(contractAddr, fn, args);
                 showAlert('depositsAlert', 'success',
                     `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
                 );
@@ -2448,6 +2566,18 @@
                 return;
             }
 
+            if (_useTrustWalletRawTx()) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm the G$ approve in Trust Wallet…');
+                const txHash = await _trustWalletTx(GD_CONTRACT,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                document.getElementById('poolFundBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
             showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Check your wallet — click it to open if nothing pops up…');
             const signer = await getSigner();
             await ensureCeloNetwork();
@@ -2526,6 +2656,24 @@
             if (_isMiniPay()) {
                 showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm reward-pool funding in MiniPay…');
                 const txHash = await _miniPayTx(SAVINGS_CONTRACT,
+                    "function fundRewardPool(uint256 amount) external",
+                    [amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                document.getElementById('sponsorAmount').value = '';
+                document.getElementById('poolApproveBtn').disabled = false;
+                document.getElementById('poolApproveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending';
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool';
+                loadStats(); loadSponsorStats();
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm reward-pool funding in Trust Wallet…');
+                const txHash = await _trustWalletTx(SAVINGS_CONTRACT,
                     "function fundRewardPool(uint256 amount) external",
                     [amtWei]);
                 showAlert('sponsorAlert', 'success',
