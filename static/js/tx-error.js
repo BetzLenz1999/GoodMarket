@@ -287,6 +287,36 @@
         return _isUserRejection(info.code, info.joined || "");
     }
 
+    // Gas-specific failure detection, exposed so savings.html / swap.html can
+    // surface a gas-related message BEFORE their revert/allowance/balance
+    // diagnostics. Otherwise a gas failure looks like an opaque revert and the
+    // user gets told to "check the amount and token approval" when they really
+    // just need CELO for gas. Covers:
+    //  - insufficient funds for gas (wallet/estimateGas)
+    //  - out of gas / intrinsic gas too low / exceeds block gas limit
+    //  - app-level flag set by raw-tx helpers when eth_estimateGas itself failed
+    function isInsufficientFunds(err) {
+        if (err == null) return false;
+        var joined = String(err.message || err.shortMessage || err.reason || "");
+        return _isInsufficientFunds(joined);
+    }
+
+    function isGasIssue(err) {
+        if (err == null) return false;
+        if (err && err._gmGasEstimateFailed === true) return true;
+        var joined = String(err.message || err.shortMessage || err.reason || "");
+        return _isGasIssue(joined);
+    }
+
+    function isGasRelated(err) {
+        if (err == null) return false;
+        var joined = String(err.message || err.shortMessage || err.reason || "");
+        if (_isGasIssue(joined)) return true;
+        if (_isInsufficientFunds(joined) && /gas|fee|celo/i.test(joined)) return true;
+        if (err && err._gmGasEstimateFailed === true) return true;
+        return false;
+    }
+
     // Run a read-only eth_call against a Celo RPC endpoint to recover the real
     // revert reason for a transaction that the wallet/RPC reported as
     // "missing revert data". Returns a decoded reason string, or "" when the
@@ -343,6 +373,9 @@
         // and run a fallback simulation when ethers reports "missing revert data".
         decodeRevertData: _decodeRevertData,
         revertReasonFromError: _revertReasonFromError,
-        simulateCallCelo: _simulateCallCelo
+        simulateCallCelo: _simulateCallCelo,
+        isInsufficientFunds: isInsufficientFunds,
+        isGasIssue: isGasIssue,
+        isGasRelated: isGasRelated
     };
 })(typeof window !== "undefined" ? window : globalThis);
