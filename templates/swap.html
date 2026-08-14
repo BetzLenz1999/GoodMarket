@@ -2143,6 +2143,21 @@
         async function _enrichSwapError(err, simParams, ctx) {
             if (!err) return err;
             const joined = String(err.message || err.shortMessage || err.reason || "");
+            // Gas-related failures first — if the real cause is gas, the
+            // "Transaction reverted… check amount and approval" / "Token approval
+            // is too low" messages below would mislead the user into fixing the
+            // wrong thing. Surface a gas-specific message before anything else.
+            if (window.GMTxError && GMTxError.isGasRelated && GMTxError.isGasRelated(err)) {
+                err._gmFriendly = true;
+                if (GMTxError.isInsufficientFunds && GMTxError.isInsufficientFunds(err)) {
+                    err.message = "Insufficient CELO for gas fees. " +
+                        "Please top up your wallet with a little CELO and try again.";
+                } else {
+                    err.message = "Transaction needs more gas. " +
+                        "Please top up CELO for gas fees and try again.";
+                }
+                return err;
+            }
             const looksRevert = /revert|missing revert data|call exception|missing revert/i.test(joined);
             // If ethers already decoded a concrete reason, trust it.
             if (looksRevert && err.reason && /reverted/i.test(err.reason) && err.data) {
