@@ -1,381 +1,2981 @@
-/* GoodMarket transaction-error formatter
- *
- * Frontend pages call ethers.js / WalletConnect / MiniPay through a wide
- * variety of paths, and each of them surfaces failures with a different
- * shape. ethers v6 in particular wraps EIP-1193 errors as
- *   "could not coalesce error (error={…},payload={…},code=UNKNOWN_ERROR,…)"
- * which is fine for debugging but is hostile UX when shown directly to a
- * non-developer.
- *
- * `GMTxError.format(err)` walks the (possibly nested) error and returns a
- * short, human-readable message that's safe to drop into an alert string
- * with no JSON / dev-only fields leaking through.
- *
- * The detector covers:
- *   - User cancellations (EIP-1193 4001, WalletConnect 5000/5001/-32603,
- *     "user rejected", "user denied", "user disapproved", "request rejected",
- *     etc.)
- *   - Insufficient balance / funds
- *   - Gas estimation / out-of-gas
- *   - Network / RPC connectivity
- *   - Approval-required hints
- *   - Generic fallback that strips ethers.js boilerplate
- *
- * No external dependencies — load before any caller via
- *   <script src="/static/js/tx-error.js?v={{ ASSET_VERSION }}"></script>
- */
-(function (global) {
-    "use strict";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Savings – GoodMarket</title>
+    <meta name="theme-color" content="#7c3aed">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
+    <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+          integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0"
+          crossorigin="anonymous" referrerpolicy="no-referrer"/>
 
-    if (global.GMTxError && typeof global.GMTxError.format === "function") return;
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        * { margin:0; padding:0; box-sizing:border-box; }
 
-    // Wrap a thrown Error so format() will pass `.message` through verbatim
-    // (instead of running it through the wallet/RPC pattern detector and
-    // replacing it with a generic "Insufficient funds for gas" string).
-    // Use this for preflight errors where the caller already produced a
-    // user-facing message.
-    function asFriendly(err) {
-        if (err && typeof err === "object") {
-            try { err._gmFriendly = true; } catch (_) {}
+        /* ── Compact 70% scale ──
+           Matches wallet.html compact sizing using CSS-only scaling so the
+           Savings page is denser on desktop, mobile, and dapp browsers. */
+        html { zoom: 0.7; }
+        @supports not (zoom: 1) {
+            body {
+                transform: scale(0.7);
+                transform-origin: top center;
+                width: 142.857%;
+                margin-left: -21.4285%;
+            }
+        }
+
+        body { font-family:'Inter',sans-serif; background:linear-gradient(135deg,#0B0F2A 0%,#130D35 50%,#1A103D 100%); color:#e2e8f0; min-height:100vh; }
+
+        /* ── Navbar ── */
+        .navbar { background:rgba(11,15,42,0.92); border-bottom:1px solid rgba(255,255,255,0.07); padding:0 1.5rem; position:sticky; top:0; z-index:100; backdrop-filter:blur(20px); box-shadow:0 1px 24px rgba(0,0,0,0.35); }
+        .nav-container { max-width:1300px; margin:0 auto; display:flex; justify-content:flex-start; align-items:center; height:56px; gap:.75rem; }
+        .back-wallet-btn { display:inline-flex; align-items:center; justify-content:center; padding:.4rem .8rem; border-radius:10px; border:1px solid rgba(124,58,237,.24); background:rgba(124,58,237,.12); color:#fff; text-decoration:none; font-weight:700; white-space:nowrap; flex-shrink:0; }
+        .back-wallet-btn:hover { background:rgba(124,58,237,.2); }
+        .logo { font-size:1.2rem; font-weight:800; color:#7c3aed; text-decoration:none; letter-spacing:-.5px; white-space:nowrap; flex-shrink:0; }
+        .nav-links { display:flex; gap:.1rem; align-items:center; flex-wrap:nowrap; overflow:hidden; }
+        .nav-links a { color:rgba(255,255,255,.55); text-decoration:none; font-weight:500; font-size:.875rem; white-space:nowrap; padding:.4rem .65rem; border-radius:8px; transition:color .2s,background .2s; }
+        .nav-links a:hover { color:#a78bfa; background:rgba(124,58,237,.1); }
+        .nav-links a.active { color:#fff; background:rgba(124,58,237,.18); font-weight:600; }
+        .nav-sep { width:1px; height:20px; background:rgba(255,255,255,.12); margin:0 .4rem; flex-shrink:0; }
+        .wallet-tag { background:rgba(124,58,237,.12); border:1px solid rgba(124,58,237,.28); border-radius:20px; padding:.28rem .8rem; font-weight:600; font-family:'Courier New',monospace; font-size:.8rem; color:#a78bfa; white-space:nowrap; flex-shrink:0; }
+        .logout-btn { background:rgba(239,68,68,.1)!important; border:1px solid rgba(239,68,68,.25)!important; color:#f87171!important; padding:.28rem .85rem!important; border-radius:20px!important; font-size:.85rem!important; white-space:nowrap!important; flex-shrink:0; }
+        .logout-btn:hover { background:rgba(239,68,68,.2)!important; }
+        @media(max-width:768px){ .navbar{padding:0 .75rem;} .nav-links{flex-wrap:wrap;gap:.15rem;justify-content:flex-end;overflow:visible;} .nav-links a{font-size:.78rem;padding:.28rem .5rem;} }
+
+        /* ── Layout ── */
+        .container { max-width:920px; margin:0 auto; padding:1rem 1.25rem 1.5rem; }
+        .page-header { margin-bottom:1rem; }
+        .page-title { font-size:1.5rem; font-weight:800; color:#fff; letter-spacing:-.5px; margin-bottom:.2rem; }
+        .page-subtitle { color:rgba(255,255,255,.45); font-size:.85rem; }
+
+
+
+        /* ── Cards ── */
+        .card { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:1.1rem; margin-bottom:.85rem; }
+        .card-title { font-size:.7rem; font-weight:600; color:rgba(255,255,255,.35); letter-spacing:.1em; text-transform:uppercase; margin-bottom:.85rem; }
+
+        /* ── Stats row ── */
+        .stats-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.6rem; margin-bottom:.85rem; }
+        .stat-box { background:rgba(124,58,237,.07); border:1px solid rgba(124,58,237,.18); border-radius:10px; padding:.7rem .85rem; }
+        .stat-label { font-size:.7rem; color:rgba(255,255,255,.4); margin-bottom:.2rem; }
+        .stat-value { font-size:1.05rem; font-weight:700; color:#e2e8f0; }
+        .stat-sub { font-size:.7rem; color:rgba(255,255,255,.3); margin-top:.1rem; }
+
+        /* ── Duration picker ── */
+        .dur-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(85px,1fr)); gap:.5rem; margin-bottom:.85rem; }
+        .dur-btn { padding:.55rem .5rem; border-radius:10px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.03); color:rgba(255,255,255,.55); font-weight:600; font-size:.78rem; cursor:pointer; transition:all .2s; text-align:center; }
+        .dur-btn:hover { border-color:rgba(124,58,237,.4); color:#a78bfa; }
+        .dur-btn.selected { background:rgba(124,58,237,.22); border-color:rgba(124,58,237,.6); color:#c4b5fd; }
+        .dur-btn .dur-label { font-size:.68rem; font-weight:400; color:rgba(255,255,255,.35); margin-top:.15rem; }
+
+        /* ── Form inputs ── */
+        .form-group { margin-bottom:1rem; }
+        .form-group label { display:block; font-size:.78rem; color:rgba(255,255,255,.45); margin-bottom:.45rem; }
+        .input-wrap { position:relative; }
+        .input-wrap input { width:100%; padding:.75rem 3.5rem .75rem 1rem; border-radius:10px; border:1px solid rgba(255,255,255,.1); background:rgba(0,0,0,.25); color:#e2e8f0; font-size:.95rem; outline:none; transition:border-color .2s; }
+        .input-wrap input:focus { border-color:rgba(124,58,237,.5); }
+        .input-suffix { position:absolute; right:.9rem; top:50%; transform:translateY(-50%); font-size:.8rem; color:rgba(255,255,255,.35); font-weight:600; }
+        .hint { font-size:.73rem; color:rgba(255,255,255,.3); margin-top:.35rem; }
+
+        /* ── Buttons ── */
+        .btn { padding:.8rem 1.5rem; border-radius:10px; font-weight:700; font-size:.9rem; border:none; cursor:pointer; transition:all .2s; }
+        .btn:disabled { opacity:.4; cursor:not-allowed; }
+        .btn-primary { background:linear-gradient(135deg,#7c3aed,#6d28d9); color:#fff; width:100%; box-shadow:0 4px 20px rgba(124,58,237,.35); }
+        .btn-primary:not(:disabled):hover { opacity:.9; transform:translateY(-1px); }
+        .btn-outline { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); color:rgba(255,255,255,.65); padding:.55rem 1.2rem; font-size:.82rem; }
+        .btn-outline:hover { background:rgba(255,255,255,.09); color:#fff; }
+        .btn-green { background:linear-gradient(135deg,#059669,#047857); color:#fff; }
+        .btn-green:not(:disabled):hover { opacity:.9; }
+
+        /* ── Alert ── */
+        .alert { border-radius:10px; padding:.9rem 1.1rem; margin-bottom:1rem; font-size:.875rem; line-height:1.55; display:none; }
+        .alert-info { background:rgba(99,102,241,.12); border:1px solid rgba(99,102,241,.3); color:#a5b4fc; }
+        .alert-success { background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.25); color:#6ee7b7; }
+        .alert-error { background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.25); color:#fca5a5; }
+        .alert-warn { background:rgba(245,158,11,.09); border:1px solid rgba(245,158,11,.22); color:#fcd34d; }
+
+        /* ── Deposits table ── */
+        .dep-list { display:flex; flex-direction:column; gap:.75rem; }
+        .dep-card { background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.07); border-radius:12px; padding:1rem 1.2rem; display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; }
+        .dep-card.unlocked { border-color:rgba(16,185,129,.25); }
+        .dep-card.withdrawn { opacity:.7; border-color:rgba(148,163,184,.18); background:rgba(0,0,0,.12); }
+        .dep-card.withdrawn .dep-amount { color:rgba(226,232,240,.7); }
+        .dep-amount { font-size:1.05rem; font-weight:700; color:#e2e8f0; min-width:120px; }
+        .dep-meta { flex:1; min-width:160px; }
+        .dep-meta .row { font-size:.78rem; color:rgba(255,255,255,.45); margin-bottom:.15rem; }
+        .dep-meta .row span { color:#c4b5fd; font-weight:600; }
+        .dep-badge { padding:.25rem .7rem; border-radius:20px; font-size:.72rem; font-weight:700; }
+        .badge-locked { background:rgba(245,158,11,.12); border:1px solid rgba(245,158,11,.25); color:#fcd34d; }
+        .badge-ready { background:rgba(16,185,129,.12); border:1px solid rgba(16,185,129,.25); color:#34d399; }
+        .badge-done { background:rgba(148,163,184,.08); border:1px solid rgba(148,163,184,.2); color:#94a3b8; }
+        .badge-bonus { background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.3); color:#c4b5fd; font-size:.68rem; margin-left:.4rem; }
+
+        /* ── Steps ── */
+        .steps { list-style:none; display:flex; flex-direction:column; gap:.7rem; }
+        .step { display:flex; gap:.85rem; align-items:flex-start; }
+        .step-n { width:26px; height:26px; border-radius:50%; background:rgba(124,58,237,.2); border:1px solid rgba(124,58,237,.4); display:flex; align-items:center; justify-content:center; font-size:.72rem; font-weight:700; color:#a78bfa; flex-shrink:0; margin-top:2px; }
+        .step-t { font-size:.87rem; color:rgba(255,255,255,.68); line-height:1.55; }
+        .step-t strong { color:#c4b5fd; }
+
+        /* ── Bonus highlight ── */
+        .bonus-box { background:rgba(124,58,237,.07); border:1px solid rgba(124,58,237,.22); border-radius:12px; padding:1rem 1.2rem; display:flex; gap:.85rem; align-items:flex-start; }
+        .bonus-icon { font-size:1.4rem; flex-shrink:0; }
+        .bonus-text { font-size:.85rem; color:rgba(255,255,255,.65); line-height:1.55; }
+        .bonus-text strong { color:#c4b5fd; }
+
+        /* ── Spinner ── */
+        .spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,.2); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:.4rem; }
+        @keyframes spin { to{transform:rotate(360deg);} }
+
+        /* ── Tabs ── */
+        .tabs { display:flex; gap:.5rem; margin-bottom:1.25rem; border-bottom:1px solid rgba(255,255,255,.08); padding-bottom:0; }
+        .tab-btn { padding:.6rem 1.1rem; border:none; background:none; color:rgba(255,255,255,.4); font-size:.875rem; font-weight:600; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .2s,border-color .2s; }
+        .tab-btn.active { color:#a78bfa; border-bottom-color:#7c3aed; }
+        .tab-panel { display:none; }
+        .tab-panel.active { display:block; }
+
+        .divider { height:1px; background:rgba(255,255,255,.06); margin:1.25rem 0; }
+
+        .empty-state { text-align:center; padding:2.5rem 1rem; color:rgba(255,255,255,.3); font-size:.9rem; }
+    </style>
+    <!-- WalletConnect bridge for users without injected wallet -->
+    <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <div id="privyWalletMount" style="display:none"></div>
+    <script type="module">
+        import React, {useEffect} from 'https://esm.sh/react@18.3.1';
+        import {createRoot} from 'https://esm.sh/react-dom@18.3.1/client';
+        import {PrivyProvider, usePrivy, useWallets} from 'https://esm.sh/@privy-io/react-auth@3.32.2?deps=react@18.3.1,react-dom@18.3.1';
+
+
+        const CELO_PRIVY_CHAIN = {
+            id: 42220,
+            name: 'Celo',
+            network: 'celo',
+            nativeCurrency: {name: 'CELO', symbol: 'CELO', decimals: 18},
+            rpcUrls: {
+                default: {http: ['https://forno.celo.org']},
+                public: {http: ['https://forno.celo.org']}
+            },
+            blockExplorers: {
+                default: {name: 'CeloScan', url: 'https://celoscan.io'}
+            }
+        };
+
+        const FUSE_PRIVY_CHAIN = {
+            id: 122,
+            name: 'Fuse',
+            network: 'fuse',
+            nativeCurrency: {name: 'Fuse', symbol: 'FUSE', decimals: 18},
+            rpcUrls: {
+                default: {http: ['https://rpc.fuse.io']},
+                public: {http: ['https://rpc.fuse.io']}
+            },
+            blockExplorers: {
+                default: {name: 'Fuse Explorer', url: 'https://explorer.fuse.io'}
+            }
+        };
+
+        const XDC_PRIVY_CHAIN = {
+            id: 50,
+            name: 'XDC Network',
+            network: 'xdc',
+            nativeCurrency: {name: 'XDC', symbol: 'XDC', decimals: 18},
+            rpcUrls: {
+                default: {http: ['https://earpc.xinfin.network']},
+                public: {http: ['https://earpc.xinfin.network']}
+            },
+            blockExplorers: {
+                default: {name: 'XDCScan', url: 'https://xdcscan.com'}
+            }
+        };
+
+        const BASE_PRIVY_CHAIN = {
+            id: 8453,
+            name: 'Base',
+            network: 'base',
+            nativeCurrency: {name: 'Ether', symbol: 'ETH', decimals: 18},
+            rpcUrls: {
+                default: {http: ['https://mainnet.base.org']},
+                public: {http: ['https://mainnet.base.org']}
+            },
+            blockExplorers: {
+                default: {name: 'BaseScan', url: 'https://basescan.org'}
+            }
+        };
+
+        const GM_PRIVY_SUPPORTED_CHAINS = [CELO_PRIVY_CHAIN, FUSE_PRIVY_CHAIN, XDC_PRIVY_CHAIN, BASE_PRIVY_CHAIN];
+
+        const privyConfig = {
+            appId: {{ privy_app_id|default('', true)|tojson }},
+            clientId: {{ privy_client_id|default('', true)|tojson }}
+        };
+
+        function PrivyWalletBridge() {
+            const {ready, authenticated, login} = usePrivy();
+            const {wallets} = useWallets();
+
+            useEffect(() => {
+                window.GMPrivyReady = !!ready;
+                window.GMPrivyAuthenticated = !!authenticated;
+                window.GMPrivyLogin = login;
+                window.GMPrivyWallets = wallets || [];
+                window.dispatchEvent(new CustomEvent('gm:privy-wallets-updated'));
+            }, [ready, authenticated, login, wallets]);
+
+            return null;
+        }
+
+        if (privyConfig.appId) {
+            const mount = document.getElementById('privyWalletMount');
+            if (mount) {
+                createRoot(mount).render(
+                    React.createElement(PrivyProvider, {
+                        appId: privyConfig.appId,
+                        clientId: privyConfig.clientId || undefined,
+                        config: {
+                            loginMethods: ['email', 'google', 'wallet'],
+                            defaultChain: CELO_PRIVY_CHAIN,
+                            supportedChains: GM_PRIVY_SUPPORTED_CHAINS,
+                            embeddedWallets: {ethereum: {createOnLogin: 'users-without-wallets'}},
+                            appearance: {theme: 'dark', accentColor: '#7f8cff'}
+                        }
+                    }, React.createElement(PrivyWalletBridge))
+                );
+            }
+        }
+    </script>
+    <script>
+        if (typeof GMWalletConnect !== "undefined") {
+            GMWalletConnect.configure({
+                walletAddress: "{{ wallet }}",
+                loginMethod: "{{ login_method }}",
+                projectId: "{{ walletconnect_project_id|default('', true) }}",
+                sidecarEnabled: false,
+                dappName: "GoodMarket — Savings",
+                dappDescription: "Lock and earn G$ rewards on Celo",
+                assetVersion: "{{ ASSET_VERSION }}",
+            });
+        }
+    </script>
+</head>
+<body>
+
+<!-- Navbar -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/wallet" class="back-wallet-btn">← Back to Wallet</a>
+        </div>
+    </nav>
+
+<div class="container">
+    {% include "_security_banner.html" %}
+    {# Savings explainer — what / why-safe / why-save. Dismissible, shown
+       once per browser via localStorage. Self-contained styles. #}
+    {% include "_savings_intro_banner.html" %}
+
+    <!-- Header -->
+    <div class="page-header">
+        <h1 class="page-title">🏦 Savings</h1>
+        <p class="page-subtitle">Lock G$, CELO, cUSD, or USDT for any custom duration from 1 to 360 days — reward estimates update live as you type. Top-ups inherit the slot's original unlock date.</p>
+    </div>
+
+    <!-- Contract Stats -->
+    <div class="stats-row" id="statsRow">
+        <div class="stat-box">
+            <div class="stat-label">Locked G$</div>
+            <div class="stat-value" id="statLockedGd">—</div>
+            <div class="stat-sub">Across all savers</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Locked CELO</div>
+            <div class="stat-value" id="statLockedCelo">—</div>
+            <div class="stat-sub">Across all savers</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Locked cUSD</div>
+            <div class="stat-value" id="statLockedCusd">—</div>
+            <div class="stat-sub">Across all savers</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Locked USDT</div>
+            <div class="stat-value" id="statLockedUsdt">—</div>
+            <div class="stat-sub">Across all savers</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Reward Pool</div>
+            <div class="stat-value" id="statPool">—</div>
+            <div class="stat-sub">G$ bonuses available</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Total Slots</div>
+            <div class="stat-value" id="statCount">—</div>
+            <div class="stat-sub">Saves ever opened</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Contract</div>
+            <div class="stat-value" style="font-size:.78rem; font-family:monospace; word-break:break-all;">
+                <a href="https://celoscan.io/address/{{ savings_contract }}" target="_blank" style="color:#a78bfa;">{{ savings_contract[:10] }}…</a>
+            </div>
+            <div class="stat-sub">Celo Mainnet · v5</div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('save')">💾 Save</button>
+        <button class="tab-btn" onclick="switchTab('deposits')">📋 My Saves</button>
+        <button class="tab-btn" onclick="switchTab('sponsor')">🤝 Sponsor Pool</button>
+        <button class="tab-btn" onclick="switchTab('info')">ℹ️ How It Works</button>
+    </div>
+
+    <!-- ── TAB: SAVE ── -->
+    <div class="tab-panel active" id="tab-save">
+        <div class="card">
+            <div class="card-title">Lock Tokens into Savings</div>
+
+            <!-- Alert -->
+            <div id="saveAlert" class="alert"></div>
+
+            <!-- Step 0: Choose token -->
+            <div class="form-group">
+                <label>1 · Choose Token</label>
+                <div class="dur-grid" id="tokenGrid" style="grid-template-columns:repeat(4,1fr);">
+                    <div class="dur-btn selected" data-token="gd"   onclick="selectToken(this)">G$<div class="dur-label">GoodDollar</div></div>
+                    <div class="dur-btn"          data-token="celo" onclick="selectToken(this)">CELO<div class="dur-label">Celo native</div></div>
+                    <div class="dur-btn"          data-token="cusd" onclick="selectToken(this)">cUSD<div class="dur-label">Celo Dollar</div></div>
+                    <div class="dur-btn"          data-token="usdt" onclick="selectToken(this)">USDT<div class="dur-label">Tether (Celo)</div></div>
+                </div>
+            </div>
+
+            <!-- Step 1: Choose lock period -->
+            <div class="form-group">
+                <label>2 · Choose Lock Period</label>
+                <div class="input-wrap">
+                    <input type="number" id="lockDaysInput" value="30" min="1" max="360" step="1" inputmode="numeric" oninput="onLockDaysChange()">
+                    <span class="input-suffix">days</span>
+                </div>
+                <div class="hint" id="periodHint">Enter any whole-number lock duration from 1 to 360 days. Reward estimates update as you type.</div>
+            </div>
+
+            <!-- Step 2: Amount -->
+            <div class="form-group">
+                <label>3 · Enter Amount</label>
+                <div class="input-wrap">
+                    <input type="number" id="saveAmount" placeholder="e.g. 5000" min="1" step="1" oninput="onAmountChange()">
+                    <span class="input-suffix" id="saveAmountSuffix">G$</span>
+                </div>
+                <div class="hint" id="saveAmountHint">Min: 1,000 G$ &nbsp;·&nbsp; Max: 10,000,000 G$</div>
+            </div>
+
+            <!-- Top-up notice -->
+            <div class="bonus-box" id="topupNotice" style="display:none; margin-bottom:1rem; background:rgba(56,189,248,.07); border-color:rgba(56,189,248,.25);">
+                <div class="bonus-icon">🔄</div>
+                <div class="bonus-text" id="topupNoticeText">
+                    You already have an active slot for this token + lock duration. <strong>This deposit will be added to that slot.</strong> The unlock date stays the same — top-ups never extend it.
+                </div>
+            </div>
+
+            <!-- Bonus notice -->
+            <div class="bonus-box" id="bonusNotice" style="display:none; margin-bottom:1rem;">
+                <div class="bonus-icon">🎁</div>
+                <div class="bonus-text" id="bonusNoticeText">
+                    Enter an amount to see your estimated reward.
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div class="card" style="margin-bottom:1rem; background:rgba(0,0,0,.2); border-color:rgba(255,255,255,.06);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
+                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Token</span>
+                    <span id="summaryToken" style="font-weight:700; color:#e2e8f0;">G$</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
+                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Lock Amount</span>
+                    <span id="summaryAmount" style="font-weight:700; color:#e2e8f0;">—</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
+                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Lock Period</span>
+                    <span id="summaryDuration" style="font-weight:700; color:#e2e8f0;">30 days</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Unlocks On</span>
+                    <span id="summaryUnlocks" style="font-weight:700; color:#a78bfa;">—</span>
+                </div>
+            </div>
+
+            <!-- Action steps -->
+            <div id="actionStep1" style="display:block;">
+                <button class="btn btn-outline" onclick="doApprove()" id="approveBtn" style="width:100%; margin-bottom:.6rem;">
+                    <i class="fas fa-check-circle"></i> <span id="approveBtnLabel">Step 1 — Approve G$ Spending</span>
+                </button>
+                <button class="btn btn-primary" onclick="doSave()" id="saveBtn" disabled>
+                    <i class="fas fa-lock"></i> <span id="saveBtnLabel">Step 2 — Lock 30 days G$</span>
+                </button>
+            </div>
+
+            <p style="font-size:.73rem; color:rgba(255,255,255,.25); text-align:center; margin-top:.85rem;">
+                Funds are locked until the unlock date. Only YOU can withdraw. GoodMarket cannot access your deposit. Early withdrawal is <strong>not allowed</strong>.
+            </p>
+        </div>
+    </div>
+
+    <!-- ── TAB: MY SAVES ── -->
+    <div class="tab-panel" id="tab-deposits">
+        <div class="card">
+            <div class="card-title">My Saves</div>
+            <div id="depositsAlert" class="alert"></div>
+            <p style="font-size:.78rem; color:rgba(255,255,255,.55); margin-bottom:.55rem;">
+                <strong>Total Saved (history):</strong> <span id="myTotalSaved">0</span>
+            </p>
+            <p style="font-size:.75rem; color:rgba(255,255,255,.35); margin-bottom:.85rem;">
+                Each row is a unique <strong>(token · period)</strong> slot. Top-ups merge into the same slot and inherit the original unlock date. Already-withdrawn saves are tucked into the collapsible <em>Withdrawn History</em> below — rebuilt from on-chain events, so it works on any device.
+            </p>
+            <div id="depList" class="dep-list">
+                <div class="empty-state">Loading your saves…</div>
+            </div>
+        </div>
+
+        <div class="card" id="legacyV5Card" style="display:none; margin-top:1.25rem; border-color:rgba(167,139,250,.22); background:rgba(167,139,250,.04);">
+            <button type="button"
+                    id="legacyV5Toggle"
+                    onclick="toggleLegacyV5()"
+                    style="width:100%; background:transparent; border:none; padding:0; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:.75rem;">
+                <span style="font-size:1.05rem; font-weight:600; color:#f5f5f7;">
+                    ⏪Legacy v5 Saves
+                    <span id="legacyV5Count" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(167,139,250,.22); color:#ddd6fe; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
+                    <span style="display:inline-block; margin-left:.35rem; padding:.05rem .45rem; background:rgba(167,139,250,.16); color:#c4b5fd; border-radius:6px; font-size:.62rem; font-weight:700; letter-spacing:.04em; vertical-align:middle;">WITHDRAW-ONLY</span>
+                </span>
+                <span id="legacyV5Chevron" style="color:rgba(255,255,255,.45); font-size:.9rem;">▾</span>
+            </button>
+            <div id="legacyV5Body" style="display:none; margin-top:.95rem;">
+                <p style="font-size:.74rem; color:rgba(255,255,255,.45); margin-bottom:.7rem;">
+                    Old v5 slots remain withdrawable here while the new v6 flow runs on the current contract. Top-ups and new deposits should go to v6; this panel is only for legacy v5 withdrawals.
+                </p>
+                <div id="legacyV5ActiveList" class="dep-list">
+                    <div class="empty-state">No legacy v5 saves yet.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Legacy v5 withdrawn history panel -->
+        <div class="card" id="legacyV5WithdrawnCard" style="display:none; margin-top:1.25rem; border-color:rgba(167,139,250,.18); background:rgba(167,139,250,.03);">
+            <button type="button"
+                    id="legacyV5WithdrawnToggle"
+                    onclick="toggleLegacyV5Withdrawn()"
+                    style="width:100%; background:transparent; border:none; padding:0; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:.75rem;">
+                <span style="font-size:.95rem; font-weight:600; color:#ddd6fe;">
+                    ⏪Legacy v5 Withdrawn
+                    <span id="legacyV5WithdrawnCount" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(167,139,250,.18); color:#c4b5fd; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
+                </span>
+                <span id="legacyV5WithdrawnChevron" style="color:rgba(255,255,255,.35); font-size:.9rem;">▾</span>
+            </button>
+            <div id="legacyV5WithdrawnBody" style="display:none; margin-top:.75rem;">
+                <div id="legacyV5WithdrawnList" class="dep-list">
+                    <div class="empty-state">No legacy v5 withdrawals yet.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Withdrawn history panel — collapsible and built from on-chain
+             events. Source of truth is the current contract, not localStorage. -->
+        <div class="card" id="withdrawnCard" style="display:none; margin-top:1.25rem; border-color:rgba(148,163,184,.22); background:rgba(148,163,184,.04);">
+            <button type="button"
+                    id="withdrawnToggle"
+                    onclick="toggleWithdrawn()"
+                    style="width:100%; background:transparent; border:none; padding:0; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:.75rem;">
+                <span style="font-size:1.05rem; font-weight:600; color:#f5f5f7;">
+                    📜 Withdrawn History
+                    <span id="withdrawnCount" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(148,163,184,.22); color:#cbd5e1; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
+                    <span style="display:inline-block; margin-left:.35rem; padding:.05rem .45rem; background:rgba(167,139,250,.16); color:#c4b5fd; border-radius:6px; font-size:.62rem; font-weight:700; letter-spacing:.04em; vertical-align:middle;">ON-CHAIN</span>
+                </span>
+                <span id="withdrawnChevron" style="color:rgba(255,255,255,.45); font-size:.9rem;">▾</span>
+            </button>
+            <div id="withdrawnBody" style="display:none; margin-top:.95rem;">
+                <p style="font-size:.74rem; color:rgba(255,255,255,.45); margin-bottom:.7rem;">
+                    Saves you've already withdrawn from the current contract. Each row links to the matching <strong>CeloScan</strong> transaction so the full history is auditable on any device — no browser cache required.
+                </p>
+                <div id="withdrawnList" class="dep-list">
+                    <div class="empty-state">No withdrawn saves yet.</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ── TAB: SPONSOR POOL ── -->
+    <div class="tab-panel" id="tab-sponsor">
+        <div class="card">
+            <div class="card-title">Fund the Reward Pool</div>
+
+            <div class="bonus-box" style="margin-bottom:1.25rem;">
+                <div class="bonus-icon">🤝</div>
+                <div class="bonus-text">
+                    As a <strong>sponsor</strong>, your G$ goes directly into the community reward pool — used to pay custom-duration bonuses shown in the saver preview. Your contribution is permanently recorded on-chain.
+                </div>
+            </div>
+
+            <div id="sponsorAlert" class="alert"></div>
+
+            <div class="form-group">
+                <label>Amount to Contribute</label>
+                <div class="input-wrap">
+                    <input type="number" id="sponsorAmount" placeholder="e.g. 10000" min="1" step="1">
+                    <span class="input-suffix">G$</span>
+                </div>
+                <div class="hint">Any amount above 0 G$ is accepted.</div>
+            </div>
+
+            <button class="btn btn-outline" onclick="doPoolApprove()" id="poolApproveBtn" style="width:100%; margin-bottom:.6rem;">
+                <i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending
+            </button>
+            <button class="btn btn-primary" onclick="doFundPool()" id="poolFundBtn" disabled>
+                <i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool
+            </button>
+
+            <p style="font-size:.73rem; color:rgba(255,255,255,.25); text-align:center; margin-top:.85rem;">
+                Funds go directly into the <code style="color:#a78bfa;">fundRewardPool()</code> function on the smart contract. Only used for saver bonuses.
+            </p>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Current Reward Pool</div>
+            <div style="display:flex; align-items:center; gap:1rem;">
+                <div>
+                    <div style="font-size:1.6rem; font-weight:800; color:#c4b5fd;" id="sponsorPoolStat">—</div>
+                    <div style="font-size:.78rem; color:rgba(255,255,255,.35); margin-top:.2rem;">Available for saver bonuses</div>
+                </div>
+                <button class="btn btn-outline" onclick="loadSponsorStats()" style="font-size:.78rem; padding:.4rem .9rem;">
+                    <i class="fas fa-rotate"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── TAB: INFO ── -->
+    <div class="tab-panel" id="tab-info">
+        <div class="card">
+            <div class="card-title">What is GoodMarket Savings?</div>
+            <ul class="steps">
+                <li class="step">
+                    <div class="step-n">1</div>
+                    <div class="step-t"><strong>Choose your lock duration</strong> by entering any whole number from 1 to 360 days. Your tokens go directly into a smart contract on Celo Mainnet.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n">2</div>
+                    <div class="step-t"><strong>Each (token · lock days) is a slot.</strong> If you top up the same token + duration later, the new amount is added to the existing slot — the unlock date does <strong>not</strong> change. Different day counts open separate slots.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n">3</div>
+                    <div class="step-t"><strong>Funds are frozen</strong> until the unlock date — no one (not even GoodMarket) can touch them. <strong>Early withdrawal is not allowed</strong>; only the depositor can withdraw, and only after maturity.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n">4</div>
+                    <div class="step-t"><strong>After the lock ends</strong>, click "Withdraw". Your full slot amount (plus any G$ bonus) is returned to your wallet.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n">★</div>
+                    <div class="step-t"><strong>Custom-duration preview:</strong> Reward estimates update live as you type the amount and lock days.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n">★</div>
+                    <div class="step-t"><strong>Custom-duration bonuses:</strong> 1–29 days can qualify for 30 G$ at the per-token minimum. 30–360 days can qualify for <code>lock days × 500 / 30</code> G$ at the 100k G$ equivalent tier.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n">★</div>
+                    <div class="step-t"><strong>Loyalty bonus:</strong> Locks of at least 300 days can qualify for a flat 20,000 G$ loyalty bonus at the 1M G$ equivalent tier. The reward pool funds payouts best-effort, and withdrawals remain available even when the pool is low.</div>
+                </li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Tokens, Limits &amp; Bonuses</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:.6rem; font-size:.85rem;">
+                <div style="color:rgba(255,255,255,.4);">Lock periods</div><div style="font-weight:600; color:#c4b5fd;">Any whole-number day from 1 to 360</div>
+                <div style="color:rgba(255,255,255,.4);">G$ deposit range</div><div style="font-weight:600; color:#c4b5fd;">1,000 – 10,000,000 G$</div>
+                <div style="color:rgba(255,255,255,.4);">CELO deposit range</div><div style="font-weight:600; color:#c4b5fd;">1 – 100,000 CELO</div>
+                <div style="color:rgba(255,255,255,.4);">cUSD deposit range</div><div style="font-weight:600; color:#c4b5fd;">1 – 1,000,000 cUSD</div>
+                <div style="color:rgba(255,255,255,.4);">USDT deposit range</div><div style="font-weight:600; color:#c4b5fd;">1 – 1,000,000 USDT <span style="opacity:.55; font-weight:400;">(6-decimal)</span></div>
+                <div style="color:rgba(255,255,255,.4);">Bonus currency</div><div style="font-weight:600; color:#c4b5fd;">Always paid in G$</div>
+                <div style="color:rgba(255,255,255,.4);">1–29 day bonus</div><div style="font-weight:600; color:#34d399;">30 G$ at per-token minimum</div>
+                <div style="color:rgba(255,255,255,.4);">30–360 day bonus</div><div style="font-weight:600; color:#34d399;">Days × 500 / 30 G$ at 100k G$ equivalent</div>
+                <div style="color:rgba(255,255,255,.4);">300+ day loyalty bonus</div><div style="font-weight:600; color:#34d399;">20,000 G$ at 1M G$ equivalent</div>
+                <div style="color:rgba(255,255,255,.4);">100k G$ equivalent</div><div style="font-weight:600; color:#c4b5fd;">G$ 100,000 / CELO 100 / cUSD 100 / USDT 100</div>
+                <div style="color:rgba(255,255,255,.4);">1M G$ equivalent</div><div style="font-weight:600; color:#c4b5fd;">G$ 1,000,000 / CELO 1,000 / cUSD 1,000 / USDT 1,000</div>
+                <div style="color:rgba(255,255,255,.4);">Early withdrawal</div><div style="font-weight:600; color:#f87171;">Not allowed</div>
+                <div style="color:rgba(255,255,255,.4);">Top-up unlock date</div><div style="font-weight:600; color:#c4b5fd;">Inherits original (never extended)</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Smart Contract Security</div>
+            <ul class="steps">
+                <li class="step">
+                    <div class="step-n"><i class="fas fa-shield-halved" style="font-size:.65rem;"></i></div>
+                    <div class="step-t">Only the depositing wallet can withdraw its slots — <strong>not the platform, not anyone else</strong>.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n"><i class="fas fa-lock" style="font-size:.65rem;"></i></div>
+                    <div class="step-t">The contract has <strong>no owner, no admin, no pause, no emergency withdrawal</strong>. Reward pool funds can never be withdrawn by anyone — only used to pay saver bonuses.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n"><i class="fas fa-clock-rotate-left" style="font-size:.65rem;"></i></div>
+                    <div class="step-t"><strong>Early withdrawal is not allowed</strong> — once locked, your tokens stay locked until the unlock date you committed to.</div>
+                </li>
+                <li class="step">
+                    <div class="step-n"><i class="fas fa-eye" style="font-size:.65rem;"></i></div>
+                    <div class="step-t">All transactions are publicly visible on <a href="https://celoscan.io/address/{{ savings_contract }}" target="_blank" style="color:#a78bfa;">CeloScan</a>.</div>
+                </li>
+            </ul>
+
+            <div class="divider"></div>
+
+            <div style="font-size:.82rem; color:rgba(255,255,255,.35); line-height:1.6;">
+                <strong style="color:rgba(255,255,255,.5);">Want to sponsor the reward pool?</strong><br>
+                Any wallet can call <code style="color:#a78bfa;">fundRewardPool(amount)</code> on the contract to add G$ for bonuses. Rewards stay best-effort: users can still withdraw even if the pool is empty.
+                Sponsors are publicly visible on-chain. Contact us on Telegram or Discourse to be featured.
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"
+        integrity="sha384-u0NcfwGT0MUYq60cVWPN34m99JhiJTCRG+0JOgmAQ++pTQ4w6AKkwhA9Wj/VjNRi"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/minipay-fee-currency.js', v=ASSET_VERSION) }}"></script>
+<script>
+    const WALLET = "{{ wallet }}";
+    const SAVINGS_CONTRACT = "{{ savings_contract }}";
+    const LEGACY_V5_CONTRACT = "{{ legacy_v5_contract }}";
+    const GD_CONTRACT   = "{{ gd_contract }}";
+    const CELO_CONTRACT = "{{ celo_contract }}";
+    const CUSD_CONTRACT = "{{ cusd_contract }}";
+    const USDT_CONTRACT = "{{ usdt_contract }}";
+    const CHAIN_ID = {{ chain_id }};
+    const CELO_RPC_URLS = [
+        "https://forno.celo.org",
+        "https://1rpc.io/celo",
+        "https://celo.publicnode.com"
+    ];
+    const LOGIN_METHOD = "{{ login_method }}";
+    const IS_PRIVY_LOGIN = (LOGIN_METHOD || '').toLowerCase() === 'privy';
+    // Pure self-custody mode: never use server-side signing.
+    // Robust WalletConnect detection: LOGIN_METHOD is primary, but sessions
+    // created before login_method was persisted report "injected" for
+    // WalletConnect users too. prefersWcSigning() recovers those via a saved
+    // WC session for this wallet so they never sign with injected MetaMask.
+    const PREFER_WC_SIGNING = (typeof GMWalletConnect !== 'undefined' && typeof GMWalletConnect.prefersWcSigning === 'function')
+        ? GMWalletConnect.prefersWcSigning()
+        : ['walletconnect', 'manual', 'manual_address'].includes((LOGIN_METHOD || '').toLowerCase());
+
+    // v5 dynamic lock-duration bounds. Kept here so all client-side
+    // validation (input clamp, summary, bonus preview) shares one source.
+    const MIN_LOCK_DAYS = 1;
+    const MAX_LOCK_DAYS = 360;
+
+    // Legacy server-sign helper intentionally disabled in pure self-custody mode.
+    async function serverSignedTx(toAddr, abiFragment, args, alertId) {
+        throw new Error('Server signing is disabled. Please use your injected wallet / WalletConnect.');
+    }
+
+    // ── v5 multi-token slot model (USDT-aware, custom-duration lock UI) ──
+    const SAVINGS_ABI = [
+        "function depositSavings(address token, uint256 amount, uint256 lockDays) external",
+        "function withdraw(address token, uint256 lockDays) external",
+        "function fundRewardPool(uint256 amount) external",
+        "function getSlot(address user, address token, uint256 lockDays) external view returns (uint256,uint256,uint256,bool,bool,uint256)",
+        "function getUserActiveSlots(address user) view returns (address[] tokens, uint256[] lockDays_, uint256[] amounts, uint256[] unlocksAts, bool[] areUnlocked, bool[] bonusClaimed, uint256[] pendingBonuses)",
+        "function getContractStats() external view returns (uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
+        "function getBonusAmount(address token, uint256 amount, uint256 lockDays) external view returns (uint256)",
+        "function getDurationRange() external view returns (uint256 minDays, uint256 maxDays)",
+        "function rewardPool() view returns (uint256)",
+        "function totalSlotsOpened() view returns (uint256)",
+        "event Saved(address indexed user, address indexed token, uint256 indexed lockDays, uint256 amountAdded, uint256 newSlotTotal, uint256 unlocksAt, bool isTopUp)",
+        "event Withdrawn(address indexed user, address indexed token, uint256 indexed lockDays, uint256 principal, uint256 timestamp)",
+        "event BonusPaid(address indexed user, address indexed token, uint256 indexed lockDays, uint256 bonusGd, uint256 timestamp)",
+    ];
+
+    // Block height where the current custom-duration GDSavings contract was
+    // deployed on Celo Mainnet. Used as the lower bound for on-chain history
+    // reconstruction so we never miss a Saved or Withdrawn event.
+    const SAVINGS_DEPLOYMENT_BLOCK = {{ savings_deployment_block }};
+    const ERC20_ABI = [
+        "function balanceOf(address owner) view returns (uint256)",
+        "function allowance(address owner, address spender) view returns (uint256)",
+        "function approve(address spender, uint256 amount) returns (bool)",
+    ];
+
+
+    // Per-token configuration. USDT is 6-decimal on Celo (bridged Tether);
+    // every other token is 18-decimal. Min/max are *human* units — the
+    // wallet code below scales them by `decimals` before sending on-chain.
+    const TOKENS = {
+        gd:   { key:'gd',   symbol:'G$',   address: GD_CONTRACT,   decimals: 18, min: 1000, max: 10_000_000 },
+        celo: { key:'celo', symbol:'CELO', address: CELO_CONTRACT, decimals: 18, min: 1,    max: 100_000    },
+        cusd: { key:'cusd', symbol:'cUSD', address: CUSD_CONTRACT, decimals: 18, min: 1,    max: 1_000_000  },
+        usdt: { key:'usdt', symbol:'USDT', address: USDT_CONTRACT, decimals: 6,  min: 1,    max: 1_000_000  },
+    };
+
+    // Default lock duration is 30 days, but users can enter any whole number from 1 to 360.
+    let selectedToken = TOKENS.gd;
+
+    // Cache of user's existing slots, keyed by `${tokenKey}|${lockDays}`.
+    let __mySlotsByKey = {};
+    function slotKeyByTokenAddress(tokenAddr, lockDays) { return `${String(tokenAddr || '').toLowerCase()}|${Number(lockDays)}`; }
+
+    // Shared, lazy read-only RPC provider used to query on-chain events
+    // (history reconstruction). Independent of the user's wallet so the
+    // history loads even before they connect / on a fresh device.
+    let __readProvider = null;
+    function getReadProvider() {
+        if (!__readProvider) {
+            // Use FallbackProvider with multiple RPC endpoints for reliability
+            __readProvider = new ethers.FallbackProvider(
+                CELO_RPC_URLS.map(url => new ethers.JsonRpcProvider(url, { chainId: CHAIN_ID, name: 'celo' })),
+                1 // quorum: needs 1 provider to respond
+            );
+        }
+        return __readProvider;
+    }
+
+    // Return token metadata for a given on-chain address. Falls back to a
+    // minimal record when the address is not one of the supported tokens.
+    function tokenMetaForAddress(tokenAddr) {
+        const lc = String(tokenAddr || '').toLowerCase();
+        for (const t of Object.values(TOKENS)) {
+            if (t.address && t.address.toLowerCase() === lc) return t;
+        }
+        return { key: null, symbol: '?', address: tokenAddr, decimals: 18 };
+    }
+
+    // Pull all matching event logs across the requested block range,
+    // chunking to stay safely under any RPC log-cap (Forno is generous, but
+    // some providers return a hard error past ~10k blocks per call). Topic
+    // filters keep the result set tiny per chunk in practice.
+    async function queryFilterChunked(contract, filter, fromBlock, toBlock, chunkSize) {
+        const out = [];
+        const step = chunkSize || 500_000;
+        let from = Number(fromBlock);
+        const end = Number(toBlock);
+        while (from <= end) {
+            const to = Math.min(from + step - 1, end);
+            try {
+                const logs = await contract.queryFilter(filter, from, to);
+                if (logs && logs.length) out.push(...logs);
+            } catch (e) {
+                // Halve the chunk and retry once. If it still fails, surface
+                // the error — but only after we've narrowed down enough that
+                // we know it's not a "range too wide" issue.
+                if (step > 10_000) {
+                    return queryFilterChunked(contract, filter, from, end, Math.floor(step / 2));
+                }
+                throw e;
+            }
+            from = to + 1;
+        }
+        return out;
+    }
+
+    // Reconstruct full savings history for a wallet directly from
+    // Saved + Withdrawn events. Returns an array of normalized slot
+    // records covering every cycle the wallet has ever opened (active
+    // and already-withdrawn alike), so the UI no longer depends on
+    // browser localStorage to remember past withdrawals.
+    async function loadOnchainSavingsHistory(walletAddress) {
+        if (!walletAddress || !SAVINGS_CONTRACT) return [];
+        try {
+            const res = await fetch('/savings/api/history');
+            const data = await res.json();
+            if (data && Array.isArray(data.history)) {
+                return data.history;
+            }
+        } catch (_) {}
+        const provider = getReadProvider();
+        const contract = new ethers.Contract(SAVINGS_CONTRACT, SAVINGS_ABI, provider);
+        const latest = await provider.getBlockNumber();
+        const fromBlock = SAVINGS_DEPLOYMENT_BLOCK;
+
+        const [savedLogs, withdrawnLogs] = await Promise.all([
+            queryFilterChunked(contract, contract.filters.Saved(walletAddress), fromBlock, latest),
+            queryFilterChunked(contract, contract.filters.Withdrawn(walletAddress), fromBlock, latest),
+        ]);
+
+        // Merge both event streams into a single chronological timeline and
+        // walk it per (token, lockDays) key. Each "cycle" begins on a
+        // first-time Saved (isTopUp=false) and ends on a Withdrawn.
+        const events = [];
+        for (const log of savedLogs)     events.push({ kind: 'saved',     log });
+        for (const log of withdrawnLogs) events.push({ kind: 'withdrawn', log });
+        events.sort((a, b) => {
+            const ab = Number(a.log.blockNumber) - Number(b.log.blockNumber);
+            if (ab !== 0) return ab;
+            return Number(a.log.index ?? a.log.logIndex ?? 0) - Number(b.log.index ?? b.log.logIndex ?? 0);
+        });
+
+        const open = new Map();   // key -> currently open cycle record
+        const closed = [];        // array of finished (withdrawn) cycle records
+
+        for (const ev of events) {
+            const args     = ev.log.args || [];
+            const tokenAddr = String(args.token || args[1]);
+            const lockDays  = Number(args.lockDays ?? args[2]);
+            const key = slotKeyByTokenAddress(tokenAddr, lockDays);
+            const meta = tokenMetaForAddress(tokenAddr);
+
+            if (ev.kind === 'saved') {
+                const amountAdded   = args.amountAdded    ?? args[3];
+                const newSlotTotal  = args.newSlotTotal   ?? args[4];
+                const unlocksAtRaw  = args.unlocksAt      ?? args[5];
+                const isTopUp       = Boolean(args.isTopUp ?? args[6]);
+                const unlocksAt     = Number(unlocksAtRaw);
+                const totalH        = Number(ethers.formatUnits(newSlotTotal, meta.decimals));
+                let cycle = open.get(key);
+                if (!cycle || isTopUp === false) {
+                    // Fresh cycle. (A defensive `isTopUp=false` always wins
+                    // over a stale open cycle in case we somehow missed the
+                    // intermediate Withdrawn — slot reset is what matters.)
+                    cycle = {
+                        token:        tokenAddr,
+                        token_symbol: meta.symbol,
+                        decimals:     meta.decimals,
+                        lock_days:    lockDays,
+                        amount_h:     totalH,
+                        deposited_at: Math.max(0, unlocksAt - lockDays * 86400),
+                        unlocks_at:   unlocksAt,
+                        first_block:  Number(ev.log.blockNumber),
+                    };
+                    open.set(key, cycle);
+                } else {
+                    // Top-up: amount grows, unlock date is preserved by the
+                    // contract — keep deposited_at as the original first-deposit.
+                    cycle.amount_h = totalH;
+                }
+            } else {
+                // Withdrawn: close the cycle (or, if we never saw the open,
+                // synthesise one from the Withdrawn payload alone so the
+                // user still sees the row).
+                const principal = args.principal ?? args[3];
+                const ts        = Number(args.timestamp ?? args[4]);
+                const txHash    = ev.log.transactionHash;
+                let cycle = open.get(key);
+                if (!cycle) {
+                    cycle = {
+                        token:        tokenAddr,
+                        token_symbol: meta.symbol,
+                        decimals:     meta.decimals,
+                        lock_days:    lockDays,
+                        amount_h:     Number(ethers.formatUnits(principal, meta.decimals)),
+                        deposited_at: 0,
+                        unlocks_at:   ts,
+                        first_block:  Number(ev.log.blockNumber),
+                    };
+                }
+                cycle.status        = 'withdrawn';
+                cycle.amount_h      = Number(ethers.formatUnits(principal, cycle.decimals));
+                cycle.withdrawn_at  = ts;
+                cycle.tx_hash       = txHash;
+                cycle.withdrawn_block = Number(ev.log.blockNumber);
+                closed.push(cycle);
+                open.delete(key);
+            }
+        }
+
+        // Tag the remaining open cycles based on the slot's unlock date.
+        const now = Math.floor(Date.now() / 1000);
+        const active = [];
+        for (const cycle of open.values()) {
+            cycle.status = (cycle.unlocks_at && now >= cycle.unlocks_at) ? 'ready' : 'locked';
+            active.push(cycle);
+        }
+        return [...active, ...closed];
+    }
+
+    // ── Tabs ──
+    function switchTab(name) {
+        document.querySelectorAll('.tab-btn').forEach((b,i) => {
+            const tabs = ['save','deposits','sponsor','info'];
+            b.classList.toggle('active', tabs[i] === name);
+        });
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.getElementById('tab-' + name).classList.add('active');
+        if (name === 'deposits') loadDeposits();
+    }
+
+    // ── Token picker ──
+    function selectToken(el) {
+        document.querySelectorAll('#tokenGrid .dur-btn').forEach(b => b.classList.remove('selected'));
+        el.classList.add('selected');
+        const key = el.dataset.token;
+        selectedToken = TOKENS[key] || TOKENS.gd;
+
+        // Adjust amount input bounds + suffix.
+        const amt   = document.getElementById('saveAmount');
+        amt.min     = selectedToken.min;
+        amt.max     = selectedToken.max;
+        document.getElementById('saveAmountSuffix').textContent = selectedToken.symbol;
+        document.getElementById('saveAmountHint').innerHTML =
+            `Min: ${selectedToken.min.toLocaleString()} ${selectedToken.symbol} &nbsp;·&nbsp; Max: ${selectedToken.max.toLocaleString()} ${selectedToken.symbol}`;
+
+        // Update buttons that mention the token name.
+        document.getElementById('approveBtnLabel').textContent =
+            `Step 1 — Approve ${selectedToken.symbol} Spending`;
+        document.getElementById('saveBtnLabel').textContent =
+            `Step 2 — Lock ${_selectedPeriod().label} ${selectedToken.symbol}`;
+
+        // Reset approval state — different token means a new approval is needed.
+        const approveBtn = document.getElementById('approveBtn');
+        approveBtn.disabled  = false;
+        approveBtn.innerHTML = `<i class="fas fa-check-circle"></i> <span id="approveBtnLabel">Step 1 — Approve ${selectedToken.symbol} Spending</span>`;
+        document.getElementById('saveBtn').disabled = true;
+
+        updateSummary();
+        updateRewardPreview();
+        checkExistingSlot();
+    }
+
+    // ── Custom lock duration picker ──
+    let selectedDays = 30;
+
+    function _clampLockDays(value) {
+        const parsed = Math.floor(Number(value));
+        if (!Number.isFinite(parsed)) return selectedDays;
+        return Math.min(MAX_LOCK_DAYS, Math.max(MIN_LOCK_DAYS, parsed));
+    }
+
+    function _selectedPeriod() {
+        return {
+            key: `custom-${selectedDays}`,
+            label: `${selectedDays} day${selectedDays === 1 ? '' : 's'}`,
+            days: selectedDays,
+        };
+    }
+
+    function onLockDaysChange() {
+        const input = document.getElementById('lockDaysInput');
+        selectedDays = _clampLockDays(input.value);
+        if (input.value && String(input.value) !== String(selectedDays)) {
+            input.value = selectedDays;
+        }
+        updateSummary();
+        updateRewardPreview();
+        checkExistingSlot();
+    }
+
+    function _amountEquivalentInGd(amount) {
+        return selectedToken.key === 'gd' ? amount : amount * 1000;
+    }
+
+    function _meetsLongLockTier(amount, thresholdGdEquivalent) {
+        return _amountEquivalentInGd(amount) >= thresholdGdEquivalent;
+    }
+
+    function _periodRewardForAmount(amount) {
+        if (!amount || amount < selectedToken.min) return 0;
+        if (selectedDays >= 300 && _meetsLongLockTier(amount, 1_000_000)) return 20_000;
+        if (selectedDays >= 30 && _meetsLongLockTier(amount, 100_000)) {
+            return Math.floor(selectedDays * 500 / 30);
+        }
+        if (selectedDays >= 1 && selectedDays <= 29) return 30;
+        return 0;
+    }
+
+    function updateSummary() {
+        const amt = parseFloat(document.getElementById('saveAmount').value) || 0;
+        const period = _selectedPeriod();
+        document.getElementById('summaryToken').textContent    = selectedToken.symbol;
+        document.getElementById('summaryAmount').textContent   =
+            amt > 0 ? `${amt.toLocaleString()} ${selectedToken.symbol}` : `—`;
+        document.getElementById('summaryDuration').textContent = period.label;
+
+        const slot = __mySlotsByKey[`${selectedToken.key}|${selectedDays}`];
+        if (slot) {
+            const d = new Date(slot.unlocks_at * 1000);
+            document.getElementById('summaryUnlocks').textContent =
+                d.toDateString() + '  (existing slot)';
+        } else if (amt > 0) {
+            const d = new Date();
+            d.setDate(d.getDate() + selectedDays);
+            document.getElementById('summaryUnlocks').textContent = d.toDateString();
+        } else {
+            document.getElementById('summaryUnlocks').textContent = '—';
+        }
+    }
+
+    function toggleLegacyV5() {
+        const body = document.getElementById('legacyV5Body');
+        const chev = document.getElementById('legacyV5Chevron');
+        const open = body.style.display === 'block';
+        body.style.display = open ? 'none' : 'block';
+        chev.textContent = open ? '▾' : '▴';
+    }
+
+    function toggleLegacyV5Withdrawn() {
+        const body = document.getElementById('legacyV5WithdrawnBody');
+        const chev = document.getElementById('legacyV5WithdrawnChevron');
+        const open = body.style.display === 'block';
+        body.style.display = open ? 'none' : 'block';
+        chev.textContent = open ? '▾' : '▴';
+    }
+
+    async function loadLegacyV5Deposits() {
+        const card = document.getElementById('legacyV5Card');
+        const withdrawnCard = document.getElementById('legacyV5WithdrawnCard');
+        const body = document.getElementById('legacyV5Body');
+        const chev = document.getElementById('legacyV5Chevron');
+        const activeList = document.getElementById('legacyV5ActiveList');
+        const withdrawnList = document.getElementById('legacyV5WithdrawnList');
+        const countEl = document.getElementById('legacyV5Count');
+        const withdrawnCountEl = document.getElementById('legacyV5WithdrawnCount');
+
+        if (!card || !body || !chev || !activeList || !countEl || !LEGACY_V5_CONTRACT) {
+            return;
+        }
+
+        try {
+            // Fetch both active deposits and full history in parallel
+            const [depsData, historyData] = await Promise.all([
+                fetch('/savings/api/legacy-v5-deposits').then(r => r.json()).catch(() => ({deposits: []})),
+                fetch('/savings/api/legacy-v5-history').then(r => r.json()).catch(() => ({history: []}))
+            ]);
+
+            const deps = (depsData.deposits || []).map(d => ({
+                ...d,
+                withdraw_contract: LEGACY_V5_CONTRACT,
+            }));
+            const history = historyData.history || [];
+
+            // Create a map of active deposits by slot key for merging with history
+            const activeByKey = new Map();
+            for (const d of deps) {
+                const k = `${d.token || ''}|${d.lock_days || 0}`;
+                activeByKey.set(k, d);
+            }
+
+            // Separate history into active and withdrawn
+            const activeFromHistory = [];
+            const withdrawnFromHistory = [];
+
+            for (const cycle of history) {
+                if (cycle.status === 'withdrawn') {
+                    withdrawnFromHistory.push({
+                        ...cycle,
+                        withdraw_contract: LEGACY_V5_CONTRACT,
+                    });
+                } else {
+                    // Check if we have live data for this slot
+                    const k = `${cycle.token || ''}|${cycle.lock_days || 0}`;
+                    const live = activeByKey.get(k);
+                    if (live) {
+                        activeFromHistory.push({
+                            ...cycle,
+                            ...live,
+                            withdraw_contract: LEGACY_V5_CONTRACT,
+                        });
+                    } else {
+                        activeFromHistory.push({
+                            ...cycle,
+                            withdraw_contract: LEGACY_V5_CONTRACT,
+                        });
+                    }
+                }
+            }
+
+            // Add any active deposits not in history
+            for (const d of deps) {
+                const k = `${d.token || ''}|${d.lock_days || 0}`;
+                const inHistory = activeFromHistory.some(h =>
+                    `${h.token || ''}|${h.lock_days || 0}` === k
+                );
+                if (!inHistory) {
+                    activeFromHistory.push({
+                        ...d,
+                        withdraw_contract: LEGACY_V5_CONTRACT,
+                    });
+                }
+            }
+
+            // Display active saves
+            const ready = activeFromHistory.filter(d => d.is_unlocked);
+            if (activeFromHistory.length === 0) {
+                card.style.display = 'none';
+            } else {
+                countEl.textContent = ready.length > 0
+                    ? `${ready.length} ready · ${activeFromHistory.length} total`
+                    : `${activeFromHistory.length} locked`;
+                activeList.innerHTML = '';
+                const ordered = [...ready, ...activeFromHistory.filter(d => !d.is_unlocked)];
+                for (const d of ordered) {
+                    activeList.appendChild(buildDepCard(d));
+                }
+                card.style.display = 'block';
+                if (ready.length > 0) {
+                    body.style.display = 'block';
+                    chev.textContent = '▴';
+                } else {
+                    body.style.display = 'none';
+                    chev.textContent = '▾';
+                }
+            }
+
+            // Display withdrawn history
+            if (withdrawnCard && withdrawnList && withdrawnCountEl) {
+                if (withdrawnFromHistory.length === 0) {
+                    withdrawnCard.style.display = 'none';
+                } else {
+                    withdrawnCountEl.textContent = String(withdrawnFromHistory.length);
+                    withdrawnList.innerHTML = '';
+                    for (const d of withdrawnFromHistory) {
+                        withdrawnList.appendChild(buildDepCard(d));
+                    }
+                    withdrawnCard.style.display = 'block';
+                }
+            }
+        } catch (e) {
+            console.warn('Legacy v5 load failed', e);
+            card.style.display = 'none';
+            if (withdrawnCard) withdrawnCard.style.display = 'none';
+        }
+    }
+
+    function onAmountChange() {
+        updateSummary();
+        updateRewardPreview();
+    }
+
+    function checkExistingSlot() {
+        const slot = __mySlotsByKey[`${selectedToken.key}|${selectedDays}`];
+        const notice = document.getElementById('topupNotice');
+        const text   = document.getElementById('topupNoticeText');
+        if (slot) {
+            const d = new Date(slot.unlocks_at * 1000);
+            text.innerHTML =
+                `You already have an active <strong>${selectedToken.symbol} · ${_selectedPeriod().label}</strong> save ` +
+                `(${Number(slot.amount_h).toLocaleString()} ${selectedToken.symbol}).<br>` +
+                `<strong>This deposit will be added to it.</strong> The unlock date stays — <strong>${d.toDateString()}</strong>.`;
+            notice.style.display = 'flex';
+        } else {
+            notice.style.display = 'none';
+        }
+        updateSummary();
+    }
+
+    function updateRewardPreview() {
+        const amt = parseFloat(document.getElementById('saveAmount').value) || 0;
+        const notice = document.getElementById('bonusNotice');
+        const noticeText = document.getElementById('bonusNoticeText');
+        const period = _selectedPeriod();
+        const reward = _periodRewardForAmount(amt);
+
+        if (!amt || amt < selectedToken.min) {
+            notice.style.display = 'none';
+            return;
+        }
+
+        if (!reward) {
+            const needed = selectedDays >= 30 ? '100k G$ equivalent' : 'the per-token minimum';
+            noticeText.innerHTML =
+                `No reward tier yet for <strong>${amt.toLocaleString()} ${selectedToken.symbol}</strong> locked for ${period.label}. ` +
+                `This duration needs ${needed} to preview rewards.`;
+            notice.style.display = 'flex';
+            return;
+        }
+
+        let tierNote = 'per-token minimum tier';
+        if (selectedDays >= 300 && _meetsLongLockTier(amt, 1_000_000)) {
+            tierNote = '300+ day loyalty tier';
+        } else if (selectedDays >= 30) {
+            tierNote = '100k G$ equivalent custom-duration tier';
+        }
+
+        noticeText.innerHTML =
+            `<strong>${period.label} preview:</strong> Estimated reward is <strong>${reward.toLocaleString()} G$</strong> ` +
+            `from the ${tierNote}.`;
+        notice.style.display = 'flex';
+    }
+    // ── Wallet helpers ──
+    // Methods that must be served by the user's wallet (signer-bound).
+    // Everything else (eth_blockNumber, eth_call, eth_estimateGas,
+    // eth_gasPrice, eth_getTransactionCount, eth_getCode, …) is a read-only
+    // RPC call that ethers.js issues automatically while building a tx —
+    // forwarding those to the WalletConnect peer makes the wallet reply
+    // "Missing or invalid. request() method: eth_blockNumber" and the whole
+    // approve / save flow blows up with `could not coalesce error`.
+    const _WC_WALLET_SCOPED_METHODS = new Set([
+        'eth_sendTransaction',
+        'eth_sign',
+        'personal_sign',
+        'eth_signTypedData',
+        'eth_signTypedData_v3',
+        'eth_signTypedData_v4',
+    ]);
+
+    // RPC call with fallback support - tries each URL until one succeeds.
+    // Mirrors wc-bridge.js `_celoJsonRpcWithFallback`: a JSON-RPC revert that
+    // already carries `error.data` (the 0x revert bytes) is thrown immediately
+    // so ethers.js can decode the reason — reverts WITHOUT `data` fall through
+    // to the next URL, since a different Celo node may format the same revert
+    // with the `data` blob. Preserving `error.code` + `error.data` here is what
+    // stops ethers v6 from collapsing the failure into the opaque
+    // "missing revert data in call exception" / "RPC endpoint returned HTTP
+    // client error" strings users used to see on the approve / save path.
+    async function _rpcCallWithFallback(urls, method, params) {
+        const lastError = new Error('All RPC endpoints failed');
+        for (let i = 0; i < urls.length; i++) {
+            try {
+                const resp = await fetch(urls[i], {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: Date.now(),
+                        method: method,
+                        params: params || []
+                    })
+                });
+                const data = await resp.json();
+                if (data && data.error) {
+                    const e = new Error(data.error.message || 'Celo RPC error');
+                    e.code = (typeof data.error.code === 'number') ? data.error.code : -32603;
+                    if (data.error.data !== undefined && data.error.data !== null) e.data = data.error.data;
+                    lastError = e;
+                    // Revert bytes present → deterministic; no point retrying.
+                    if (data.error.data != null) throw e;
+                    continue; // try next URL (may carry the data blob)
+                }
+                return data ? data.result : null;
+            } catch (e) {
+                // A revert we already shaped with .data must propagate as-is.
+                if (e && e.data != null) throw e;
+                lastError = e;
+            }
+        }
+        throw lastError;
+    }
+
+    function _wcCeloJsonRpc(method, params) {
+        return _rpcCallWithFallback(CELO_RPC_URLS, method, params);
+    }
+
+    // Derive the correct eip155 chain string for a WalletConnect client.request()
+    // call. Priority: (1) chainId embedded in the tx params object, (2) first
+    // chain approved in the session namespaces, (3) Celo fallback.
+    function _wcEip155Chain(session, method, params) {
+        try {
+            if (method === 'eth_sendTransaction' && Array.isArray(params) && params[0] && params[0].chainId) {
+                var txChain = parseInt(String(params[0].chainId), 16);
+                if (!isNaN(txChain) && txChain > 0) return 'eip155:' + txChain;
+            }
+            var ns = session && (session.namespaces || {});
+            var chains = (ns.eip155 && ns.eip155.chains) || [];
+            if (!chains.length && ns.eip155 && ns.eip155.accounts && ns.eip155.accounts.length) {
+                var parts = String(ns.eip155.accounts[0]).split(':');
+                if (parts.length >= 2) return parts[0] + ':' + parts[1];
+            }
+            if (chains.length) return chains[0];
+        } catch (_) {}
+        return 'eip155:42220';
+    }
+
+    function _wcIsMobileBrowser() {
+        try {
+            var ua = (navigator.userAgent || '').toLowerCase();
+            return /android|iphone|ipad|ipod|mobile/i.test(ua);
+        } catch (_) { return false; }
+    }
+
+    function _wcWakeWalletApp(session) {
+        try {
+            if (!session || !_wcIsMobileBrowser()) return;
+            var meta = session.peer && session.peer.metadata;
+            var redirect = meta && meta.redirect;
+            if (!redirect) return;
+            var href = redirect.native || redirect.universal;
+            if (!href) return;
+            var link = document.createElement('a');
+            link.href = href;
+            link.style.display = 'none';
+            link.target = '_self';
+            link.rel = 'noopener noreferrer';
+            document.body.appendChild(link);
+            link.click();
+            setTimeout(function () { try { link.remove(); } catch (_) {} }, 100);
+        } catch (_) { /* no-op */ }
+    }
+
+    class WCEthersShim {
+        constructor(wcClient, wcSession, account) {
+            this._sc = wcClient;
+            this._session = wcSession;
+            this._account = account;
+        }
+        async request({ method, params }) {
+            if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [this._account];
+            if (method === 'eth_chainId') return '0xa4ec';
+            if (method === 'net_version') return '42220';
+            // Sessions are scoped to Celo — chain switch / add are no-ops.
+            if (method === 'wallet_switchEthereumChain' || method === 'wallet_addEthereumChain') {
+                return null;
+            }
+            if (_WC_WALLET_SCOPED_METHODS.has(method)) {
+                try {
+                    var reqPromise = this._sc.request({
+                        topic: this._session.topic,
+                        chainId: _wcEip155Chain(this._session, method, params || []),
+                        request: { method, params: params || [] }
+                    });
+                    // Wake the user's wallet app to the foreground so the
+                    // sign / tx prompt is actually visible — without this
+                    // MetaMask Mobile / Trust Wallet just queue the request
+                    // silently while the user keeps staring at the dApp.
+                    _wcWakeWalletApp(this._session);
+                    return await reqPromise;
+                } catch (wcErr) {
+                    // WalletConnect SignClient throws JsonRpcError-shaped
+                    // objects ({ code, message }). Re-throw as a real Error
+                    // with .code preserved so ethers.js can recognise the
+                    // user-rejection path instead of wrapping it as an
+                    // opaque "could not coalesce error".
+                    var code = (wcErr && typeof wcErr.code === 'number') ? wcErr.code : -32603;
+                    var msg = (wcErr && wcErr.message) ? String(wcErr.message) : 'WalletConnect request failed';
+                    var err = new Error(msg);
+                    err.code = code;
+                    if (wcErr && wcErr.data !== undefined) err.data = wcErr.data;
+                    throw err;
+                }
+            }
+            // Read-only RPC: answer locally via public Celo RPC so ethers.js'
+            // tx-build pre-flight (eth_blockNumber, eth_estimateGas, …) works
+            // without round-tripping to a wallet that doesn't speak those.
+            return _wcCeloJsonRpc(method, params || []);
+        }
+    }
+
+    // When the wallet / RPC reports a savings approve / save / withdraw / pool
+    // revert as the opaque "missing revert data" or "RPC endpoint returned
+    // HTTP client error" (ethers v6 fires these whenever an eth_call /
+    // eth_estimateGas reverted without a recoverable `data` blob, or the
+    // wallet's RPC returned an HTTP 4xx), re-run the EXACT same calldata as a
+    // read-only eth_call against several public Celo RPC endpoints. At least
+    // one will typically return the revert `data` blob, which we decode into a
+    // human reason. Also checks ERC-20 allowance + balance so the most common
+    // real causes (missing approval, insufficient balance) surface a clear
+    // hint even when no revert bytes are recoverable.
+    //
+    // Mirrors swap.html `_enrichSwapError` so the savings page reaches parity
+    // with the fix layers already applied to wc-bridge.js / swap.html.
+    //
+    // `simParams`: { to, data, from, value } of the failing tx.
+    // `ctx`: { tokenAddr, spender, amountIn, tokenSymbol, decimals } optional,
+    //        used for the allowance/balance diagnostic.
+    async function _enrichSavingsError(err, simParams, ctx) {
+        if (!err) return err;
+        const joined = String(err.message || err.shortMessage || err.reason || "");
+        // Gas-related failures first — if the real cause is gas, the
+        // "Transaction reverted… check amount and approval" / "Token approval
+        // is too low" messages below would mislead the user into fixing the
+        // wrong thing. Surface a gas-specific message before anything else.
+        if (window.GMTxError && GMTxError.isGasRelated && GMTxError.isGasRelated(err)) {
+            err._gmFriendly = true;
+            if (GMTxError.isInsufficientFunds && GMTxError.isInsufficientFunds(err)) {
+                err.message = "Insufficient CELO for gas fees. " +
+                    "Please top up your wallet with a little CELO and try again.";
+            } else {
+                err.message = "Transaction needs more gas. " +
+                    "Please top up CELO for gas fees and try again.";
+            }
+            return err;
+        }
+        const looksRevert = /revert|missing revert data|call exception|missing revert|HTTP client error|http error|server error|rate.?limit|429/i.test(joined);
+        // If ethers already decoded a concrete reason, trust it.
+        if (looksRevert && err.reason && /reverted/i.test(err.reason) && err.data) {
+            return err;
+        }
+        if (looksRevert && window.GMTxError && GMTxError.revertReasonFromError) {
+            const existing = GMTxError.revertReasonFromError(err);
+            if (existing && existing.indexOf("selector") === -1) return err;
+        }
+        // Try to recover the real revert reason via simulation.
+        if (looksRevert && simParams && window.GMTxError && GMTxError.simulateCallCelo) {
+            try {
+                const reason = await GMTxError.simulateCallCelo(simParams);
+                if (reason) {
+                    err._gmFriendly = true;
+                    err.message = "Transaction reverted on-chain: " + reason +
+                        ". Please check the amount and token approval, then try again.";
+                    return err;
+                }
+            } catch (_) { /* fall through to diagnostic */ }
+        }
+        // Diagnostic: allowance / balance shortfall is the most common real
+        // cause behind an opaque revert on approve / save.
+        if (ctx && ctx.tokenAddr && ctx.spender && ctx.amountIn) {
+            try {
+                const rp = getReadProvider();
+                const tk = new ethers.Contract(ctx.tokenAddr, [
+                    "function allowance(address,address) view returns (uint256)",
+                    "function balanceOf(address) view returns (uint256)"
+                ], rp);
+                const [allow, bal] = await Promise.all([
+                    tk.allowance(simParams.from || WALLET, ctx.spender),
+                    tk.balanceOf(simParams.from || WALLET)
+                ]);
+                const dec = ctx.decimals || 18;
+                if (allow < ctx.amountIn) {
+                    err._gmFriendly = true;
+                    err.message = "Token approval is too low for this transaction. " +
+                        "Please re-approve " + (ctx.tokenSymbol || "the token") + " and try again.";
+                    return err;
+                }
+                if (bal < ctx.amountIn) {
+                    err._gmFriendly = true;
+                    const balH = parseFloat(ethers.formatUnits(bal, dec)).toFixed(4);
+                    const needH = parseFloat(ethers.formatUnits(ctx.amountIn, dec)).toFixed(4);
+                    err.message = "Insufficient " + (ctx.tokenSymbol || "token") +
+                        " balance: have " + balH + ", need " + needH + ". Try a smaller amount.";
+                    return err;
+                }
+            } catch (_) { /* ignore diagnostic failure */ }
         }
         return err;
     }
 
-    function _stringify(value) {
-        if (value == null) return "";
-        if (typeof value === "string") return value;
-        try { return JSON.stringify(value); } catch (_) {}
-        try { return String(value); } catch (_) {}
-        return "";
+    // Trust Wallet mobile-specific provider discovery for savings actions.
+    // Strictly scoped so non-Trust users keep existing behavior.
+    window.__savingsEip6963Providers = window.__savingsEip6963Providers || [];
+    (function _initSavingsEip6963() {
+        try {
+            window.addEventListener('eip6963:announceProvider', (event) => {
+                const detail = event && event.detail;
+                if (!detail || !detail.provider) return;
+                const uuid = detail.info && detail.info.uuid;
+                const already = window.__savingsEip6963Providers.find(d =>
+                    (d.info && d.info.uuid && uuid && d.info.uuid === uuid) ||
+                    d.provider === detail.provider
+                );
+                if (!already) window.__savingsEip6963Providers.push(detail);
+            });
+            window.dispatchEvent(new Event('eip6963:requestProvider'));
+        } catch (_) {}
+    })();
+    function _savingsEip6963Providers() {
+        return Array.isArray(window.__savingsEip6963Providers)
+            ? window.__savingsEip6963Providers.slice()
+            : [];
     }
-
-    // Walk up to a few levels deep, collecting every plausible message /
-    // code / data field. Some errors stack `cause` / `info` / `error`
-    // several layers deep (MetaMask → ethers.js → BrowserProvider).
-    function _spelunk(err) {
-        var out = { code: undefined, msg: "", joined: "" };
-        if (!err) return out;
-        var seen = new Set();
-        var stack = [err];
-        var pieces = [];
-        while (stack.length) {
-            var cur = stack.shift();
-            if (!cur || typeof cur !== "object" || seen.has(cur)) continue;
-            seen.add(cur);
-            if (out.code === undefined && cur.code !== undefined) out.code = cur.code;
-            if (typeof cur.shortMessage === "string") pieces.push(cur.shortMessage);
-            if (typeof cur.reason === "string") pieces.push(cur.reason);
-            if (typeof cur.message === "string") pieces.push(cur.message);
-            if (typeof cur.data === "string") pieces.push(cur.data);
-            if (cur.error) stack.push(cur.error);
-            if (cur.cause) stack.push(cur.cause);
-            if (cur.info) stack.push(cur.info);
-            if (cur.data && typeof cur.data === "object") stack.push(cur.data);
-            if (cur.payload && typeof cur.payload === "object") stack.push(cur.payload);
+    function _isTrustWalletMobileContext() {
+        const ua = (navigator.userAgent || '').toLowerCase();
+        const uaTrust = ua.includes('trust') || ua.includes('trustwallet');
+        const touchMobile = /android|iphone|ipad|ipod/i.test(ua);
+        const hasTrustInjection = !!(
+            window.trustwallet ||
+            window.trustWallet ||
+            (window.ethereum && (window.ethereum.isTrust || window.ethereum.isTrustWallet))
+        );
+        return (uaTrust || hasTrustInjection) && touchMobile;
+    }
+    function _isLikelyMobileWalletContext() {
+        const ua = (navigator.userAgent || '').toLowerCase();
+        return /android|iphone|ipad|ipod|minipay|metamask|trust|trustwallet/.test(ua);
+    }
+    function _collectSavingsProviders() {
+        const out = [];
+        const push = (p) => { if (p && typeof p.request === 'function' && !out.includes(p)) out.push(p); };
+        if (window.ethereum) {
+            if (window.ethereum.providers && window.ethereum.providers.length) {
+                window.ethereum.providers.forEach(push);
+            }
+            push(window.ethereum);
         }
-        out.msg = pieces.length ? pieces[0] : "";
-        out.joined = pieces.join(" \n ");
+        if (window.trustwallet) push(window.trustwallet);
+        if (window.trustwallet && window.trustwallet.ethereum) push(window.trustwallet.ethereum);
+        if (window.trustWallet) push(window.trustWallet);
+        if (window.trustWallet && window.trustWallet.ethereum) push(window.trustWallet.ethereum);
+        for (const d of _savingsEip6963Providers()) push(d.provider);
         return out;
     }
-
-    function _isUserRejection(code, joined) {
-        if (code === 4001 || code === 4100 || code === 4200) return true; // EIP-1193
-        if (code === 5000 || code === 5001 || code === 5002) return true; // WalletConnect "user disapproved"
-        if (code === "ACTION_REJECTED") return true; // ethers v6 explicit code
-        var rx = /user rejected|user denied|user disapproved|user cancel|request[ _]?rejected|rejected by user|action_rejected|user closed|user dismissed|reject(ed)? the request|you rejected|signature was rejected|approval rejected|transaction rejected|denied transaction signature/i;
-        return rx.test(joined);
-    }
-
-    function _isInsufficientFunds(joined) {
-        return /insufficient funds|insufficient balance|exceeds balance|not enough .*(funds|balance|gas)/i.test(joined);
-    }
-
-    function _isGasIssue(joined) {
-        return /out of gas|intrinsic gas too low|gas required exceeds|exceeds block gas limit/i.test(joined);
-    }
-
-    function _isAllowanceIssue(joined) {
-        return /erc20: insufficient allowance|allowance|stf|transferhelper|transfer_from_failed|safetransferfrom/i.test(joined);
-    }
-
-    function _isReverted(joined) {
-        // "missing revert data in call exception" is ethers v6's opaque
-        // wrapper for an eth_call/eth_estimateGas that reverted with no
-        // recoverable `data` blob. It IS a revert from the user's POV —
-        // treat it as one so we show actionable copy instead of a cryptic
-        // technical string.
-        return /execution reverted|call exception|transaction reverted|missing revert data|missing revert|eth_call revert|intrinsic gas too low/i.test(joined);
-    }
-
-    // Decode a 0x-prefixed revert `data` blob into a human string.
-    // Handles:
-    //   - Error(string)  selector 0x08c379a0
-    //   - Panic(uint256) selector 0x4e487b71
-    //   - Custom errors (returns the 4-byte selector when undecodable)
-    // Returns "" when the input is not a recognisable revert payload.
-    function _decodeRevertData(hex) {
-        if (typeof hex !== "string") return "";
-        var h = hex.toLowerCase();
-        if (h === "0x" || h === "" ) return "";
-        if (h.indexOf("0x") === 0) h = h.slice(2);
-        if (h.length < 8) return "";
-        var sel = h.slice(0, 8);
-        function _hexToUtf8(seg) {
-            var bytes = [];
-            for (var i = 0; i < seg.length; i += 2) bytes.push(parseInt(seg.substr(i, 2), 16));
-            try { return decodeURIComponent(escape(String.fromCharCode.apply(null, bytes))); } catch (_) { return ""; }
+    // Handles multi-wallet injections: prefer MiniPay in MiniPay dApp browser,
+    // then Trust Wallet in Trust mobile, then MetaMask (excluding Brave).
+    function _getEthProvider() {
+        // WalletConnect / manual-address logins must NEVER use an injected wallet
+        // (e.g. a desktop MetaMask extension): its account differs from the logged-in
+        // GoodMarket wallet, so signing fails with "Wrong wallet connected". Block
+        // injected discovery so all flows route through the WalletConnect signer.
+        // PREFER_WC_SIGNING also recovers pre-existing WC sessions mislabeled
+        // as "injected".
+        if (PREFER_WC_SIGNING) return null;
+        try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+        const providers = _collectSavingsProviders();
+        if (!providers.length) return null;
+        const miniPay = providers.find(p => p && p.isMiniPay);
+        if (miniPay) return miniPay;
+        if (_isTrustWalletMobileContext()) {
+            const trust = providers.find(p => p && (p.isTrust || p.isTrustWallet));
+            if (trust) return trust;
+            const trust6963 = _savingsEip6963Providers().find(d => {
+                const info = d.info || {};
+                const rdns = String(info.rdns || '').toLowerCase();
+                const name = String(info.name || '').toLowerCase();
+                return rdns.includes('trustwallet') || name.includes('trust');
+            });
+            if (trust6963 && trust6963.provider) return trust6963.provider;
+            return providers[0];
         }
-        if (sel === "08c379a0") {
-            // Error(string) ABI layout (after stripping 0x):
-            //   [0..8)    selector
-            //   [8..72)   offset (0x20)
-            //   [72..136) uint256 string length
-            //   [136..)   string bytes, left-padded to 32
-            if (h.length < 136) return "execution reverted";
-            var lenHex = h.slice(72, 136);
-            var len = parseInt(lenHex, 16);
-            if (!isFinite(len) || len <= 0) return "execution reverted";
-            var strHex = h.slice(136, 136 + len * 2);
-            var msg = _hexToUtf8(strHex);
-            return msg ? ("execution reverted: " + msg) : "execution reverted";
+        if (window.ethereum && window.ethereum.providers && window.ethereum.providers.length) {
+            const mm = window.ethereum.providers.find(p => p.isMetaMask && !p.isBraveWallet);
+            if (mm) return mm;
+            return window.ethereum.providers[0];
         }
-        if (sel === "4e487b71") {
-            // Panic(uint256): code in the last 32-byte word
-            var panicCode = h.length >= 72 ? parseInt(h.slice(h.length - 64), 16) : 0;
-            var known = {
-                0x01: "assertion failed",
-                0x11: "arithmetic overflow/underflow",
-                0x12: "division or modulo by zero",
-                0x21: "enum conversion out of bounds",
-                0x22: "incorrect array storage encoding",
-                0x31: "pop on empty array",
-                0x32: "array access out of bounds",
-                0x41: "out of memory",
-                0x51: "uninitialized function pointer"
-            };
-            var label = known[panicCode] || ("panic code 0x" + (panicCode || 0).toString(16));
-            return "panic: " + label;
+        return window.ethereum || providers[0];
+    }
+    async function _walletGetWcProviderIfPreferred() {
+        try {
+            if (typeof GMWalletConnect === "undefined") return null;
+            if (!GMWalletConnect.isPreferred()) return null;
+            return GMWalletConnect.getProvider();
+        } catch (_) {
+            return null;
         }
-        // Custom error — surface the selector so support can look it up.
-        return "execution reverted (selector 0x" + sel + ")";
     }
-
-    function _revertReasonFromError(err) {
-        var info = _spelunk(err);
-        // Prefer an explicit .data revert blob carried on the error.
-        var pieces = [err && err.data, info && info.joined];
-        for (var i = 0; i < pieces.length; i++) {
-            var decoded = _decodeRevertData(pieces[i]);
-            if (decoded) return decoded;
+    async function _awaitEthProvider(timeoutMs) {
+        const budget = typeof timeoutMs === 'number'
+            ? timeoutMs
+            : (_isTrustWalletMobileContext() ? 3200 : (_isLikelyMobileWalletContext() ? 2200 : 800));
+        const start = Date.now();
+        let ep = _getEthProvider();
+        if (ep) return ep;
+        while (Date.now() - start < budget) {
+            try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+            await new Promise(r => setTimeout(r, 120));
+            ep = _getEthProvider();
+            if (ep) return ep;
         }
-        return "";
-    }
-
-    function _isNetworkIssue(joined) {
-        return /failed to fetch|network error|networkerror|timeout|timed out|fetch failed|err_network|err_internet|connection refused|aborted/i.test(joined);
-    }
-
-    function _isWcSessionIssue(joined) {
-        return /walletconnect.*(unavailable|not active|approval timed out|expired|not configured)|wc session|session not (found|established)/i.test(joined);
-    }
-
-    function _isUnsupportedRpcMethod(joined) {
-        // Mobile wallets that can't service ethers' read-only preflight RPCs
-        // typically reply with "Missing or invalid. request() method: …"
-        // (Trust, MiniPay, etc.). Surface a non-technical retry hint.
-        return /missing or invalid\.? request\(\) method|method not supported|method not found|unsupported method/i.test(joined);
-    }
-
-    function _isQuoteIssue(joined) {
-        return /allowance too low.*approval|approval may not have been confirmed/i.test(joined);
-    }
-
-    function _stripEthersBoilerplate(s) {
-        if (!s) return "";
-        return String(s)
-            .replace(/\(error=\{[\s\S]*?\}(,|\))/g, "")
-            .replace(/\(payload=\{[\s\S]*?\}(,|\))/g, "")
-            .replace(/\(action="[^"]+",?/g, "")
-            .replace(/\(transaction=\{[\s\S]*?\}(,|\))/g, "")
-            .replace(/\(reason=null,?/g, "")
-            .replace(/\bcode=[A-Z_]+,?/g, "")
-            .replace(/\bversion=[\d.]+\)?/g, "")
-            .replace(/[\(\),]+\s*$/g, "")
-            .replace(/\s{2,}/g, " ")
-            .replace(/^\s*[:\-]\s*/, "")
-            .trim();
-    }
-
-    function _capitalize(s) {
-        if (!s) return s;
-        return s.charAt(0).toUpperCase() + s.slice(1);
-    }
-
-    function _truncate(s, n) {
-        n = n || 180;
-        if (!s) return s;
-        return s.length > n ? s.slice(0, n - 1).trim() + "…" : s;
-    }
-
-    function format(err) {
-        if (err == null) return "Unknown error";
-        if (typeof err === "string") return _truncate(_stripEthersBoilerplate(err)) || "Unknown error";
-
-        // Preflight errors raised by app code with `_gmFriendly = true`
-        // already contain a user-facing, fully-itemized message — pass them
-        // through verbatim instead of crushing them into a generic
-        // "Insufficient CELO for gas fees" string.
-        if (err && err._gmFriendly === true && typeof err.message === "string" && err.message) {
-            return _truncate(err.message, 280);
+        // No injected provider found - try WalletConnect bridge as fallback.
+        if (typeof GMWalletConnect !== "undefined" && GMWalletConnect.isPreferred()) {
+            try { return await GMWalletConnect.getProvider(); } catch (_) { /* fall through to null */ }
         }
-
-        var info = _spelunk(err);
-        var msg = info.msg || "";
-        var joined = info.joined || "";
-        var code = info.code;
-
-        if (_isUserRejection(code, joined)) return "Transaction cancelled in your wallet.";
-        if (_isUnsupportedRpcMethod(joined)) return "Your wallet couldn't process this request. Please retry, or reconnect WalletConnect from the homepage.";
-        if (_isWcSessionIssue(joined)) {
-            if (/timed out|expired/i.test(joined)) return "WalletConnect approval timed out. Please try again.";
-            if (/not configured/i.test(joined)) return "WalletConnect is not configured on this server.";
-            return "WalletConnect session is not active. Please reconnect and try again.";
-        }
-        if (_isInsufficientFunds(joined)) {
-            if (/celo|gas/i.test(joined)) return "Insufficient CELO for gas fees. Please top up CELO and try again.";
-            return "Insufficient balance for this transaction.";
-        }
-        if (_isAllowanceIssue(joined)) return "Token approval is missing or too low. Please re-approve and try again.";
-        if (_isGasIssue(joined)) return "Transaction needs more gas. Please try again or contact support.";
-        if (_isNetworkIssue(joined)) return "Network error. Please check your connection and try again.";
-        if (_isReverted(joined)) {
-            // Try to recover a concrete revert reason. When the wallet/RPC
-            // omitted the `data` blob (the "missing revert data" case) we
-            // can't decode anything, so guide the user toward the most
-            // common real causes (allowance, slippage, balance) instead of
-            // dumping the raw ethers string.
-            var reason = _revertReasonFromError(err);
-            if (reason && reason.indexOf("selector") === -1 && reason.indexOf("execution reverted: ") === 0) {
-                return "Transaction was rejected on-chain: " + reason.replace("execution reverted: ", "") + ". Check the inputs and try again.";
-            }
-            if (_isAllowanceIssue(joined)) return "Token approval is missing or too low. Please re-approve and try again.";
-            return "Transaction was rejected on-chain. Please check the amount, approve the token if needed, and try again.";
-        }
-
-        // Generic ethers wrapper — try to recover the inner message
-        if (/could not coalesce error/i.test(msg)) {
-            var inner = "";
-            // Pluck the first useful inner message we already collected.
-            var parts = (joined || "").split(" \n ");
-            for (var i = 0; i < parts.length; i++) {
-                var p = parts[i];
-                if (!p || /could not coalesce error/i.test(p)) continue;
-                inner = p; break;
-            }
-            if (inner) return _truncate(_stripEthersBoilerplate(inner)) || "Transaction failed. Please try again.";
-            return "Transaction failed. Please try again.";
-        }
-
-        var clean = _stripEthersBoilerplate(msg);
-        if (!clean) return "Transaction failed. Please try again.";
-        return _truncate(_capitalize(clean));
+        return null;
+    }
+    if (_isTrustWalletMobileContext()) {
+        window.addEventListener('pageshow', () => { try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {} });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+        });
     }
 
-    function isUserRejection(err) {
-        if (err == null) return false;
-        var info = _spelunk(err);
-        return _isUserRejection(info.code, info.joined || "");
-    }
-
-    // Gas-specific failure detection, exposed so savings.html / swap.html can
-    // surface a gas-related message BEFORE their revert/allowance/balance
-    // diagnostics. Otherwise a gas failure looks like an opaque revert and the
-    // user gets told to "check the amount and token approval" when they really
-    // just need CELO for gas. Covers:
-    //  - insufficient funds for gas (wallet/estimateGas)
-    //  - out of gas / intrinsic gas too low / exceeds block gas limit
-    //  - app-level flag set by raw-tx helpers when eth_estimateGas itself failed
-    function isInsufficientFunds(err) {
-        if (err == null) return false;
-        var joined = String(err.message || err.shortMessage || err.reason || "");
-        return _isInsufficientFunds(joined);
-    }
-
-    function isGasIssue(err) {
-        if (err == null) return false;
-        if (err && err._gmGasEstimateFailed === true) return true;
-        var joined = String(err.message || err.shortMessage || err.reason || "");
-        return _isGasIssue(joined);
-    }
-
-    function isGasRelated(err) {
-        if (err == null) return false;
-        var joined = String(err.message || err.shortMessage || err.reason || "");
-        if (_isGasIssue(joined)) return true;
-        if (_isInsufficientFunds(joined) && /gas|fee|celo/i.test(joined)) return true;
-        if (err && err._gmGasEstimateFailed === true) return true;
+    // ── MiniPay detection + CIP-64 fee-abstracted tx helper ──
+    // MiniPay docs state that Ethers.js does NOT support MiniPay's Custom Fee
+    // Abstraction (CIP-64) transactions — viem/wagmi or a raw eth_sendTransaction
+    // call must be used. For MiniPay users we therefore bypass ethers entirely for
+    // tx submission: we still encode calldata with ethers.Interface, but submit
+    // via window.ethereum.request({ method: 'eth_sendTransaction' }) so MiniPay
+    // can apply its own fee-currency selection. See:
+    //   https://docs.minipay.xyz/faq.html
+    //   https://docs.minipay.xyz/technical-references/send-transaction.md
+    function _isMiniPay() {
+        const ep = _getEthProvider();
+        if (ep && ep.isMiniPay) return true;
+        if (window.ethereum && window.ethereum.isMiniPay) return true;
+        if (window.ethereum && window.ethereum.providers
+            && window.ethereum.providers.some(p => p && p.isMiniPay)) return true;
+        if (typeof navigator !== 'undefined' && /minipay/i.test(navigator.userAgent || '')) return true;
         return false;
     }
 
-    // Run a read-only eth_call against a Celo RPC endpoint to recover the real
-    // revert reason for a transaction that the wallet/RPC reported as
-    // "missing revert data". Returns a decoded reason string, or "" when the
-    // call doesn't revert or the reason can't be decoded. `to`/`data`/`from`/
-    // `value` come from the failing tx params; multiple RPC URLs are tried so a
-    // node that omits the `data` blob on reverts doesn't block decoding.
-    function _simulateCallCelo(params) {
-        var to = params && params.to;
-        var data = (params && params.data) || "0x";
-        var from = (params && params.from) || "0x0000000000000000000000000000000000000000";
-        var value = (params && params.value) || "0x0";
-        if (!to) return Promise.resolve("");
-        var urls = [
-            "https://forno.celo.org",
-            "https://rpc.ankr.com/celo",
-            "https://celo-rpc.publicnode.com"
-        ];
-        function tryUrl(i) {
-            if (i >= urls.length) return Promise.resolve("");
-            return fetch(urls[i], {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    jsonrpc: "2.0", id: Date.now(),
-                    method: "eth_call",
-                    params: [{ to: to, data: data, from: from, value: value }, "latest"]
-                })
-            }).then(function (r) { return r.json(); }).then(function (body) {
-                if (body && body.error) {
-                    var d = (body.error.data != null) ? body.error.data
-                          : (typeof body.error.message === "string" ? body.error.message : "");
-                    var decoded = _decodeRevertData(d);
-                    if (decoded) return decoded;
-                    // No data blob from this node → try the next RPC URL.
-                    return tryUrl(i + 1);
-                }
-                if (body && typeof body.result === "string") {
-                    // Call succeeded in simulation → the real tx should not
-                    // revert for static reasons. (May still fail at submit due
-                    // to gas/nonce.) No revert reason to report.
-                    return "";
-                }
-                return tryUrl(i + 1);
-            }).catch(function () { return tryUrl(i + 1); });
-        }
-        return tryUrl(0);
+    // Trust Wallet's injected Celo provider mis-estimates gas for the
+    // ethers.BrowserProvider auto preflight, so approve/save/withdraw txs land
+    // in Trust with an inadequate gas limit and the wallet rejects them. For
+    // Trust Wallet mobile we therefore use the raw eth_sendTransaction path
+    // (_trustWalletTx) with an explicit, padded gas limit — same proven
+    // approach MiniPay uses. MetaMask and other injected wallets keep the
+    // standard ethers.Contract(signer) path (their RPC answers preflight calls
+    // correctly). PREFER_WC_SIGNING users never hit this (they use the WC shim).
+    function _useTrustWalletRawTx() {
+        if (!_isTrustWalletMobileContext()) return false;
+        if (PREFER_WC_SIGNING) return false;
+        const ep = _getEthProvider();
+        return !!(ep && (ep.isTrust || ep.isTrustWallet));
     }
 
-    global.GMTxError = {
-        format: format,
-        isUserRejection: isUserRejection,
-        asFriendly: asFriendly,
-        // Exposed so swap.html / wallet.html can decode revert bytes directly
-        // and run a fallback simulation when ethers reports "missing revert data".
-        decodeRevertData: _decodeRevertData,
-        revertReasonFromError: _revertReasonFromError,
-        simulateCallCelo: _simulateCallCelo,
-        isInsufficientFunds: isInsufficientFunds,
-        isGasIssue: isGasIssue,
-        isGasRelated: isGasRelated
+    // Celo Mainnet fee-currency addresses accepted by MiniPay as the
+    // `feeCurrency` field on eth_sendTransaction. USDT and USDC require their
+    // adapter address (NOT the token address). USDm/cUSD is used as-is.
+    // Source: https://docs.minipay.xyz/technical-references/send-transaction.md
+    const MINIPAY_FEE_CURRENCY = {
+        USDM:         '0x765DE816845861e75A25fCA122bb6898B8B1282a', // USDm / cUSD (token addr)
+        USDT_ADAPTER: '0x0E2A3e05bc9A16F5292A6170456A710cb89C6f72', // USD₮ fee adapter
+        USDC_ADAPTER: '0x2F25deB3848C207fc8E0c34035B3Ba7fC157602B', // USDC fee adapter
     };
-})(typeof window !== "undefined" ? window : globalThis);
+
+    async function _miniPayWaitForReceipt(ep, txHash, maxAttempts = 60) {
+        for (let i = 0; i < maxAttempts; i++) {
+            try {
+                const receipt = await ep.request({
+                    method: 'eth_getTransactionReceipt',
+                    params: [txHash],
+                });
+                if (receipt) {
+                    if (receipt.status === '0x0') {
+                        throw new Error('Transaction reverted on-chain.');
+                    }
+                    return receipt;
+                }
+            } catch (e) {
+                if (e && e.message && /reverted/i.test(e.message)) throw e;
+                // transient RPC error — keep polling
+            }
+            await new Promise(r => setTimeout(r, 2000));
+        }
+        // Don't throw on timeout — the tx may still land. Caller will show a
+        // "view on CeloScan" link so the user can verify.
+        return null;
+    }
+
+    // Submit a contract call from inside MiniPay. We try `feeCurrency` values
+    // in order (USDm → USDT adapter → USDC adapter → no hint) and stop on the
+    // first success. MiniPay is documented to possibly ignore the hint and
+    // choose the token the user holds the most of, so passing a hint is safe.
+    // User-rejection errors bubble up immediately — we never re-prompt.
+    async function _miniPayTx(toAddr, abiFragment, args, valueHex) {
+        const ep = _getEthProvider();
+        if (!ep) throw new Error('No injected wallet provider available.');
+
+        const accounts = await ep.request({ method: 'eth_requestAccounts' });
+        const from = (accounts && accounts[0]) || WALLET;
+        if (from && WALLET && from.toLowerCase() !== WALLET.toLowerCase()) {
+            throw new Error(
+                'Wrong MiniPay account. Please switch to ' +
+                WALLET.slice(0, 6) + '…' + WALLET.slice(-4) + ' and try again.'
+            );
+        }
+
+        const iface = new ethers.Interface([abiFragment]);
+        const fnName = abiFragment.match(/function (\w+)/)[1];
+        const data = iface.encodeFunctionData(fnName, args);
+        const value = valueHex || '0x0';
+
+        console.log('[MiniPay] _miniPayTx called:', {
+            fn: fnName, to: toAddr, from,
+            dataLen: data.length, value,
+            isMiniPay: !!(ep && ep.isMiniPay),
+            ua: navigator.userAgent,
+        });
+
+        // Estimate gas so MiniPay doesn't have to guess (reduces failures).
+        let gasHex;
+        let gasEstimateError = null;
+        try {
+            const est = await ep.request({
+                method: 'eth_estimateGas',
+                params: [{ from, to: toAddr, data, value }],
+            });
+            const estimated = typeof est === 'string' ? BigInt(est) : BigInt(Number(est));
+            // Add 40 % headroom — on-chain state can shift between estimate and mine.
+            gasHex = '0x' + (estimated * 140n / 100n).toString(16);
+            console.log('[MiniPay] gas estimated:', { raw: est, withHeadroom: gasHex });
+        } catch (gasErr) {
+            gasHex = '0x7A120'; // 500 000 — safe fallback for most contract calls
+            gasEstimateError = gasErr;
+            console.warn('[MiniPay] eth_estimateGas failed, using fallback:', {
+                error: gasErr?.message || gasErr,
+                code: gasErr?.code,
+                fallback: gasHex,
+            });
+        }
+
+        const attempts = (window.GMMinipayFeeCurrencies && window.GMMinipayFeeCurrencies.orderByBalances)
+            ? await window.GMMinipayFeeCurrencies.orderByBalances(ep, from, { includePlain: true })
+            : [
+                MINIPAY_FEE_CURRENCY.USDM,
+                MINIPAY_FEE_CURRENCY.USDT_ADAPTER,
+                MINIPAY_FEE_CURRENCY.USDC_ADAPTER,
+                null, // let MiniPay pick the fee currency itself
+            ];
+
+        const errorLog = [];
+        let lastErr;
+        for (const fc of attempts) {
+            const txParams = { from, to: toAddr, data, value, gas: gasHex };
+            if (fc) txParams.feeCurrency = fc;
+            try {
+                console.log('[MiniPay] sending tx attempt:', { feeCurrency: fc, gas: gasHex });
+                const txHash = await ep.request({
+                    method: 'eth_sendTransaction',
+                    params: [txParams],
+                });
+                console.log('[MiniPay] tx sent:', txHash);
+                await _miniPayWaitForReceipt(ep, txHash);
+                return txHash;
+            } catch (err) {
+                lastErr = err;
+                const code = err && err.code;
+                const rawMsg = (err && (err.message || err.data && err.data.message)) || '';
+                const msg = rawMsg.toLowerCase();
+                const detail = {
+                    feeCurrency: fc,
+                    code: code,
+                    message: rawMsg.substring(0, 200),
+                    dataMsg: err?.data?.message || null,
+                };
+                errorLog.push(detail);
+                console.error('[MiniPay] tx FAILED:', detail);
+
+                // User explicitly rejected — never retry (no double-signing prompts).
+                if (code === 4001 || /reject|denied by user|user denied/i.test(msg)) {
+                    throw err;
+                }
+                // On-chain revert — no point retrying with a different fee currency.
+                if (/revert/i.test(msg)) {
+                    throw err;
+                }
+            }
+        }
+
+        // Build a diagnostic error with all attempt details visible in UI.
+        const diagParts = errorLog.map((e, i) =>
+            `Attempt ${i + 1} (fc=${e.feeCurrency || 'none'}): code=${e.code}, msg=${e.message}`
+        );
+        const diagMsg = `MiniPay ${fnName}() failed after ${errorLog.length} attempt(s).\n` +
+            diagParts.join('\n') +
+            (gasEstimateError ? `\nGas estimate also failed: ${gasEstimateError.message || gasEstimateError}` : '');
+        console.error('[MiniPay] all attempts exhausted:', diagMsg);
+
+        const richErr = new Error(diagMsg);
+        richErr._miniPayDiag = { fn: fnName, to: toAddr, errorLog, gasEstimateError: gasEstimateError?.message };
+        throw richErr;
+    }
+
+    // ── Trust Wallet raw-tx helper ──
+    // Trust Wallet's injected Celo provider handles ethers.js BrowserProvider
+    // auto gas-estimation inconsistently — eth_estimateGas can return a too-low
+    // or zero estimate, so the approve / deposit / withdraw tx is submitted to
+    // Trust with an inadequate gas limit and the wallet rejects it with
+    // "Transaction failed". MetaMask works because its RPC answers read-only
+    // preflight calls correctly; MiniPay works because _miniPayTx sets an
+    // explicit gas limit with 40% headroom. Trust Wallet fell through to the
+    // generic ethers.Contract(signer) path with neither protection.
+    //
+    // For Trust Wallet mobile, bypass ethers entirely for tx submission (we
+    // still use ethers.Interface to encode the calldata) and send a raw
+    // eth_sendTransaction with an explicitly estimated + padded gas limit —
+    // the same proven approach MiniPay / claim / send-link use, minus the
+    // CIP-64 feeCurrency rotation (Trust pays gas in CELO).
+    async function _trustWalletTx(toAddr, abiFragment, args, valueHex) {
+        const ep = _getEthProvider();
+        if (!ep) throw new Error('No Trust Wallet provider available.');
+
+        const accounts = await ep.request({ method: 'eth_requestAccounts' });
+        const from = (accounts && accounts[0]) || WALLET;
+        if (from && WALLET && from.toLowerCase() !== WALLET.toLowerCase()) {
+            throw new Error(
+                'Wrong Trust Wallet account. Please switch to ' +
+                WALLET.slice(0, 6) + '…' + WALLET.slice(-4) + ' and try again.'
+            );
+        }
+
+        const iface = new ethers.Interface([abiFragment]);
+        const fnName = abiFragment.match(/function (\w+)/)[1];
+        const data = iface.encodeFunctionData(fnName, args);
+        const value = valueHex || '0x0';
+
+        let gasHex;
+        let gasEstimateError = null;
+        try {
+            const est = await ep.request({
+                method: 'eth_estimateGas',
+                params: [{ from, to: toAddr, data, value }],
+            });
+            const estimated = typeof est === 'string' ? BigInt(est) : BigInt(Number(est));
+            // 40% headroom — on-chain state can shift between estimate and mine.
+            gasHex = '0x' + (estimated * 140n / 100n).toString(16);
+        } catch (gasErr) {
+            gasHex = '0x7A120'; // 500 000 — safe fallback for approve / deposit / withdraw
+            gasEstimateError = gasErr;
+        }
+
+        const txParams = { from, to: toAddr, data, value, gas: gasHex };
+        try {
+            const txHash = await ep.request({
+                method: 'eth_sendTransaction',
+                params: [txParams],
+            });
+            await _miniPayWaitForReceipt(ep, txHash);
+            return txHash;
+        } catch (err) {
+            const code = err && err.code;
+            const rawMsg = (err && (err.message || (err.data && err.data.message))) || '';
+            const msg = rawMsg.toLowerCase();
+            // Surface a diagnostic so _enrichSavingsError + the catch block
+            // can recover the real revert reason via simulation.
+            if (gasEstimateError) {
+                err._gmGasEstimateFailed = true;
+            }
+            if (code === 4001 || /reject|denied by user|user denied/i.test(msg)) {
+                throw err;
+            }
+            throw err;
+        }
+    }
+
+
+    async function _getPrivyProviderIfPreferred(options = {}) {
+        if (!IS_PRIVY_LOGIN) return null;
+        const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : 4000;
+        const start = Date.now();
+        const wait = (ms) => new Promise(r => setTimeout(r, ms));
+        while (Date.now() - start < timeoutMs) {
+            try {
+                const wallets = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
+                const sessionWallet = (WALLET || '').toLowerCase();
+                const wallet = wallets.find(w => (w.address || '').toLowerCase() === sessionWallet)
+                    || wallets.find(w => w.walletClientType === 'privy')
+                    || wallets[0];
+                if (wallet && typeof wallet.getEthereumProvider === 'function') {
+                    const provider = await wallet.getEthereumProvider();
+                    if (provider && typeof provider.request === 'function') {
+                        provider.__gmPrivyProvider = true;
+                        return provider;
+                    }
+                }
+                if (window.GMPrivyReady && !window.GMPrivyAuthenticated && typeof window.GMPrivyLogin === 'function' && options.promptLogin) {
+                    await window.GMPrivyLogin();
+                }
+            } catch (err) {
+                if (err && (err.code === 4001 || /reject|cancel/i.test(String(err.message || '')))) throw err;
+                console.warn('[privy] provider lookup failed:', err);
+            }
+            await wait(150);
+        }
+        return null;
+    }
+
+    async function getSigner() {
+        if (window.useServerSigning) {
+            throw new Error('This account uses server-side signing. Please continue with automatic server signing.');
+        }
+        if (IS_PRIVY_LOGIN) {
+            const privyProvider = await _getPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
+            if (privyProvider) {
+                const currentChain = await privyProvider.request({ method: 'eth_chainId' }).catch(() => null);
+                if (!currentChain || parseInt(currentChain, 16) !== CHAIN_ID) {
+                    try {
+                        await privyProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + CHAIN_ID.toString(16) }] });
+                    } catch (_) {
+                        await privyProvider.request({ method: 'wallet_addEthereumChain', params: [{
+                            chainId: '0x' + CHAIN_ID.toString(16),
+                            chainName: 'Celo Mainnet',
+                            nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+                            rpcUrls: CELO_RPC_URLS,
+                            blockExplorerUrls: ['https://celoscan.io']
+                        }] });
+                    }
+                }
+                const provider = new ethers.BrowserProvider(privyProvider);
+                const signer = await provider.getSigner();
+                const addr = await signer.getAddress();
+                if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+                    throw new Error('Wrong Privy wallet connected. Please use your GoodMarket wallet.');
+                }
+                return signer;
+            }
+        }
+        // If user logged in via WalletConnect, restore and use WC session as signer
+        // regardless of any browser extension that may be installed
+        const wcTopic = localStorage.getItem('wc_session_topic');
+        const wcTimestamp = parseInt(localStorage.getItem('wc_session_timestamp') || '0', 10);
+        const wcAge = Date.now() - wcTimestamp;
+        const wcSessionValid = wcTopic && wcAge < 7 * 24 * 60 * 60 * 1000;
+        if (wcSessionValid) {
+            await window._wcGetClient().catch(function() {});
+            if (window._wcSignClient && window._wcSession) {
+                const shim = new WCEthersShim(window._wcSignClient, window._wcSession, WALLET);
+                const provider = new ethers.BrowserProvider(shim);
+                return await provider.getSigner();
+            }
+        }
+        const ep = await _awaitEthProvider();
+        if (ep) {
+            const accounts = await ep.request({ method: 'eth_requestAccounts' });
+            const active = (accounts && accounts[0] || '').toLowerCase();
+            if (active && active !== WALLET.toLowerCase()) {
+                const walletName = ep.isMetaMask ? 'MetaMask' : ep.isTrust ? 'Trust Wallet' : 'your wallet';
+                throw new Error(
+                    'Wrong account selected in ' + walletName + '. Please switch to ' +
+                    WALLET.slice(0,6) + '…' + WALLET.slice(-4) +
+                    ' and try again.'
+                );
+            }
+            const provider = new ethers.BrowserProvider(ep);
+            return await provider.getSigner();
+        }
+        if (window._wcSignClient && window._wcSession) {
+            const shim = new WCEthersShim(window._wcSignClient, window._wcSession, WALLET);
+            const provider = new ethers.BrowserProvider(shim);
+            return await provider.getSigner();
+        }
+        throw new Error('No wallet connected. Install MetaMask or scan the QR code below to connect via WalletConnect.');
+    }
+
+    // ── Approve ──
+    async function doApprove() {
+        const amtStr = document.getElementById('saveAmount').value.trim();
+        const amt = parseFloat(amtStr);
+        const sym = selectedToken.symbol;
+        const tokenAddr = selectedToken.address;
+        if (!amtStr || isNaN(amt) || amt < selectedToken.min || amt > selectedToken.max) {
+            showAlert('saveAlert', 'error',
+                `⚠️ Enter a valid amount (${selectedToken.min.toLocaleString()}–${selectedToken.max.toLocaleString()} ${sym}).`);
+            return;
+        }
+
+        const btn = document.getElementById('approveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Approving…';
+
+        try {
+            const amtWei = ethers.parseUnits(amtStr, selectedToken.decimals);
+
+            if (window.useServerSigning) {
+                showAlert('saveAlert', 'info', `<span class="spinner"></span> Approving ${sym} spending server-side…`);
+                const txHash = await serverSignedTx(tokenAddr,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('saveAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                document.getElementById('saveBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
+            if (_isMiniPay()) {
+                showAlert('saveAlert', 'info', `<span class="spinner"></span> Approve ${sym} spending in MiniPay…`);
+                const txHash = await _miniPayTx(tokenAddr,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('saveAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                document.getElementById('saveBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('saveAlert', 'info', `<span class="spinner"></span> Confirm the approve in Trust Wallet…`);
+                const txHash = await _trustWalletTx(tokenAddr,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('saveAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                document.getElementById('saveBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
+            showAlert('saveAlert', 'info', '<span class="spinner"></span> Check your wallet — click it to open if nothing pops up…');
+            const signer = await getSigner();
+            await ensureCeloNetwork();
+
+            const erc20 = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
+            showAlert('saveAlert', 'info', `<span class="spinner"></span> Approve ${sym} spending in your wallet…`);
+            const tx = await erc20.approve(SAVINGS_CONTRACT, amtWei);
+            await tx.wait();
+
+            showAlert('saveAlert', 'success', `✅ Approved! Now click "Lock ${_selectedPeriod().label} ${sym}" to complete your save.`);
+            document.getElementById('saveBtn').disabled = false;
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+        } catch (err) {
+            console.error(err);
+            if (err.message && err.message.includes('No wallet')) {
+                showAlert('saveAlert', 'error', '⚠️ ' + err.message);
+                const wc = document.getElementById('savingsWcSection');
+                if (wc) wc.style.display = 'block';
+            } else if (err._miniPayDiag) {
+                const d = err._miniPayDiag;
+                showAlert('saveAlert', 'error',
+                    `❌ MiniPay approve() failed<br>` +
+                    `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
+                    `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
+            } else {
+                try {
+                    const approveIface = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+                    await _enrichSavingsError(err, {
+                        to: tokenAddr,
+                        data: approveIface.encodeFunctionData("approve", [SAVINGS_CONTRACT, amtWei]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: sym,
+                        decimals: selectedToken.decimals
+                    });
+                } catch (_) { /* keep original error */ }
+                const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
+                showAlert('saveAlert', 'error', '❌ Approval failed: ' + friendly);
+            }
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fas fa-check-circle"></i> <span id="approveBtnLabel">Step 1 — Approve ${sym} Spending</span>`;
+        }
+    }
+
+    // ── Save ──
+    async function doSave() {
+        const amtStr = document.getElementById('saveAmount').value.trim();
+        const amt = parseFloat(amtStr);
+        const sym = selectedToken.symbol;
+        const period = _selectedPeriod();
+        if (!amtStr || isNaN(amt) || amt < selectedToken.min || amt > selectedToken.max) {
+            showAlert('saveAlert', 'error',
+                `⚠️ Enter a valid amount (${selectedToken.min.toLocaleString()}–${selectedToken.max.toLocaleString()} ${sym}).`);
+            return;
+        }
+
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Locking…';
+
+        // If user already has a slot for this (token, lockDays), the unlock
+        // date does NOT change — we'll display the existing one for clarity.
+        const existingSlot = __mySlotsByKey[`${selectedToken.key}|${selectedDays}`];
+
+        try {
+            const amtWei = ethers.parseUnits(amtStr, selectedToken.decimals);
+            const args   = [selectedToken.address, amtWei, BigInt(selectedDays)];
+
+            const onSuccess = (txHash) => {
+                let unlockDate;
+                if (existingSlot) {
+                    unlockDate = new Date(existingSlot.unlocks_at * 1000);
+                } else {
+                    unlockDate = new Date();
+                    unlockDate.setDate(unlockDate.getDate() + selectedDays);
+                }
+                showAlert('saveAlert', 'success',
+                    `🎉 Saved ${parseFloat(amtStr).toLocaleString()} ${sym} for ${period.label}` +
+                    (existingSlot ? ' (added to existing slot)' : '') + '!<br>' +
+                    `Unlocks: <strong>${unlockDate.toDateString()}</strong><br>` +
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                document.getElementById('saveAmount').value = '';
+                updateSummary();
+                document.getElementById('approveBtn').disabled = false;
+                document.getElementById('approveBtn').innerHTML =
+                    `<i class="fas fa-check-circle"></i> <span id="approveBtnLabel">Step 1 — Approve ${sym} Spending</span>`;
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-lock"></i> <span id="saveBtnLabel">Step 2 — Lock ${period.label} ${sym}</span>`;
+                loadStats();
+                refreshMySlots();
+            };
+
+            if (window.useServerSigning) {
+                showAlert('saveAlert', 'info', `<span class="spinner"></span> Locking ${sym} server-side — no wallet needed…`);
+                const txHash = await serverSignedTx(SAVINGS_CONTRACT,
+                    "function depositSavings(address token, uint256 amount, uint256 lockDays) external",
+                    args);
+                onSuccess(txHash);
+                return;
+            }
+
+            if (_isMiniPay()) {
+                showAlert('saveAlert', 'info', '<span class="spinner"></span> Confirm the save transaction in MiniPay…');
+                const txHash = await _miniPayTx(SAVINGS_CONTRACT,
+                    "function depositSavings(address token, uint256 amount, uint256 lockDays) external",
+                    args);
+                onSuccess(txHash);
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('saveAlert', 'info', '<span class="spinner"></span> Confirm the save transaction in Trust Wallet…');
+                const txHash = await _trustWalletTx(SAVINGS_CONTRACT,
+                    "function depositSavings(address token, uint256 amount, uint256 lockDays) external",
+                    args);
+                onSuccess(txHash);
+                return;
+            }
+
+            const signer = await getSigner();
+            await ensureCeloNetwork();
+
+            const savings = new ethers.Contract(SAVINGS_CONTRACT, SAVINGS_ABI, signer);
+            showAlert('saveAlert', 'info', '<span class="spinner"></span> Confirm the save transaction in your wallet…');
+            const tx = await savings.depositSavings(selectedToken.address, amtWei, BigInt(selectedDays));
+            showAlert('saveAlert', 'info', '<span class="spinner"></span> Waiting for Celo confirmation…');
+            const receipt = await tx.wait();
+            onSuccess(receipt.hash);
+
+        } catch (err) {
+            console.error(err);
+            if (err._miniPayDiag) {
+                const d = err._miniPayDiag;
+                showAlert('saveAlert', 'error',
+                    `❌ MiniPay save failed<br>` +
+                    `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
+                    `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
+            } else {
+                try {
+                    const depositIface = new ethers.Interface(["function depositSavings(address token, uint256 amount, uint256 lockDays) external"]);
+                    await _enrichSavingsError(err, {
+                        to: SAVINGS_CONTRACT,
+                        data: depositIface.encodeFunctionData("depositSavings", [selectedToken.address, amtWei, BigInt(selectedDays)]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr: selectedToken.address, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: sym,
+                        decimals: selectedToken.decimals
+                    });
+                } catch (_) { /* keep original error */ }
+                const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
+                showAlert('saveAlert', 'error', '❌ Save failed: ' + friendly);
+            }
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fas fa-lock"></i> <span id="saveBtnLabel">Step 2 — Lock ${period.label} ${sym}</span>`;
+        }
+    }
+
+    // ── Withdraw ──
+    async function doWithdraw(tokenAddr, lockDays, contractAddr = SAVINGS_CONTRACT) {
+        try {
+            const args = [tokenAddr, BigInt(lockDays)];
+            const fn   = "function withdraw(address token, uint256 lockDays) external";
+
+            if (window.useServerSigning) {
+                showAlert('depositsAlert', 'info', '<span class="spinner"></span> Signing withdrawal server-side…');
+                const txHash = await serverSignedTx(contractAddr, fn, args);
+                showAlert('depositsAlert', 'success',
+                    `✅ Withdrawn! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                loadDeposits(); loadStats(); refreshMySlots();
+                return;
+            }
+
+            if (_isMiniPay()) {
+                showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in MiniPay…');
+                const txHash = await _miniPayTx(contractAddr, fn, args);
+                showAlert('depositsAlert', 'success',
+                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                loadDeposits(); loadStats(); refreshMySlots();
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in Trust Wallet…');
+                const txHash = await _trustWalletTx(contractAddr, fn, args);
+                showAlert('depositsAlert', 'success',
+                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                loadDeposits(); loadStats(); refreshMySlots();
+                return;
+            }
+
+            const signer = await getSigner();
+            await ensureCeloNetwork();
+            const savings = new ethers.Contract(contractAddr, SAVINGS_ABI, signer);
+
+            showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in your wallet…');
+            const tx = await savings.withdraw(tokenAddr, BigInt(lockDays));
+            showAlert('depositsAlert', 'info', '<span class="spinner"></span> Waiting for Celo confirmation…');
+            const receipt = await tx.wait();
+
+            showAlert('depositsAlert', 'success',
+                `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${receipt.hash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+            );
+            loadDeposits();
+            loadStats();
+            refreshMySlots();
+        } catch (err) {
+            console.error(err);
+            if (err._miniPayDiag) {
+                const d = err._miniPayDiag;
+                showAlert('depositsAlert', 'error',
+                    `❌ MiniPay withdrawal failed<br>` +
+                    `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
+                    `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
+            } else {
+                try {
+                    const withdrawIface = new ethers.Interface(["function withdraw(address token, uint256 lockDays) external"]);
+                    const tMeta = tokenMetaForAddress(tokenAddr);
+                    await _enrichSavingsError(err, {
+                        to: contractAddr,
+                        data: withdrawIface.encodeFunctionData("withdraw", [tokenAddr, BigInt(lockDays)]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr, spender: contractAddr,
+                        tokenSymbol: tMeta.symbol, decimals: tMeta.decimals
+                    });
+                } catch (_) { /* keep original error */ }
+                const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
+                showAlert('depositsAlert', 'error', '❌ Withdrawal failed: ' + friendly);
+            }
+        }
+    }
+
+    // ── Load stats ──
+    async function loadStats() {
+        try {
+            const res = await fetch('/savings/api/stats');
+            const data = await res.json();
+            if (data.error) return;
+            document.getElementById('statLockedGd').textContent   = fmtAmt(data.total_locked_gd_h,   'G$');
+            document.getElementById('statLockedCelo').textContent = fmtAmt(data.total_locked_celo_h, 'CELO');
+            document.getElementById('statLockedCusd').textContent = fmtAmt(data.total_locked_cusd_h, 'cUSD');
+            document.getElementById('statLockedUsdt').textContent = fmtAmt(data.total_locked_usdt_h, 'USDT');
+            document.getElementById('statPool').textContent       = fmtAmt(data.reward_pool_gd, 'G$');
+            document.getElementById('statCount').textContent      = data.total_slots_opened;
+        } catch (e) {
+            console.warn('Stats load failed', e);
+        }
+    }
+
+    // ── Load deposits (slots) ──
+    // Unified loader: combines the live contract state (active slots, with
+    // accurate pending-bonus / bonus-claimed flags) with on-chain event
+    // history (Saved + Withdrawn) to render a single list that includes
+    // every cycle the wallet has ever opened — locked / ready first, then
+    // already-withdrawn rows below with a CeloScan link to the matching
+    // withdraw transaction. No localStorage involved, so the same wallet
+    // shows the same history on any browser or device.
+    async function loadDeposits() {
+        // Load the current contract state immediately, in parallel with the
+        // history fetch below.
+        loadLegacyV5Deposits();
+
+        const container = document.getElementById('depList');
+        container.innerHTML = '<div class="empty-state">Loading…</div>';
+
+        const activePromise  = fetch('/savings/api/deposits').then(r => r.json()).catch(() => ({ deposits: [] }));
+        const historyPromise = fetch('/savings/api/history')
+            .then(r => r.json())
+            .then(data => (data && Array.isArray(data.history)) ? data.history : null)
+            .catch(() => null);
+
+        let activeDeps = [];
+        try {
+            const data = await activePromise;
+            activeDeps = data.deposits || [];
+        } catch (_) { /* handled by default */ }
+
+        // Refresh cache used by the Save tab to detect existing slots.
+        __mySlotsByKey = {};
+        for (const d of activeDeps) {
+            const tk = symbolToKey(d.token_symbol);
+            if (tk) __mySlotsByKey[`${tk}|${d.lock_days}`] = d;
+        }
+        checkExistingSlot();
+
+        const onchain = await historyPromise || await loadOnchainSavingsHistory(WALLET).catch(err => {
+            console.warn('on-chain history reconstruction failed:', err);
+            return null;
+        });
+
+        // Merge: active state from /api/deposits is the source of truth for
+        // pending bonus + bonus-claimed flags on still-open slots; on-chain
+        // events are the source of truth for withdrawn rows. We index the
+        // on-chain list by slot key and overlay the live state on top.
+        const merged = [];
+        if (onchain) {
+            const activeByKey = new Map(
+                activeDeps.map(d => [slotKeyByTokenAddress(d.token, d.lock_days), d])
+            );
+            for (const cycle of onchain) {
+                if (cycle.status === 'withdrawn') {
+                    merged.push(cycle);
+                    continue;
+                }
+                const k = slotKeyByTokenAddress(cycle.token, cycle.lock_days);
+                const live = activeByKey.get(k);
+                if (live) {
+                    merged.push({
+                        ...cycle,
+                        amount_h:         Number(live.amount_h ?? cycle.amount_h ?? 0),
+                        unlocks_at:       Number(live.unlocks_at ?? cycle.unlocks_at ?? 0),
+                        is_unlocked:      Boolean(live.is_unlocked),
+                        bonus_claimed:    Boolean(live.bonus_claimed),
+                        pending_bonus_gd: Number(live.pending_bonus_gd || 0),
+                        status:           live.is_unlocked ? 'ready' : 'locked',
+                    });
+                    activeByKey.delete(k);
+                } else {
+                    merged.push(cycle);
+                }
+            }
+            // Any active slot not yet reflected in the event stream (e.g.
+            // a Saved log still propagating on a fresh RPC node) — show it
+            // anyway so the user is not missing their just-opened slot.
+            for (const live of activeByKey.values()) {
+                merged.push({
+                    token:            live.token,
+                    token_symbol:     live.token_symbol,
+                    lock_days:        Number(live.lock_days),
+                    amount_h:         Number(live.amount_h || 0),
+                    deposited_at:     Math.max(0, Number(live.unlocks_at) - Number(live.lock_days) * 86400),
+                    unlocks_at:       Number(live.unlocks_at || 0),
+                    is_unlocked:      Boolean(live.is_unlocked),
+                    bonus_claimed:    Boolean(live.bonus_claimed),
+                    pending_bonus_gd: Number(live.pending_bonus_gd || 0),
+                    status:           live.is_unlocked ? 'ready' : 'locked',
+                });
+            }
+        } else {
+            // Event read failed — degrade gracefully to the active-only view.
+            for (const live of activeDeps) {
+                merged.push({
+                    token:            live.token,
+                    token_symbol:     live.token_symbol,
+                    lock_days:        Number(live.lock_days),
+                    amount_h:         Number(live.amount_h || 0),
+                    deposited_at:     Math.max(0, Number(live.unlocks_at) - Number(live.lock_days) * 86400),
+                    unlocks_at:       Number(live.unlocks_at || 0),
+                    is_unlocked:      Boolean(live.is_unlocked),
+                    bonus_claimed:    Boolean(live.bonus_claimed),
+                    pending_bonus_gd: Number(live.pending_bonus_gd || 0),
+                    status:           live.is_unlocked ? 'ready' : 'locked',
+                });
+            }
+        }
+
+        renderTotalSaved(merged);
+
+        // Split into two lists: active (locked / ready) stays in the main
+        // "My Saves" card, withdrawn history goes into its own collapsible
+        // section below. Active list is oldest-first; withdrawn list is
+        // most-recent-first since users care about the latest withdraw.
+        const active = merged
+            .filter(d => d.status !== 'withdrawn')
+            .sort((a, b) => (a.deposited_at || 0) - (b.deposited_at || 0));
+        const withdrawn = merged
+            .filter(d => d.status === 'withdrawn')
+            .sort((a, b) => (b.withdrawn_at || 0) - (a.withdrawn_at || 0));
+
+        // Active saves panel.
+        if (active.length === 0) {
+            container.innerHTML = '<div class="empty-state">No active saves yet. Go to "Save" to start.</div>';
+        } else {
+            container.innerHTML = '';
+            for (const d of active) {
+                container.appendChild(buildDepCard(d));
+            }
+        }
+
+        // Withdrawn-history panel (collapsible, only rendered when there's
+        // at least one withdrawn row).
+        renderWithdrawnHistory(withdrawn);
+
+        if (!onchain) {
+            showAlert('depositsAlert', 'warn', '⚠️ Could not load full withdrawn history right now. Showing active saves only.');
+        }
+    }
+
+    function renderWithdrawnHistory(rows) {
+        const card    = document.getElementById('withdrawnCard');
+        const list    = document.getElementById('withdrawnList');
+        const countEl = document.getElementById('withdrawnCount');
+        if (!rows || rows.length === 0) {
+            card.style.display = 'none';
+            list.innerHTML = '<div class="empty-state">No withdrawn saves yet.</div>';
+            countEl.textContent = '0';
+            return;
+        }
+        card.style.display = 'block';
+        countEl.textContent = String(rows.length);
+        list.innerHTML = '';
+        for (const d of rows) {
+            list.appendChild(buildDepCard(d));
+        }
+    }
+
+    function toggleWithdrawn() {
+        const body = document.getElementById('withdrawnBody');
+        const chev = document.getElementById('withdrawnChevron');
+        const open = body.style.display === 'block';
+        body.style.display = open ? 'none' : 'block';
+        chev.textContent   = open ? '▾' : '▴';
+    }
+
+    function renderTotalSaved(merged) {
+        const totalEl = document.getElementById('myTotalSaved');
+        let total = 0;
+        for (const d of merged || []) total += Number(d.amount_h || 0);
+        totalEl.textContent = `${fmtAmt(total, 'combined')} (active + withdrawn)`;
+    }
+
+    // Lightweight cache refresh used after deposit / withdraw.
+    async function refreshMySlots() {
+        try {
+            const res  = await fetch('/savings/api/deposits');
+            const data = await res.json();
+            const deps = data.deposits || [];
+            __mySlotsByKey = {};
+            for (const d of deps) {
+                const tk = symbolToKey(d.token_symbol);
+                if (tk) __mySlotsByKey[`${tk}|${d.lock_days}`] = d;
+            }
+            checkExistingSlot();
+        } catch (_) {}
+    }
+
+    function symbolToKey(sym) {
+        if (sym === 'G$')   return 'gd';
+        if (sym === 'CELO') return 'celo';
+        if (sym === 'cUSD') return 'cusd';
+        if (sym === 'USDT') return 'usdt';
+        return null;
+    }
+
+    function buildDepCard(d) {
+        const sym = d.token_symbol || 'G$';
+        const el = document.createElement('div');
+
+        if (d.status === 'withdrawn') {
+            el.className = 'dep-card withdrawn';
+            const wdDate = d.withdrawn_at ? new Date(d.withdrawn_at * 1000).toDateString() : '—';
+            const txLink = d.tx_hash
+                ? `<a href="https://celoscan.io/tx/${d.tx_hash}" target="_blank" rel="noopener" style="color:#86efac; font-weight:600;">View tx ↗</a>`
+                : `<a href="https://celoscan.io/address/${SAVINGS_CONTRACT}" target="_blank" rel="noopener" style="color:#86efac; font-weight:600;">View on CeloScan ↗</a>`;
+            el.innerHTML = `
+                <div class="dep-amount">${fmtAmt(d.amount_h, sym)}</div>
+                <div class="dep-meta">
+                    <div class="row">Token: <span>${sym}</span></div>
+                    <div class="row">Lock: <span>${d.lock_days} days</span></div>
+                    <div class="row">Withdrawn: <span>${wdDate}</span></div>
+                    <div class="row">Tx: <span>${txLink}</span></div>
+                </div>
+                <div style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:center;">
+                    <span class="dep-badge badge-done">✓ Withdrawn</span>
+                </div>
+            `;
+            return el;
+        }
+
+        el.className = 'dep-card' + (d.is_unlocked && !d.bonus_claimed ? ' unlocked' : '');
+        const unlock = new Date(d.unlocks_at * 1000);
+
+        let statusBadge;
+        if (d.is_unlocked) {
+            statusBadge = '<span class="dep-badge badge-ready">Ready to Withdraw</span>';
+        } else {
+            statusBadge = '<span class="dep-badge badge-locked">Locked</span>';
+        }
+
+        let bonusBadge = '';
+        if (d.bonus_claimed) {
+            bonusBadge = '<span class="dep-badge badge-bonus">🎁 Bonus Claimed</span>';
+        } else if (d.pending_bonus_gd > 0) {
+            bonusBadge = `<span class="dep-badge badge-bonus">🎁 +${fmtAmt(d.pending_bonus_gd, 'G$')} bonus on withdrawal</span>`;
+        }
+
+        let withdrawBtn = '';
+        if (d.is_unlocked) {
+            const withdrawContract = d.withdraw_contract || SAVINGS_CONTRACT;
+            withdrawBtn = `<button class="btn btn-green" onclick="doWithdraw('${d.token}', ${d.lock_days}, '${withdrawContract}')" style="font-size:.8rem; padding:.5rem 1rem;">Withdraw</button>`;
+        }
+
+        el.innerHTML = `
+            <div class="dep-amount">${fmtAmt(d.amount_h, sym)}</div>
+            <div class="dep-meta">
+                <div class="row">Token: <span>${sym}</span></div>
+                <div class="row">Lock: <span>${d.lock_days} days</span></div>
+                <div class="row">Unlocks: <span>${unlock.toDateString()}</span></div>
+            </div>
+            <div style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:center;">
+                ${statusBadge}${bonusBadge}
+            </div>
+            ${withdrawBtn ? `<div>${withdrawBtn}</div>` : ''}
+        `;
+        return el;
+    }
+
+
+    // ── Utilities ──
+    function fmtAmt(n, sym) {
+        sym = sym || '';
+        n = Number(n) || 0;
+        if (n >= 1_000_000) return (n/1_000_000).toFixed(2) + 'M ' + sym;
+        if (n >= 1_000)     return (n/1_000).toFixed(1) + 'K ' + sym;
+        return (Math.round(n * 100) / 100).toLocaleString() + ' ' + sym;
+    }
+    // Backwards-compat alias used by older callers / sponsor pool stats.
+    function fmtGD(n) { return fmtAmt(n, 'G$'); }
+
+    function showAlert(id, type, msg) {
+        const el = document.getElementById(id);
+        el.className = `alert alert-${type}`;
+        el.innerHTML = msg;
+        el.style.display = 'block';
+    }
+
+    async function ensureCeloNetwork() {
+        const privyProvider = await _getPrivyProviderIfPreferred({ promptLogin: false, timeoutMs: 1000 });
+        const ep = privyProvider || _getEthProvider();
+        if (!ep) return; // WalletConnect — assume wallet is on Celo
+        const chainIdHex = await ep.request({ method: 'eth_chainId' });
+        if (parseInt(chainIdHex, 16) !== CHAIN_ID) {
+            try {
+                await ep.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0x' + CHAIN_ID.toString(16) }]
+                });
+            } catch (e) {
+                if (e.code === 4902) {
+                    await ep.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [{
+                            chainId: '0x' + CHAIN_ID.toString(16),
+                            chainName: 'Celo Mainnet',
+                            nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+                            rpcUrls: CELO_RPC_URLS,
+                            blockExplorerUrls: ['https://celoscan.io']
+                        }]
+                    });
+                }
+            }
+        }
+    }
+
+    // ── Pool Approve ──
+    async function doPoolApprove() {
+        const amtStr = document.getElementById('sponsorAmount').value.trim();
+        const amt = parseFloat(amtStr);
+        if (!amtStr || isNaN(amt) || amt <= 0) {
+            showAlert('sponsorAlert', 'error', '⚠️ Enter a valid amount greater than 0 G$.');
+            return;
+        }
+
+        const btn = document.getElementById('poolApproveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Approving…';
+
+        try {
+            const amtWei = ethers.parseUnits(amtStr, 18);
+
+            if (window.useServerSigning) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Approving G$ spending server-side…');
+                const txHash = await serverSignedTx(GD_CONTRACT,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                document.getElementById('poolFundBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
+            if (_isMiniPay()) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Approve G$ spending in MiniPay…');
+                const txHash = await _miniPayTx(GD_CONTRACT,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                document.getElementById('poolFundBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm the G$ approve in Trust Wallet…');
+                const txHash = await _trustWalletTx(GD_CONTRACT,
+                    "function approve(address spender, uint256 amount) returns (bool)",
+                    [SAVINGS_CONTRACT, amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                document.getElementById('poolFundBtn').disabled = false;
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+                return;
+            }
+
+            showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Check your wallet — click it to open if nothing pops up…');
+            const signer = await getSigner();
+            await ensureCeloNetwork();
+
+            const gd = new ethers.Contract(GD_CONTRACT, ERC20_ABI, signer);
+            showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Approve G$ spending in your wallet…');
+            const tx = await gd.approve(SAVINGS_CONTRACT, amtWei);
+            await tx.wait();
+
+            showAlert('sponsorAlert', 'success', '✅ Approved! Now click "Add to Reward Pool" to complete your contribution.');
+            document.getElementById('poolFundBtn').disabled = false;
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
+        } catch (err) {
+            console.error(err);
+            if (err._miniPayDiag) {
+                const d = err._miniPayDiag;
+                showAlert('sponsorAlert', 'error',
+                    `❌ MiniPay approval failed<br>` +
+                    `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
+                    `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
+            } else {
+                try {
+                    const approveIface = new ethers.Interface(["function approve(address spender, uint256 amount) returns (bool)"]);
+                    await _enrichSavingsError(err, {
+                        to: GD_CONTRACT,
+                        data: approveIface.encodeFunctionData("approve", [SAVINGS_CONTRACT, amtWei]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr: GD_CONTRACT, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: 'G$', decimals: 18
+                    });
+                } catch (_) { /* keep original error */ }
+                const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
+                showAlert('sponsorAlert', 'error', '❌ Approval failed: ' + friendly);
+            }
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending';
+        }
+    }
+
+    // ── Fund Reward Pool ──
+    async function doFundPool() {
+        const amtStr = document.getElementById('sponsorAmount').value.trim();
+        const amt = parseFloat(amtStr);
+        if (!amtStr || isNaN(amt) || amt <= 0) {
+            showAlert('sponsorAlert', 'error', '⚠️ Enter a valid amount greater than 0 G$.');
+            return;
+        }
+
+        const btn = document.getElementById('poolFundBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Sending…';
+
+        try {
+            const amtWei = ethers.parseUnits(amtStr, 18);
+
+            if (window.useServerSigning) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Funding reward pool server-side…');
+                const txHash = await serverSignedTx(SAVINGS_CONTRACT,
+                    "function fundRewardPool(uint256 amount) external",
+                    [amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                document.getElementById('sponsorAmount').value = '';
+                document.getElementById('poolApproveBtn').disabled = false;
+                document.getElementById('poolApproveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending';
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool';
+                loadStats(); loadSponsorStats();
+                return;
+            }
+
+            if (_isMiniPay()) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm reward-pool funding in MiniPay…');
+                const txHash = await _miniPayTx(SAVINGS_CONTRACT,
+                    "function fundRewardPool(uint256 amount) external",
+                    [amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                document.getElementById('sponsorAmount').value = '';
+                document.getElementById('poolApproveBtn').disabled = false;
+                document.getElementById('poolApproveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending';
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool';
+                loadStats(); loadSponsorStats();
+                return;
+            }
+
+            if (_useTrustWalletRawTx()) {
+                showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm reward-pool funding in Trust Wallet…');
+                const txHash = await _trustWalletTx(SAVINGS_CONTRACT,
+                    "function fundRewardPool(uint256 amount) external",
+                    [amtWei]);
+                showAlert('sponsorAlert', 'success',
+                    `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                );
+                document.getElementById('sponsorAmount').value = '';
+                document.getElementById('poolApproveBtn').disabled = false;
+                document.getElementById('poolApproveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending';
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool';
+                loadStats(); loadSponsorStats();
+                return;
+            }
+
+            const signer = await getSigner();
+            await ensureCeloNetwork();
+
+            const savings = new ethers.Contract(SAVINGS_CONTRACT, SAVINGS_ABI, signer);
+            showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Confirm the transaction in your wallet…');
+            const tx = await savings.fundRewardPool(amtWei);
+            showAlert('sponsorAlert', 'info', '<span class="spinner"></span> Waiting for Celo confirmation…');
+            const receipt = await tx.wait();
+
+            showAlert('sponsorAlert', 'success',
+                `🎉 Thank you! <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
+                `<a href="https://celoscan.io/tx/${receipt.hash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+            );
+            document.getElementById('sponsorAmount').value = '';
+            document.getElementById('poolApproveBtn').disabled = false;
+            document.getElementById('poolApproveBtn').innerHTML = '<i class="fas fa-check-circle"></i> Step 1 — Approve G$ Spending';
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool';
+            loadStats();
+            loadSponsorStats();
+        } catch (err) {
+            console.error(err);
+            if (err._miniPayDiag) {
+                const d = err._miniPayDiag;
+                showAlert('sponsorAlert', 'error',
+                    `❌ MiniPay transaction failed<br>` +
+                    `<small style="opacity:.75">Step: ${d.fn} → ${d.to.slice(0,10)}…</small><br>` +
+                    `<small style="opacity:.75">${d.errorLog.map(e => `code=${e.code} msg=${e.message.substring(0, 80)}`).join('<br>')}</small>`);
+            } else {
+                try {
+                    const fundIface = new ethers.Interface(["function fundRewardPool(uint256 amount) external"]);
+                    await _enrichSavingsError(err, {
+                        to: SAVINGS_CONTRACT,
+                        data: fundIface.encodeFunctionData("fundRewardPool", [amtWei]),
+                        from: WALLET,
+                        value: '0x0'
+                    }, {
+                        tokenAddr: GD_CONTRACT, spender: SAVINGS_CONTRACT,
+                        amountIn: amtWei, tokenSymbol: 'G$', decimals: 18
+                    });
+                } catch (_) { /* keep original error */ }
+                const friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.reason || err.message || 'Unknown error');
+                showAlert('sponsorAlert', 'error', '❌ Transaction failed: ' + friendly);
+            }
+            document.getElementById('poolFundBtn').disabled = false;
+            document.getElementById('poolFundBtn').innerHTML = '<i class="fas fa-hand-holding-heart"></i> Step 2 — Add to Reward Pool';
+        }
+    }
+
+    // ── Load sponsor pool stat ──
+    async function loadSponsorStats() {
+        try {
+            const res = await fetch('/savings/api/stats');
+            const data = await res.json();
+            if (data.error) return;
+            document.getElementById('sponsorPoolStat').textContent = fmtGD(data.reward_pool_gd);
+        } catch (e) {
+            console.warn('Sponsor stats load failed', e);
+        }
+    }
+
+    // ── Init ──
+    updateSummary();
+    loadStats();
+    loadSponsorStats();
+    refreshMySlots();
+
+
+</script>
+
+{% if walletconnect_project_id %}
+<!-- WalletConnect v2 for savings -->
+<div id="savingsWcSection" style="display:none; margin:1rem 0; padding:1rem; background:rgba(124,58,237,0.12); border:1px solid rgba(124,58,237,0.35); border-radius:14px; text-align:center;">
+    <div style="font-size:1.5rem; margin-bottom:.4rem;">📱</div>
+    <div style="font-weight:700; color:#fbbf24; margin-bottom:.25rem;">Connect Your Wallet</div>
+    <div style="font-size:.85rem; color:rgba(255,255,255,0.6); margin-bottom:.75rem;">Scan with MetaMask, TrustWallet, or any Celo-compatible wallet</div>
+    <canvas id="savingsWcQr" style="border-radius:10px; background:#fff; padding:8px; max-width:180px;"></canvas>
+    <div id="savingsWcStatus" style="font-size:.8rem; color:rgba(255,255,255,0.5); margin-top:.5rem;"></div>
+</div>
+<script>
+window._wcProjectId = '{{ walletconnect_project_id }}';
+window._wcSignClient = null;
+window._wcSession = null;
+
+function _wcExtendIfExpiring(client, topic, session) {
+    if (!client || !topic || !session || !session.expiry) return;
+    var secsLeft = session.expiry - Math.floor(Date.now() / 1000);
+    if (secsLeft <= 0 || secsLeft > 2 * 24 * 3600) return;
+    console.log('[WC] Session expires in', Math.round(secsLeft / 3600), 'h — requesting extension...');
+    client.extend({ topic: topic }).then(function() {
+        console.log('[WC] Session extended successfully');
+        try { localStorage.setItem('wc_session_timestamp', Date.now().toString()); } catch(_) {}
+        try {
+            var active = client.getActiveSessions ? client.getActiveSessions() : {};
+            var updated = active[topic];
+            if (!updated && client.session && client.session.getAll) {
+                updated = client.session.getAll().find(function(x) { return x.topic === topic; });
+            }
+            if (updated) localStorage.setItem('wc_session_data', JSON.stringify(updated));
+        } catch(_) {}
+    }).catch(function(e) { console.warn('[WC] Extend failed:', e && e.message); });
+}
+
+function _wcLoadSdk() {
+    return new Promise(function(resolve, reject) {
+        var s = document.createElement('script');
+        s.src = '{{ url_for("static", filename="js/wc-bundle.js", v=ASSET_VERSION) }}';
+        s.onload = function() {
+            var SC = (window['@walletconnect/sign-client'] || {}).SignClient;
+            SC ? resolve(SC) : reject(new Error('WC SDK unavailable'));
+        };
+        s.onerror = function() { reject(new Error('WC SDK load failed')); };
+        document.head.appendChild(s);
+    });
+}
+
+window._wcGetClient = function() {
+    if (window._wcSignClient) return Promise.resolve(window._wcSignClient);
+    return _wcLoadSdk().then(function(SignClient) {
+        return SignClient.init({
+            projectId: window._wcProjectId,
+            metadata: {
+                name: 'GoodMarket Savings',
+                description: 'Lock G$ and earn with GoodMarket',
+                url: window.location.origin,
+                icons: [window.location.origin + '/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}']
+            }
+        }).then(function(client) {
+            window._wcSignClient = client;
+            return (async function () {
+                // Check localStorage FIRST (fast path) - available immediately
+                var storedTopic = localStorage.getItem('wc_session_topic');
+                var storedAddress = localStorage.getItem('wc_session_address');
+                var storedSessionData = localStorage.getItem('wc_session_data');
+                var storedTimestamp = parseInt(localStorage.getItem('wc_session_timestamp') || '0', 10);
+                
+                var MAX_SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+                var sessionAge = storedTimestamp ? (Date.now() - storedTimestamp) : Infinity;
+                var sessionTooOld = sessionAge > MAX_SESSION_AGE_MS;
+                
+                if (storedTopic && storedAddress && !sessionTooOld && storedSessionData) {
+                    try {
+                        var parsedSession = JSON.parse(storedSessionData);
+                        var parsedExpiry = parsedSession && parsedSession.expiry;
+                        var nowSec = Math.floor(Date.now() / 1000);
+                        if (parsedSession && parsedSession.topic && (!parsedExpiry || parsedExpiry > nowSec)) {
+                            // Check if SDK already has this session
+                            var sdkSessions = {};
+                            try {
+                                var activeSessions = client.getActiveSessions();
+                                if (activeSessions && typeof activeSessions === 'object') {
+                                    Object.keys(activeSessions).forEach(function(k) { sdkSessions[k] = activeSessions[k]; });
+                                }
+                            } catch (_) {}
+                            if (Object.keys(sdkSessions).length === 0) {
+                                try {
+                                    var allSessions = client.session.getAll();
+                                    if (allSessions && allSessions.length) {
+                                        allSessions.forEach(function(s) { if (s && s.topic) sdkSessions[s.topic] = s; });
+                                    }
+                                } catch (_) {}
+                            }
+                            
+                            // If SDK has the session, use it
+                            if (sdkSessions[storedTopic]) {
+                                window._wcSession = sdkSessions[storedTopic];
+                                console.log('✅ WC session restored from SDK storage:', storedTopic);
+                                _wcExtendIfExpiring(client, storedTopic, window._wcSession);
+                                return client;
+                            }
+                            
+                            // Try to restore from localStorage
+                            if (parsedSession.topic === storedTopic) {
+                                // Subscribe to relay first
+                                try {
+                                    if (client.core && client.core.relayer && typeof client.core.relayer.subscribe === 'function') {
+                                        client.core.relayer.subscribe(storedTopic).catch(function(_){});
+                                    }
+                                } catch (_) {}
+                                
+                                // Inject session
+                                try {
+                                    if (client.session && typeof client.session.set === 'function') {
+                                        client.session.set(parsedSession.topic, parsedSession);
+                                    }
+                                } catch (_) {}
+                                
+                                window._wcSession = parsedSession;
+                                console.log('✅ WC session restored from localStorage:', storedTopic);
+                                _wcExtendIfExpiring(client, storedTopic, window._wcSession);
+                                return client;
+                            }
+                        }
+                    } catch (parseErr) { console.warn('[savings] localStorage parse error:', parseErr); }
+                }
+                
+                // Clean up stale localStorage
+                if (storedTopic && (sessionTooOld || !storedSessionData)) {
+                    try {
+                        localStorage.removeItem('wc_session_topic');
+                        localStorage.removeItem('wc_session_address');
+                        localStorage.removeItem('wc_session_data');
+                        localStorage.removeItem('wc_session_timestamp');
+                        localStorage.removeItem('wc_session_chains');
+                    } catch (_) {}
+                }
+                
+                // Poll SDK sessions as fallback
+                var sessions = [];
+                var start = Date.now();
+                while (Date.now() - start < 3000) {
+                    sessions = client.session.getAll();
+                    if (sessions.length > 0) break;
+                    await new Promise(function (resolve) { setTimeout(resolve, 200); });
+                }
+                if (sessions.length > 0 && !window._wcSession) {
+                    window._wcSession = sessions[sessions.length - 1];
+                    console.log('✅ WC session restored from SDK storage');
+                }
+                return client;
+            })();
+        });
+    });
+};
+
+// Warm up WC client & try to restore session
+setTimeout(function() { window._wcGetClient().catch(function() {}); }, 1500);
+
+// Show QR to connect
+window._savingsStartWc = function() {
+    var section = document.getElementById('savingsWcSection');
+    section.style.display = 'block';
+    var statusEl = document.getElementById('savingsWcStatus');
+    statusEl.textContent = 'Initializing…';
+    window._wcGetClient().then(function(client) {
+        return client.connect({
+            requiredNamespaces: {},
+            optionalNamespaces: {
+                eip155: {
+                    methods: ['eth_accounts', 'eth_sendTransaction', 'personal_sign'],
+                    chains: ['eip155:42220'],
+                    events: ['chainChanged', 'accountsChanged']
+                }
+            }
+        });
+    }).then(function(result) {
+        if (result.uri) {
+            statusEl.textContent = 'Scan the QR code with your wallet';
+            // Generate QR using qrcode.js
+            var qrDiv = document.getElementById('savingsWcQr');
+            if (window.QRCode) {
+                new QRCode(qrDiv, { text: result.uri, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.L });
+            } else {
+                var img = document.createElement('img');
+                img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' + encodeURIComponent(result.uri);
+                img.style.maxWidth = '160px';
+                qrDiv.innerHTML = '';
+                qrDiv.appendChild(img);
+            }
+        }
+        return result.approval();
+    }).then(function(session) {
+        window._wcSession = session;
+        var section = document.getElementById('savingsWcSection');
+        section.innerHTML = '<div style="color:#86efac; font-weight:700;">✅ Wallet Connected! You can now approve and save G$.</div>';
+        console.log('✅ WC session established in savings');
+    }).catch(function(err) {
+        statusEl.textContent = 'Connection failed: ' + (err.message || 'Unknown error');
+    });
+};
+</script>
+{% endif %}
+
+</body>
+</html>
