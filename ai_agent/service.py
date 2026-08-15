@@ -32,6 +32,7 @@ SUPPORTED_ACTIONS = {
     "swap",
     "claim",
     "transaction_history",
+    "lookup_transaction",
     "help",
     "unknown",
 }
@@ -53,6 +54,7 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
         "to_token": {"type": "string"},
         "flow_rate_per_day": {"type": "string"},
         "flow_rate_per_month": {"type": "string"},
+        "lookup_feature": {"type": "string"},
         "requires_confirmation": {"type": "boolean"},
         "requires_signature": {"type": "boolean"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
@@ -73,6 +75,7 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
         "to_token",
         "flow_rate_per_day",
         "flow_rate_per_month",
+        "lookup_feature",
         "requires_confirmation",
         "requires_signature",
         "confidence",
@@ -206,7 +209,8 @@ def _parse_with_openai(message: str) -> dict[str, Any] | None:
     prompt = (
         "You classify GoodMarket wallet chat commands. Return only schema-valid JSON. "
         "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, or USDT. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
-        "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, transaction_history, help, unknown.\n\n"
+        "For lookup_transaction (read-only, no signature), set lookup_feature to one of learn_earn, reloadly, referral, twitter, trustpilot when the user names a feature, otherwise empty string. lookup_transaction is for questions about a transaction hash / tx id / 'where is my tx'. "
+        "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, transaction_history, lookup_transaction, help, unknown.\n\n"
         f"User message: {message}"
     )
     body = {
@@ -253,6 +257,19 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
 
     if any(word in lower for word in ["balance", "balanse", "how much", "magkano"]):
         intent.update(action="check_balance", summary="Check the connected wallet balance.", confidence=0.8)
+        return intent
+    # Transaction-hash lookup ("where is my tx", "my learn & earn tx hash", etc.)
+    from .tx_lookup import is_tx_lookup_request, detect_feature
+    if is_tx_lookup_request(message):
+        feature = detect_feature(message)
+        intent.update(
+            action="lookup_transaction",
+            summary="Look up recent transaction hashes for the connected wallet.",
+            lookup_feature=feature or "",
+            requires_confirmation=False,
+            requires_signature=False,
+            confidence=0.85,
+        )
         return intent
     if any(word in lower for word in ["history", "transactions", "tx", "recent"]):
         intent.update(action="transaction_history", summary="Show recent wallet transactions.", confidence=0.75)
@@ -325,7 +342,7 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
 
 def _normalise_intent(intent: dict[str, Any]) -> dict[str, Any]:
     normalised = _empty_intent(intent.get("action") if intent.get("action") in SUPPORTED_ACTIONS else "unknown", intent.get("summary") or "")
-    normalised.update({k: str(intent.get(k) or "").strip() for k in ["token", "amount", "fiat_amount", "fiat_currency", "recipient", "recipient_username", "phone", "from_token", "to_token", "flow_rate_per_day", "flow_rate_per_month", "safety_note"]})
+    normalised.update({k: str(intent.get(k) or "").strip() for k in ["token", "amount", "fiat_amount", "fiat_currency", "recipient", "recipient_username", "phone", "from_token", "to_token", "flow_rate_per_day", "flow_rate_per_month", "lookup_feature", "safety_note"]})
     normalised["requires_confirmation"] = bool(intent.get("requires_confirmation"))
     normalised["requires_signature"] = bool(intent.get("requires_signature"))
     try:
@@ -364,6 +381,12 @@ def _supplement_intent_from_message(intent: dict[str, Any], message: str) -> Non
             daily = _stream_daily_amount(message)
             if daily and not intent.get("flow_rate_per_day"):
                 intent["flow_rate_per_day"] = daily
+    elif intent["action"] == "lookup_transaction":
+        # If the LLM classified a tx-hash question but omitted the feature,
+        # recover it from the message keywords (rules-based fallback).
+        if not intent.get("lookup_feature"):
+            from .tx_lookup import detect_feature
+            intent["lookup_feature"] = detect_feature(message) or ""
 
 
 def _apply_safety_policy(intent: dict[str, Any], wallet: str | None) -> None:
@@ -462,6 +485,7 @@ def _empty_intent(action: str, summary: str) -> dict[str, Any]:
         "to_token": "",
         "flow_rate_per_day": "",
         "flow_rate_per_month": "",
+        "lookup_feature": "",
         "requires_confirmation": False,
         "requires_signature": False,
         "confidence": 0,
@@ -479,6 +503,11 @@ def _read_only_reply(intent: dict[str, Any], wallet: str | None) -> str:
     action = intent["action"]
     if action == "check_balance":
         return _balance_reply(wallet)
+    if action == "lookup_transaction":
+        from .tx_lookup import lookup_transactions
+        feature = intent.get("lookup_feature") or None
+        result = lookup_transactions(wallet, feature=feature)
+        return result.get("reply") or "I could not look up your transactions right now. Please try again in a moment."
     if action == "transaction_history":
         return "I can help show recent activity. This MVP can route you to the wallet transaction history without signing."
     if action == "help":
@@ -568,6 +597,7 @@ def _welcome_help_reply() -> str:
         "• send 1 USDT to @bebet or 0x wallet\n"
         "• stream 5 G$ per day to @bebet or 0x wallet\n"
         "• load 09653870395 20\n"
+        "• my transaction hash / my Learn & Earn tx hash / my Reloadly tx\n"
         "For send and stream, username and wallet address are both supported. "
         "Value-moving actions stay in chat for review first, then require your confirmation and wallet signature."
     )
