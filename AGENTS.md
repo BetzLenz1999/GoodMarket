@@ -32,9 +32,19 @@ When a Reloadly fulfillment fails, the backend refunds G$ via the `REFUND_KEY` w
 - Frontend `templates/reloadly.html` handles `pending_refund` status (info toast, blue pill, friendly copy).
 - Tests: `tests/test_reloadly_refund_gas_content.py` (content, no deps).
 
+## AI chat agent — transaction-hash lookup
+`ai_agent/` is the chat-box agent (`/api/ai-agent/chat`). It classifies a message into a safe action preview (send/stream/swap/etc.) and never signs.
+- **NEW: `lookup_transaction` action** — read-only tx-hash lookup. When a user asks "where is my tx hash" / "my Learn & Earn tx" / "reloadly txid" etc., the agent queries the user's own rows across feature tables and replies with the hash + amount + status + Celoscan link. No signing, no fund movement.
+- `ai_agent/tx_lookup.py` — `lookup_transactions(wallet, feature)` queries (per feature): `learnearn_log` (+ `learn_earn_streams`), `reloadly_orders`, `referral_rewards_log`, `twitter_task_log`, `trustpilot_task_log`. supabase is imported **lazily** inside `_query_one` so the module imports/tests without supabase installed.
+- Wallet-form gotcha: Learn & Earn quiz logs store the wallet **masked** (`0xabcd…1234`) OR full lowercase (depends on writer version) — `_build_wallet_filter` matches both via `or_`. Other tables store lowercase.
+- `_is_onchain_hash()` filters to real Celo tx hashes (0x + 64 hex) so Reloadly's numeric `reloadly_transaction_id` and `queued:...` stream placeholders don't get a bogus explorer link.
+- Keyword detection is **rules-based** (`is_tx_lookup_request` + `detect_feature`) so it works even without `OPENAI_API_KEY`; the OpenAI classifier is also taught the action via `lookup_feature`.
+- Tests: `tests/test_ai_agent_tx_lookup_content.py` (functional via importlib + text-based wiring, no deps).
+
 ## Testing
 - `tests/test_revert_data_handling.py` — content/behavior tests locking in the fix. Run with `python -m pytest tests/test_revert_data_handling.py`.
 - `tests/test_ubi_reminder_content.py` — content tests for the Telegram UBI reminder (message builders + per-wallet processing). Run with `python -m unittest tests.test_ubi_reminder_content`.
+- `tests/test_ai_agent_tx_lookup_content.py` — functional (loads `ai_agent/tx_lookup.py` via importlib, no deps) + text-based wiring tests for the agent tx-hash lookup. Run with `python -m pytest tests/test_ai_agent_tx_lookup_content.py`.
 - Many tests need `flask` / `requests` (not installed in the base env). Content tests (`test_*_content.py`) run without deps.
 - JS syntax: `node --check static/js/<file>.js`. For template inline JS, strip Jinja `{{ }}`/`{% %}` first (see tests for the regex approach).
 
