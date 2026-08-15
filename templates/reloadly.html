@@ -115,6 +115,8 @@
         .status-processing { background: #1a237e; color: #82b1ff; }
         .status-verifying { background: #1a237e; color: #82b1ff; }
         .status-refunded { background: #4a1942; color: #ea80fc; }
+        .status-pending_refund { background: #1a237e; color: #82b1ff; }
+        .status-refunding { background: #1a237e; color: #82b1ff; }
         .status-failed, .status-payment_failed, .status-refund_failed { background: #b71c1c; color: #ff8a80; }
         .status-expired { background: #2a2a2a; color: #9e9e9e; }
         .status-cancelled { background: #2a2a2a; color: #bdbdbd; }
@@ -183,6 +185,7 @@
         }
         .toast-success { background: #1b5e20; color: #69f0ae; border: 1px solid #388e3c; }
         .toast-error { background: #b71c1c; color: #ff8a80; border: 1px solid #c62828; }
+        .toast-info { background: #1a237e; color: #82b1ff; border: 1px solid #3949ab; }
         @keyframes slideIn { from { transform: translateY(20px); opacity:0; } to { transform: translateY(0); opacity:1; } }
 
         .order-row {
@@ -1903,11 +1906,14 @@ async function startAutoDetect() {
                     const statusMsg = {
                         completed: '✅ Order already completed!',
                         refunded: '⚠️ Payment was detected but fulfillment failed — your G$ was refunded.',
+                        pending_refund: '⏳ Your refund is queued and will be sent automatically within a few hours once the system refund wallet is refilled with gas by the admin. No action needed.',
+                        refunding: '⏳ Your refund is being processed right now. Please check back shortly.',
                         payment_failed: '❌ Transaction failed on-chain. No G$ was deducted.',
                         refund_failed: '❌ Order failed and refund also failed. Contact support.'
                     };
                     const isGood = res.status === 'completed';
-                    setResult(isGood ? 'success' : 'error', statusMsg[res.status] || `Status: ${res.status}`);
+                    const isPending = res.status === 'pending_refund' || res.status === 'refunding';
+                    setResult(isGood ? 'success' : (isPending ? 'info' : 'error'), statusMsg[res.status] || `Status: ${res.status}`);
                     if (isGood && _pendingOrderData && _pendingOrderData.is_virtual_card && currentOrderId) {
                         revealVirtualCard(currentOrderId);
                     }
@@ -1920,9 +1926,16 @@ async function startAutoDetect() {
                     }
                 } else {
                     let msg = '❌ ' + (res.error || 'Order fulfillment failed.');
-                    if (res.refunded) msg += `<br><br>✅ Your ${_pendingOrderData?.gd_amount} G$ has been refunded.`;
-                    setResult(res.refunded ? 'warning' : 'error', msg);
-                    showToast(res.refunded ? 'Failed — refunded' : 'Order failed', 'error');
+                    let type = 'error';
+                    if (res.pending_refund) {
+                        type = 'info';
+                        msg = res.error || msg;
+                    } else if (res.refunded) {
+                        type = 'warning';
+                        msg += `<br><br>✅ Your ${_pendingOrderData?.gd_amount} G$ has been refunded.`;
+                    }
+                    setResult(type, msg);
+                    showToast(res.pending_refund ? 'Refund queued' : (res.refunded ? 'Failed — refunded' : 'Order failed'), res.pending_refund ? 'info' : 'error');
                 }
                 return;
             }
