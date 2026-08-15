@@ -256,22 +256,40 @@ def verify_gd_payment(wallet_address: str, expected_amount_gd: float, tx_hash: s
         return {"success": False, "error": str(e)}
 
 
+REFUND_GAS_LIMIT = 250000  # ERC-20 transfer gas budget for a refund
+
+
+def _is_insufficient_gas_error(err: Exception) -> bool:
+    """True when an error indicates the signer wallet lacks CELO to pay gas."""
+    msg = str(err).lower()
+    return (
+        "insufficient funds" in msg
+        or "insufficient gas" in msg
+        or "gas required exceeds allowance" in msg
+        or "intrinsic gas too low" in msg
+        or "max fee per gas less" in msg
+    )
+
+
 def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
     """
     Send G$ refund from REFUND_KEY wallet to user.
-    Returns dict with success bool and tx_hash.
+    Returns dict with success bool, tx_hash, and an ``error_type`` of
+    ``insufficient_gas`` when the signer wallet has no CELO to pay gas —
+    so the caller can mark the order ``pending_refund`` (auto-retry) instead
+    of the scary hard ``refund_failed``.
     """
     try:
         refund_key = os.getenv("REFUND_KEY")
         if not refund_key:
-            return {"success": False, "error": "REFUND_KEY not configured"}
+            return {"success": False, "error": "REFUND_KEY not configured", "error_type": "no_refund_key"}
 
         if not refund_key.startswith("0x"):
             refund_key = "0x" + refund_key
 
         w3 = Web3(Web3.HTTPProvider(CELO_RPC_URL))
         if not w3.is_connected():
-            return {"success": False, "error": "Cannot connect to Celo network"}
+            return {"success": False, "error": "Cannot connect to Celo network", "error_type": "rpc_unreachable"}
 
         refund_account = Account.from_key(refund_key)
         token_contract = w3.eth.contract(
@@ -284,12 +302,38 @@ def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
         amount_dec = Decimal(str(amount_gd).replace(",", "").strip())
         amount_wei = int((amount_dec * (Decimal(10) ** GD_DECIMALS)).to_integral_value(rounding=ROUND_HALF_UP))
 
+        # Preflight: does the refund wallet have enough CELO to pay gas? If not,
+        # surface a distinct error_type so the caller parks the order for an
+        # automatic retry once the admin refills the wallet, instead of failing.
+        try:
+            gas_price = w3.eth.gas_price
+            required_gas_wei = REFUND_GAS_LIMIT * gas_price
+            signer_celo = w3.eth.get_balance(refund_account.address)
+            if signer_celo < required_gas_wei:
+                logger.error(
+                    f"❌ Refund wallet has insufficient CELO for gas: order={order_id} "
+                    f"needed={required_gas_wei} available={signer_celo}"
+                )
+                return {
+                    "success": False,
+                    "error": "Refund wallet needs a gas refill to send your refund.",
+                    "error_type": "insufficient_gas",
+                }
+        except Exception as preflight_err:
+            if _is_insufficient_gas_error(preflight_err):
+                return {
+                    "success": False,
+                    "error": "Refund wallet needs a gas refill to send your refund.",
+                    "error_type": "insufficient_gas",
+                }
+            # Non-gas preflight error — fall through; the send attempt below will
+            # produce the authoritative error.
+
         nonce = w3.eth.get_transaction_count(refund_account.address)
-        gas_price = w3.eth.gas_price
 
         tx = token_contract.functions.transfer(recipient, amount_wei).build_transaction({
             "chainId": CHAIN_ID,
-            "gas": 250000,
+            "gas": REFUND_GAS_LIMIT,
             "gasPrice": gas_price,
             "nonce": nonce,
             "from": refund_account.address
@@ -304,10 +348,16 @@ def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
             logger.info(f"✅ Refund sent: {amount_gd} G$ to {to_wallet} — tx: {tx_hex}")
             return {"success": True, "tx_hash": tx_hex}
         else:
-            return {"success": False, "error": "Refund transaction reverted on-chain"}
+            return {"success": False, "error": "Refund transaction reverted on-chain", "error_type": "onchain_reverted"}
 
     except Exception as e:
         logger.error(f"❌ refund_gd error for order {order_id}: {e}")
+        if _is_insufficient_gas_error(e):
+            return {
+                "success": False,
+                "error": "Refund wallet needs a gas refill to send your refund.",
+                "error_type": "insufficient_gas",
+            }
         return {"success": False, "error": str(e)}
 
 
@@ -331,6 +381,36 @@ def update_order_record(order_id: str, updates: dict) -> dict:
     except Exception as e:
         logger.error(f"❌ update_order_record error: {e}")
         return {"success": False, "error": str(e)}
+
+
+def claim_order_for_refund(order_id: str) -> dict:
+    """Atomically claim an order for refund retry (concurrency-safe CAS).
+
+    Flips status ``pending_refund`` -> ``refunding`` only if the row is still
+    ``pending_refund``. PostgREST applies the WHERE clause server-side, so the
+    returned rows are non-empty *only* when this caller won the compare-and-swap.
+    Returns ``{"success": True, "claimed": bool, "order": dict|None}``.
+
+    This prevents two workers (or the scheduler + a manual endpoint) from both
+    sending a refund for the same order at the same time (double-refund).
+    """
+    try:
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return {"success": False, "error": "database unavailable", "claimed": False}
+        result = (
+            supabase.table("reloadly_orders")
+            .update({"status": "refunding"})
+            .eq("id", order_id)
+            .eq("status", "pending_refund")
+            .execute()
+        )
+        if result.data:
+            return {"success": True, "claimed": True, "order": result.data[0]}
+        return {"success": True, "claimed": False, "order": None}
+    except Exception as e:
+        logger.error(f"❌ claim_order_for_refund error for {order_id}: {e}")
+        return {"success": False, "error": str(e), "claimed": False}
 
 
 def get_order_record(order_id: str) -> dict:
