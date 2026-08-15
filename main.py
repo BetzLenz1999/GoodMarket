@@ -668,6 +668,18 @@ if init_reloadly(app):
 else:
     logger.error("❌ Reloadly Store initialization failed")
 
+# Automatic refund retry for Reloadly orders parked as 'pending_refund' when
+# the refund wallet had no CELO gas. Env-gated (RELOADLY_REFUND_RETRY_ENABLED).
+# Retries the refund periodically; succeeds automatically once gas is refilled.
+try:
+    from reloadly.refund_retry import init_refund_retry_scheduler
+    if init_refund_retry_scheduler(app):
+        logger.info("✅ Reloadly refund retry scheduler started")
+    else:
+        logger.info("ℹ️ Reloadly refund retry scheduler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ Reloadly refund retry scheduler initialization failed: {e}")
+
 # Initialize Jumble Words System
 logger.info("🔤 Initializing Jumble Words system...")
 from jumble import init_jumble
