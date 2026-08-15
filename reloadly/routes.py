@@ -16,6 +16,74 @@ logger = logging.getLogger(__name__)
 
 reloadly_bp = Blueprint("reloadly", __name__, url_prefix="/reloadly")
 
+# Friendly message shown when a refund is parked because the refund wallet has
+# no CELO gas. The order moves to ``pending_refund`` and an automatic retry
+# scheduler sends the refund once the admin refills the wallet.
+_PENDING_REFUND_MSG = (
+    "Your order could not be completed, but don't worry — your payment is safe. "
+    "The automatic refund is queued and will be sent within a few hours once the "
+    "system refund wallet is refilled with gas by the admin. No action needed."
+)
+
+
+def _process_refund_failure(order_id: str, wallet: str, gd_amount, failure_err: Exception) -> tuple:
+    """
+    Attempt a G$ refund after a fulfillment failure and persist the outcome.
+
+    Returns (refund_result, response_dict, http_status). When the refund fails
+    specifically because the refund wallet lacks CELO gas, the order is parked
+    as ``pending_refund`` (auto-retried by the scheduler) and a friendly message
+    is returned instead of the scary hard "contact support" failure.
+    """
+    refund_result = refund_gd(wallet, gd_amount, order_id)
+
+    if refund_result.get("success"):
+        update_order_record(order_id, {
+            "status": "refunded",
+            "failure_reason": sanitize_error(failure_err),
+            "refund_tx_hash": refund_result.get("tx_hash"),
+            "refund_error": None,
+        })
+        msg = (f"Reloadly fulfillment failed. Your {gd_amount} G$ has been refunded. "
+               f"Tx: {refund_result['tx_hash']}")
+        return refund_result, {
+            "success": False, "found": True, "status": "refunded",
+            "error": msg, "order_id": order_id,
+            "refunded": True, "refund_tx": refund_result.get("tx_hash"),
+        }, 200
+
+    # Refund failed.
+    is_gas = refund_result.get("error_type") == "insufficient_gas"
+    if is_gas:
+        # Park for automatic retry once the admin refills gas.
+        update_order_record(order_id, {
+            "status": "pending_refund",
+            "failure_reason": sanitize_error(failure_err),
+            "refund_tx_hash": None,
+            "refund_error": refund_result.get("error"),
+        })
+        logger.warning(f"⏳ Refund parked (insufficient gas) for order {order_id}; will auto-retry.")
+        return refund_result, {
+            "success": False, "found": True, "status": "pending_refund",
+            "error": _PENDING_REFUND_MSG, "order_id": order_id,
+            "refunded": False, "pending_refund": True,
+        }, 200
+
+    # Hard refund failure (not gas) — keep the original "contact support" message.
+    update_order_record(order_id, {
+        "status": "refund_failed",
+        "failure_reason": sanitize_error(failure_err),
+        "refund_tx_hash": None,
+        "refund_error": refund_result.get("error"),
+    })
+    msg = (f"Reloadly fulfillment failed. Refund also failed — please contact "
+           f"support. Order: {order_id}")
+    return refund_result, {
+        "success": False, "found": True, "status": "refund_failed",
+        "error": msg, "order_id": order_id,
+        "refunded": False, "refund_tx": None,
+    }, 200
+
 
 def _require_auth():
     wallet = session.get("wallet") or session.get("wallet_address")
@@ -424,32 +492,10 @@ def api_confirm_order():
 
     except Exception as e:
         logger.error(f"❌ Reloadly fulfillment failed for order {order_id}: {e}")
-
-        # Attempt refund
-        refund_result = refund_gd(wallet, order["gd_amount"], order_id)
-        refund_status = "refunded" if refund_result["success"] else "refund_failed"
-        update_order_record(order_id, {
-            "status": refund_status,
-            "failure_reason": sanitize_error(e),
-            "refund_tx_hash": refund_result.get("tx_hash"),
-            "refund_error": refund_result.get("error") if not refund_result["success"] else None
-        })
-
-        msg = f"Reloadly fulfillment failed. "
-        if refund_result["success"]:
-            msg += f"Your {order['gd_amount']} G$ has been refunded. Tx: {refund_result['tx_hash']}"
-        else:
-            msg += f"Refund also failed — please contact support. Order: {order_id}"
-
-        return jsonify({
-            "success": False,
-            "found": True,
-            "status": refund_status,
-            "error": msg,
-            "order_id": order_id,
-            "refunded": refund_result["success"],
-            "refund_tx": refund_result.get("tx_hash")
-        })
+        _refund_result, response, status = _process_refund_failure(
+            order_id, wallet, order["gd_amount"], e
+        )
+        return jsonify(response), status
 
 
 @reloadly_bp.route("/api/order/detect-payment", methods=["POST"])
@@ -543,28 +589,11 @@ def api_detect_payment():
 
     except Exception as e:
         logger.error(f"❌ Auto-detect Reloadly fulfillment failed for {order_id}: {e}")
-        refund_result = refund_gd(wallet, order["gd_amount"], order_id)
-        refund_status = "refunded" if refund_result["success"] else "refund_failed"
-        update_order_record(order_id, {
-            "status": refund_status,
-            "failure_reason": sanitize_error(e),
-            "refund_tx_hash": refund_result.get("tx_hash"),
-            "refund_error": refund_result.get("error") if not refund_result["success"] else None
-        })
-        msg = f"Fulfillment failed. "
-        if refund_result["success"]:
-            msg += f"Your {order['gd_amount']} G$ has been refunded."
-        else:
-            msg += f"Refund failed — contact support. Order: {order_id}"
-        return jsonify({
-            "success": False,
-            "found": True,
-            "status": refund_status,
-            "tx_hash": tx_hash,
-            "error": msg,
-            "refunded": refund_result["success"],
-            "refund_tx": refund_result.get("tx_hash")
-        })
+        _refund_result, response, status = _process_refund_failure(
+            order_id, wallet, order["gd_amount"], e
+        )
+        response["tx_hash"] = tx_hash
+        return jsonify(response), status
 
 
 @reloadly_bp.route("/api/order/<order_id>")
