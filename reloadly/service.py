@@ -256,7 +256,13 @@ def verify_gd_payment(wallet_address: str, expected_amount_gd: float, tx_hash: s
         return {"success": False, "error": str(e)}
 
 
-REFUND_GAS_LIMIT = 250000  # ERC-20 transfer gas budget for a refund
+# G$ (ERC-20) transfer gas. The true on-chain cost is ~51k units; we estimate
+# live and fall back to this realistic cap if estimation is unavailable.
+_REFUND_GAS_FALLBACK = 80_000
+# Hard ceiling on the estimated gas limit (defends against a pathological estimate).
+_REFUND_GAS_CAP = 150_000
+# Margin added to a successful estimate so the tx doesn't revert on a slight bump.
+_REFUND_GAS_MARGIN = 1.2
 
 
 def _is_insufficient_gas_error(err: Exception) -> bool:
@@ -302,12 +308,30 @@ def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
         amount_dec = Decimal(str(amount_gd).replace(",", "").strip())
         amount_wei = int((amount_dec * (Decimal(10) ** GD_DECIMALS)).to_integral_value(rounding=ROUND_HALF_UP))
 
-        # Preflight: does the refund wallet have enough CELO to pay gas? If not,
-        # surface a distinct error_type so the caller parks the order for an
-        # automatic retry once the admin refills the wallet, instead of failing.
+        # Preflight: does the refund wallet have enough CELO to pay gas for THIS
+        # transfer? We estimate the real gas usage live (~51k for an ERC-20
+        # transfer) rather than assuming a bloated fixed budget, so a modest gas
+        # refill is enough to succeed. If not enough, surface a distinct
+        # error_type so the caller parks the order for an automatic retry once
+        # the admin refills the wallet, instead of failing.
+        gas_limit = _REFUND_GAS_FALLBACK
+        gas_price = None
         try:
             gas_price = w3.eth.gas_price
-            required_gas_wei = REFUND_GAS_LIMIT * gas_price
+            try:
+                estimated = token_contract.functions.transfer(
+                    recipient, amount_wei
+                ).estimate_gas({"from": refund_account.address})
+                gas_limit = min(int(estimated * _REFUND_GAS_MARGIN), _REFUND_GAS_CAP)
+            except Exception as est_err:
+                # estimate_gas can revert if the node can't simulate; fall back
+                # to a realistic cap rather than the old 250k that blocked refunds.
+                if _is_insufficient_gas_error(est_err):
+                    # The estimate itself says the signer has no gas — definitive.
+                    raise
+                gas_limit = _REFUND_GAS_FALLBACK
+
+            required_gas_wei = gas_limit * gas_price
             signer_celo = w3.eth.get_balance(refund_account.address)
             if signer_celo < required_gas_wei:
                 logger.error(
@@ -326,14 +350,16 @@ def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
                     "error": "Refund wallet needs a gas refill to send your refund.",
                     "error_type": "insufficient_gas",
                 }
-            # Non-gas preflight error — fall through; the send attempt below will
-            # produce the authoritative error.
+            # Non-gas preflight error (e.g. RPC glitch) — fall through; the send
+            # attempt below will re-fetch gas_price and produce the real error.
 
         nonce = w3.eth.get_transaction_count(refund_account.address)
+        if gas_price is None:
+            gas_price = w3.eth.gas_price
 
         tx = token_contract.functions.transfer(recipient, amount_wei).build_transaction({
             "chainId": CHAIN_ID,
-            "gas": REFUND_GAS_LIMIT,
+            "gas": gas_limit,
             "gasPrice": gas_price,
             "nonce": nonce,
             "from": refund_account.address
