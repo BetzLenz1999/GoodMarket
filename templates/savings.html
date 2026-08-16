@@ -116,6 +116,22 @@
         .badge-done { background:rgba(148,163,184,.08); border:1px solid rgba(148,163,184,.2); color:#94a3b8; }
         .badge-bonus { background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.3); color:#c4b5fd; font-size:.68rem; margin-left:.4rem; }
 
+        /* ── Savings Plan picker (Step 0) ──
+           A "Plan" is a friendly goal label + emoji bound 1:1 to a lock
+           duration (e.g. 360 days = 🔧 House Repair). Picking a plan sets
+           the lock-days input for the user; the on-chain slot is unchanged. */
+        .plan-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:.55rem; }
+        .plan-btn { padding:.7rem .5rem; border-radius:12px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.03); color:rgba(255,255,255,.6); font-weight:600; font-size:.78rem; cursor:pointer; transition:all .2s; text-align:center; }
+        .plan-btn:hover { border-color:rgba(124,58,237,.4); color:#a78bfa; transform:translateY(-1px); }
+        .plan-btn.selected { background:rgba(124,58,237,.22); border-color:rgba(124,58,237,.6); color:#c4b5fd; box-shadow:0 4px 14px rgba(124,58,237,.18); }
+        .plan-btn .plan-emoji { font-size:1.5rem; display:block; margin-bottom:.25rem; line-height:1; }
+        .plan-btn .plan-name { font-size:.76rem; font-weight:700; display:block; }
+        .plan-btn .plan-days { font-size:.64rem; font-weight:400; color:rgba(255,255,255,.35); display:block; margin-top:.1rem; }
+        .plan-btn.selected .plan-days { color:rgba(196,181,253,.7); }
+        .plan-chip { display:inline-flex; align-items:center; gap:.3rem; padding:.15rem .55rem; border-radius:999px; background:rgba(56,189,248,.12); border:1px solid rgba(56,189,248,.28); color:#7dd3fc; font-size:.7rem; font-weight:700; }
+        .plan-clear { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); color:rgba(255,255,255,.5); font-size:.66rem; font-weight:600; padding:.1rem .5rem; border-radius:999px; cursor:pointer; margin-left:.35rem; }
+        .plan-clear:hover { color:#f87171; border-color:rgba(248,113,113,.3); }
+
         /* ── Steps ── */
         .steps { list-style:none; display:flex; flex-direction:column; gap:.7rem; }
         .step { display:flex; gap:.85rem; align-items:flex-start; }
@@ -282,7 +298,7 @@
     <!-- Header -->
     <div class="page-header">
         <h1 class="page-title">🏦 Savings</h1>
-        <p class="page-subtitle">Lock G$, CELO, cUSD, or USDT for any custom duration from 1 to 360 days — reward estimates update live as you type. Top-ups inherit the slot's original unlock date.</p>
+        <p class="page-subtitle">Lock G$, CELO, cUSD, or USDT behind a savings goal — pick a Plan like 🔧 House Repair (360 days) or type your own 1–360 days. Reward estimates update live. Top-ups inherit the slot's original unlock date.</p>
     </div>
 
     <!-- Contract Stats -->
@@ -342,9 +358,18 @@
             <!-- Alert -->
             <div id="saveAlert" class="alert"></div>
 
+            <!-- Step 0: Choose a Plan (optional goal label bound to a lock duration) -->
+            <div class="form-group">
+                <label>1 · Choose a Plan <span style="font-weight:400; color:rgba(255,255,255,.3);">(optional)</span>
+                    <span id="planChipWrap" style="display:none;"> &nbsp;<span class="plan-chip" id="planChip"></span><button class="plan-clear" onclick="clearPlan()">✕</button></span>
+                </label>
+                <div class="plan-grid" id="planGrid"></div>
+                <div class="hint">Pick a goal to set your lock period automatically — e.g. 🔧 House Repair = 360 days. Or skip and type your own days below.</div>
+            </div>
+
             <!-- Step 0: Choose token -->
             <div class="form-group">
-                <label>1 · Choose Token</label>
+                <label>2 · Choose Token</label>
                 <div class="dur-grid" id="tokenGrid" style="grid-template-columns:repeat(4,1fr);">
                     <div class="dur-btn selected" data-token="gd"   onclick="selectToken(this)">G$<div class="dur-label">GoodDollar</div></div>
                     <div class="dur-btn"          data-token="celo" onclick="selectToken(this)">CELO<div class="dur-label">Celo native</div></div>
@@ -355,7 +380,7 @@
 
             <!-- Step 1: Choose lock period -->
             <div class="form-group">
-                <label>2 · Choose Lock Period</label>
+                <label>3 · Choose Lock Period</label>
                 <div class="input-wrap">
                     <input type="number" id="lockDaysInput" value="30" min="1" max="360" step="1" inputmode="numeric" oninput="onLockDaysChange()">
                     <span class="input-suffix">days</span>
@@ -365,7 +390,7 @@
 
             <!-- Step 2: Amount -->
             <div class="form-group">
-                <label>3 · Enter Amount</label>
+                <label>4 · Enter Amount</label>
                 <div class="input-wrap">
                     <input type="number" id="saveAmount" placeholder="e.g. 5000" min="1" step="1" oninput="onAmountChange()">
                     <span class="input-suffix" id="saveAmountSuffix">G$</span>
@@ -391,6 +416,10 @@
 
             <!-- Summary -->
             <div class="card" style="margin-bottom:1rem; background:rgba(0,0,0,.2); border-color:rgba(255,255,255,.06);">
+                <div id="summaryPlanRow" style="display:none; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
+                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Plan</span>
+                    <span id="summaryPlan" style="font-weight:700; color:#7dd3fc;">—</span>
+                </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
                     <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Token</span>
                     <span id="summaryToken" style="font-weight:700; color:#e2e8f0;">G$</span>
@@ -564,7 +593,7 @@
             <ul class="steps">
                 <li class="step">
                     <div class="step-n">1</div>
-                    <div class="step-t"><strong>Choose your lock duration</strong> by entering any whole number from 1 to 360 days. Your tokens go directly into a smart contract on Celo Mainnet.</div>
+                    <div class="step-t"><strong>Pick a Plan (optional) or choose your lock duration</strong> by entering any whole number from 1 to 360 days. Plans are friendly goals bound to a duration — e.g. 🔧 House Repair = 360 days, 📚 Education = 180 days. Your tokens go directly into a smart contract on Celo Mainnet.</div>
                 </li>
                 <li class="step">
                     <div class="step-n">2</div>
@@ -726,9 +755,64 @@
     // Default lock duration is 30 days, but users can enter any whole number from 1 to 360.
     let selectedToken = TOKENS.gd;
 
+    // ── Savings Plans (goal labels bound 1:1 to a lock duration) ──
+    // A "Plan" is pure frontend metadata: a friendly emoji + name tied to a
+    // lock-days value. It does NOT change the on-chain slot (which is keyed
+    // by (wallet, token, lockDays)). 360 days maps to 🔧 House Repair per
+    // product direction. Picking a plan just sets the lock-days input; the
+    // user can still override the number. The chosen plan is saved to
+    // localStorage on a successful deposit so the My Saves card can show it.
+    const SAVINGS_PLANS = [
+        { key:'emergency',  emoji:'🚨', name:'Emergency Fund', days:7   },
+        { key:'gadget',     emoji:'📱', name:'Gadget',         days:14  },
+        { key:'vacation',   emoji:'✈️', name:'Vacation',       days:30  },
+        { key:'business',   emoji:'💼', name:'Business',       days:60  },
+        { key:'wedding',    emoji:'💍', name:'Wedding',        days:90  },
+        { key:'holiday',    emoji:'🎄', name:'Holiday',        days:120 },
+        { key:'education',  emoji:'📚', name:'Education',      days:180 },
+        { key:'vehicle',    emoji:'🚗', name:'Vehicle',        days:240 },
+        { key:'house',      emoji:'🔧', name:'House Repair',   days:360 },
+    ];
+    // Reverse lookup: lock days -> plan (for matching existing slots to a plan).
+    const PLAN_BY_DAYS = {};
+    for (const p of SAVINGS_PLANS) { PLAN_BY_DAYS[p.days] = p; }
+
+    // Currently selected plan (null = none / custom days typed manually).
+    let selectedPlan = null;
+
     // Cache of user's existing slots, keyed by `${tokenKey}|${lockDays}`.
     let __mySlotsByKey = {};
     function slotKeyByTokenAddress(tokenAddr, lockDays) { return `${String(tokenAddr || '').toLowerCase()}|${Number(lockDays)}`; }
+
+    // ── Plan metadata persistence (localStorage) ──
+    // Plans are frontend-only labels. The on-chain slot has no "plan" field,
+    // so we keep a per-wallet map from `${tokenKey}|${lockDays}` -> plan info
+    // in localStorage. Keyed by wallet so multiple accounts on one browser
+    // don't bleed into each other. Falls back gracefully if storage is full
+    // or unavailable (incognito) — the UI still works, just without labels.
+    function _plansStorageKey() { return `savings_plans::${(WALLET || '').toLowerCase()}`; }
+
+    function _loadAllPlans() {
+        try { return JSON.parse(localStorage.getItem(_plansStorageKey()) || '{}'); }
+        catch (_) { return {}; }
+    }
+
+    function _savePlanForSlot(tokenKey, lockDays, plan) {
+        if (!tokenKey || !lockDays) return;
+        const all = _loadAllPlans();
+        const k = `${tokenKey}|${Number(lockDays)}`;
+        if (plan) { all[k] = { key: plan.key, emoji: plan.emoji, name: plan.name, days: plan.days }; }
+        else      { delete all[k]; }
+        try { localStorage.setItem(_plansStorageKey(), JSON.stringify(all)); } catch (_) {}
+    }
+
+    function _getPlanForSlot(tokenKey, lockDays) {
+        if (!tokenKey || !lockDays) return null;
+        const all = _loadAllPlans();
+        return all[`${tokenKey}|${Number(lockDays)}`] || null;
+    }
+
+    function _clearPlanForSlot(tokenKey, lockDays) { _savePlanForSlot(tokenKey, lockDays, null); }
 
     // Shared, lazy read-only RPC provider used to query on-chain events
     // (history reconstruction). Independent of the user's wallet so the
@@ -957,12 +1041,88 @@
         };
     }
 
+    // ── Savings Plan picker ──
+    function renderPlanGrid() {
+        const grid = document.getElementById('planGrid');
+        if (!grid) return;
+        grid.innerHTML = SAVINGS_PLANS.map(function(p) {
+            return `<button type="button" class="plan-btn" data-plan="${p.key}" onclick="selectPlan('${p.key}')">` +
+                `<span class="plan-emoji">${p.emoji}</span>` +
+                `<span class="plan-name">${p.name}</span>` +
+                `<span class="plan-days">${p.days} days</span>` +
+                `</button>`;
+        }).join('');
+    }
+
+    function selectPlan(key) {
+        const plan = SAVINGS_PLANS.find(function(p) { return p.key === key; });
+        if (!plan) return;
+        selectedPlan = plan;
+        // Reflect the plan's days in the lock-days input + downstream UI.
+        const input = document.getElementById('lockDaysInput');
+        input.value = plan.days;
+        selectedDays = _clampLockDays(plan.days);
+        _highlightPlanBtn(key);
+        _renderPlanChip();
+        const lbl = document.getElementById('saveBtnLabel');
+        if (lbl) lbl.textContent = `Step 2 — Lock ${_selectedPeriod().label} ${selectedToken.symbol}`;
+        updateSummary();
+        updateRewardPreview();
+        checkExistingSlot();
+    }
+
+    function clearPlan() {
+        selectedPlan = null;
+        _highlightPlanBtn(null);
+        _renderPlanChip();
+        updateSummary();
+    }
+
+    // Keep the plan button highlight in sync when the user types days by hand:
+    // if the typed value matches a plan, highlight it (and mark it selected so
+    // it gets persisted); otherwise clear the highlight (custom duration).
+    function syncPlanFromDays() {
+        const match = PLAN_BY_DAYS[selectedDays];
+        if (match) {
+            if (!selectedPlan || selectedPlan.key !== match.key) {
+                selectedPlan = match;
+                _highlightPlanBtn(match.key);
+                _renderPlanChip();
+            }
+        } else if (selectedPlan) {
+            selectedPlan = null;
+            _highlightPlanBtn(null);
+            _renderPlanChip();
+        }
+    }
+
+    function _highlightPlanBtn(key) {
+        document.querySelectorAll('#planGrid .plan-btn').forEach(function(b) {
+            b.classList.toggle('selected', b.dataset.plan === key);
+        });
+    }
+
+    function _renderPlanChip() {
+        const wrap = document.getElementById('planChipWrap');
+        const chip = document.getElementById('planChip');
+        if (selectedPlan && wrap && chip) {
+            chip.textContent = selectedPlan.emoji + ' ' + selectedPlan.name;
+            wrap.style.display = 'inline';
+        } else if (wrap) {
+            wrap.style.display = 'none';
+        }
+    }
+
     function onLockDaysChange() {
         const input = document.getElementById('lockDaysInput');
         selectedDays = _clampLockDays(input.value);
         if (input.value && String(input.value) !== String(selectedDays)) {
             input.value = selectedDays;
         }
+        syncPlanFromDays();
+        // Keep the action button label in sync with the (possibly plan-driven) days.
+        const lbl = document.getElementById('saveBtnLabel');
+        if (lbl) lbl.textContent = `Step 2 — Lock ${_selectedPeriod().label} ${selectedToken.symbol}`;
         updateSummary();
         updateRewardPreview();
         checkExistingSlot();
@@ -993,6 +1153,19 @@
         document.getElementById('summaryAmount').textContent   =
             amt > 0 ? `${amt.toLocaleString()} ${selectedToken.symbol}` : `—`;
         document.getElementById('summaryDuration').textContent = period.label;
+
+        // Plan row: prefer the plan already saved for this slot (survives
+        // reloads), otherwise show the currently-selected plan if any.
+        const savedPlan = _getPlanForSlot(selectedToken.key, selectedDays);
+        const planRow   = document.getElementById('summaryPlanRow');
+        const planEl    = document.getElementById('summaryPlan');
+        const showing   = savedPlan || selectedPlan;
+        if (showing && planRow) {
+            planEl.textContent = showing.emoji + ' ' + showing.name + (savedPlan ? '  (saved)' : '');
+            planRow.style.display = 'flex';
+        } else if (planRow) {
+            planRow.style.display = 'none';
+        }
 
         const slot = __mySlotsByKey[`${selectedToken.key}|${selectedDays}`];
         if (slot) {
@@ -2056,9 +2229,20 @@
                     unlockDate = new Date();
                     unlockDate.setDate(unlockDate.getDate() + selectedDays);
                 }
+                // Persist the chosen plan label for this slot so the My Saves
+                // card can show it. Top-ups keep the existing plan (if any);
+                // a new plan only replaces it if the user explicitly picked one.
+                if (selectedPlan) {
+                    _savePlanForSlot(selectedToken.key, selectedDays, selectedPlan);
+                }
+                const savedPlan = _getPlanForSlot(selectedToken.key, selectedDays);
+                const planLine = savedPlan
+                    ? `Plan: <strong style="color:#7dd3fc;">${savedPlan.emoji} ${savedPlan.name}</strong><br>`
+                    : '';
                 showAlert('saveAlert', 'success',
                     `🎉 Saved ${parseFloat(amtStr).toLocaleString()} ${sym} for ${period.label}` +
                     (existingSlot ? ' (added to existing slot)' : '') + '!<br>' +
+                    planLine +
                     `Unlocks: <strong>${unlockDate.toDateString()}</strong><br>` +
                     `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
                 );
@@ -2433,6 +2617,11 @@
 
     function buildDepCard(d) {
         const sym = d.token_symbol || 'G$';
+        const tokenKey = symbolToKey(sym);
+        const plan = tokenKey ? _getPlanForSlot(tokenKey, d.lock_days) : null;
+        const planBadge = plan
+            ? `<span class="plan-chip" style="margin-bottom:.35rem;">${plan.emoji} ${plan.name}</span>`
+            : '';
         const el = document.createElement('div');
 
         if (d.status === 'withdrawn') {
@@ -2442,6 +2631,7 @@
                 ? `<a href="https://celoscan.io/tx/${d.tx_hash}" target="_blank" rel="noopener" style="color:#86efac; font-weight:600;">View tx ↗</a>`
                 : `<a href="https://celoscan.io/address/${SAVINGS_CONTRACT}" target="_blank" rel="noopener" style="color:#86efac; font-weight:600;">View on CeloScan ↗</a>`;
             el.innerHTML = `
+                ${planBadge}
                 <div class="dep-amount">${fmtAmt(d.amount_h, sym)}</div>
                 <div class="dep-meta">
                     <div class="row">Token: <span>${sym}</span></div>
@@ -2480,6 +2670,7 @@
         }
 
         el.innerHTML = `
+            ${planBadge}
             <div class="dep-amount">${fmtAmt(d.amount_h, sym)}</div>
             <div class="dep-meta">
                 <div class="row">Token: <span>${sym}</span></div>
@@ -2766,6 +2957,8 @@
     }
 
     // ── Init ──
+    renderPlanGrid();
+    syncPlanFromDays();   // highlight the plan matching the default 30 days
     updateSummary();
     loadStats();
     loadSponsorStats();
