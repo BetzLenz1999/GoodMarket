@@ -636,6 +636,20 @@ try:
 except Exception as e:
     logger.error(f"❌ Telegram UBI reminder scheduler initialization failed: {e}")
 
+# Durable Telegram broadcast delivery. When an admin broadcasts a message,
+# recipients are queued as per-row delivery records and this scheduler drains
+# them in the background. Survives gunicorn worker recycling so a half-finished
+# broadcast is never silently dropped. Env-gated
+# (TELEGRAM_BROADCAST_DELIVERY_ENABLED, default off).
+try:
+    from broadcast_delivery import init_broadcast_delivery_scheduler
+    if init_broadcast_delivery_scheduler(app):
+        logger.info("✅ Telegram broadcast delivery scheduler started")
+    else:
+        logger.info("ℹ️ Telegram broadcast delivery scheduler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ Telegram broadcast delivery scheduler initialization failed: {e}")
+
 # Initialize G$ Savings
 logger.info("💰 Initializing G$ Savings system...")
 if init_savings(app):
