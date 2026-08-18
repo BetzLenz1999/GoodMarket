@@ -3154,6 +3154,7 @@ def send_broadcast_message():
         )
 
         if result.data:
+            broadcast_id = result.data[0].get('id')
             # Log admin action
             log_admin_action(
                 admin_wallet=admin_wallet,
@@ -3161,11 +3162,14 @@ def send_broadcast_message():
                 action_details={"title": title, "message_length": len(message)}
             )
 
-            # Best-effort Telegram push to all Telegram bot users (runs in background
-            # so the admin request is not held up by a large audience).
+            # Best-effort durable Telegram push to all Telegram bot users. Queues
+            # one per-recipient delivery row and wakes the background scheduler,
+            # which drains them independently of this request's lifetime (so a
+            # gunicorn worker recycle can no longer swallow a half-finished
+            # broadcast). Falls back to legacy fire-and-forget on failure.
             try:
                 from telegram_notify import broadcast_message_async
-                broadcast_message_async(title, message)
+                broadcast_message_async(broadcast_id, title, message)
             except Exception as tg_err:
                 logger.warning(f"⚠️ Telegram broadcast push failed (DB broadcast still saved): {tg_err}")
 
@@ -3173,7 +3177,7 @@ def send_broadcast_message():
             return jsonify({
                 "success": True,
                 "message": "Broadcast message sent successfully!",
-                "broadcast_id": result.data[0].get('id')
+                "broadcast_id": broadcast_id
             })
         else:
             return jsonify({"success": False, "error": "Failed to send broadcast message"}), 500
