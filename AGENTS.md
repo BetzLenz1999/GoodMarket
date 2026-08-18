@@ -42,10 +42,25 @@ When a Reloadly fulfillment fails, the backend refunds G$ via the `REFUND_KEY` w
 - Keyword detection is **rules-based** (`is_tx_lookup_request` + `detect_feature`) so it works even without `OPENAI_API_KEY`; the OpenAI classifier is also taught the action via `lookup_feature`.
 - Tests: `tests/test_ai_agent_tx_lookup_content.py` (functional via importlib + text-based wiring, no deps).
 
+## Telegram broadcast — durable delivery (2026-08)
+Admin broadcasts (`/api/admin/broadcast-message`) push to Telegram bot users. The web dashboard inbox reads the broadcast row directly so it always works, but the Telegram push used to drop silently.
+
+- **Root cause:** the push ran as a fire-and-forget daemon thread spawned inside the admin HTTP request (`telegram_notify.broadcast_message_async`). Under gunicorn (`max_requests=500` recycling + `graceful_timeout`), that thread was killed mid-broadcast, so many users never received the message and the admin endpoint returned `success:true` regardless — no signal that delivery failed.
+- **Fix — durable per-recipient queue + scheduler** (same pattern as `ubi_reminder.py` / `reloadly/refund_retry.py`):
+  1. `sql/telegram_broadcast_deliveries.sql` — adds `telegram_broadcast_deliveries` (one row per recipient: `status` pending|sending|sent|failed|blocked, `attempts`, `last_error`, `delivered_at`) + aggregate columns on `admin_broadcast_messages` (`tg_status`, `tg_total`, `tg_sent`, `tg_failed`, `tg_queued_at`, `tg_delivered_at`). Run this migration in Supabase before enabling the scheduler.
+  2. `telegram_notify.py` — `queue_broadcast_deliveries(broadcast_id, ...)` upserts one row per chat_id (`ON CONFLICT broadcast_id,telegram_chat_id` = idempotent re-queue); `deliver_broadcast_once(broadcast_id)` drains a batch with a **CAS claim** (`update(...).eq('status','pending')` → only rows we won the flip are sent) so two workers/scheduler runs can't double-send. `classify_send_error` splits Telegram failures into `blocked` (403/chat-not-found — permanent, never retry), `rate_limited` (429), `retryable` (5xx/network); transient failures stay `pending` and retry until `_MAX_RETRY_ATTEMPTS` (default 5) then escalate to `failed`. `broadcast_message_async` now takes the `broadcast_id`, queues recipients, and wakes the scheduler; falls back to legacy fire-and-forget only if the durable path errors. `send_message` signature unchanged so `ubi_reminder` is unaffected.
+  3. `broadcast_delivery.py` — env-gated scheduler (`TELEGRAM_BROADCAST_DELIVERY_ENABLED`, default off). Polls every `TELEGRAM_BROADCAST_DELIVERY_INTERVAL_SEC` (default 30) for broadcasts with `tg_status IN (pending, partially_sent)` and drains a batch each; a `wake_broadcast_delivery()` event triggers near-immediate delivery when a fresh broadcast is queued.
+  4. `routes.py` `send_broadcast_message` passes the freshly-inserted `broadcast_id` to `broadcast_message_async`; `get_broadcast_messages` returns the `tg_*` columns via `select('*')`.
+  5. `main.py` starts the scheduler right after the UBI reminder block.
+  6. `templates/admin_dashboard.html` — new "Telegram Delivery" column (`formatTelegramDelivery`) shows `✅ Delivered (sent/total)` / `⏳ Sending…` / `⏳ Queued` / `⚠️ Finished · N failed`; auto-refreshes the table every 15s while any broadcast is still delivering.
+- **To enable:** run the SQL migration, then set `TELEGRAM_BROADCAST_DELIVERY_ENABLED=1` (and `TELEGRAM_BOT_TOKEN`). The legacy path still works without the migration (best-effort fallback).
+- Tests: `tests/test_broadcast_delivery_content.py` (error classification, idempotent queue, CAS claim, aggregate status, retry cap, scheduler wiring, routes wiring, dashboard rendering — no deps, stubs `requests`/`supabase`). Run with `python -m unittest tests.test_broadcast_delivery_content`.
+
 ## Testing
 - `tests/test_revert_data_handling.py` — content/behavior tests locking in the fix. Run with `python -m pytest tests/test_revert_data_handling.py`.
 - `tests/test_ubi_reminder_content.py` — content tests for the Telegram UBI reminder (message builders + per-wallet processing). Run with `python -m unittest tests.test_ubi_reminder_content`.
 - `tests/test_ai_agent_tx_lookup_content.py` — functional (loads `ai_agent/tx_lookup.py` via importlib, no deps) + text-based wiring tests for the agent tx-hash lookup. Run with `python -m pytest tests/test_ai_agent_tx_lookup_content.py`.
+- `tests/test_broadcast_delivery_content.py` — durable Telegram broadcast delivery (error classification, queue, CAS claim, aggregates, retry cap, scheduler, routes, dashboard). Run with `python -m unittest tests.test_broadcast_delivery_content`.
 - Many tests need `flask` / `requests` (not installed in the base env). Content tests (`test_*_content.py`) run without deps.
 - JS syntax: `node --check static/js/<file>.js`. For template inline JS, strip Jinja `{{ }}`/`{% %}` first (see tests for the regex approach).
 
