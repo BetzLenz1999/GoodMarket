@@ -5248,6 +5248,32 @@ async function loadMinigamesMaintenance() {
             }
         }
 
+        function formatTelegramDelivery(msg) {
+            // Renders the durable Telegram delivery status. Before the migration
+            // these columns are null — show a neutral dash so the table isn't
+            // full of "undefined".
+            const status = msg.tg_status;
+            const sent = msg.tg_sent ?? 0;
+            const failed = msg.tg_failed ?? 0;
+            const total = msg.tg_total ?? 0;
+            if (!status) {
+                return '<span style="color: #6b7280;">—</span>';
+            }
+            if (status === 'sent') {
+                return `<span style="color: #10b981; font-weight: 600;">✅ Delivered (${sent}/${total})</span>`;
+            }
+            if (status === 'partially_sent') {
+                return `<span style="color: #f59e0b; font-weight: 600;">⏳ Sending… (${sent}/${total})${failed ? ' · ' + failed + ' failed' : ''}</span>`;
+            }
+            if (status === 'pending') {
+                return `<span style="color: #f59e0b;">⏳ Queued (${total})</span>`;
+            }
+            if (status === 'failed') {
+                return `<span style="color: #ef4444; font-weight: 600;">⚠️ Finished (${sent}/${total}) · ${failed} failed</span>`;
+            }
+            return `<span style="color: #6b7280;">${status} (${sent}/${total})</span>`;
+        }
+
         async function loadBroadcastMessages() {
             try {
                 const response = await fetch('/api/admin/broadcast-messages?limit=50');
@@ -5264,6 +5290,7 @@ async function loadMinigamesMaintenance() {
                                     <th>Title</th>
                                     <th>Message</th>
                                     <th>Status</th>
+                                    <th>Telegram Delivery</th>
                                     <th>Sent At</th>
                                     <th>Actions</th>
                                 </tr>
@@ -5279,6 +5306,7 @@ async function loadMinigamesMaintenance() {
                                                 ? '<span style="color: #10b981; font-weight: 600;">✅ Active</span>' 
                                                 : '<span style="color: #6b7280;">❌ Inactive</span>'}
                                         </td>
+                                        <td style="font-size: 0.85rem;">${formatTelegramDelivery(msg)}</td>
                                         <td style="font-size: 0.9rem;">${new Date(msg.created_at).toLocaleString()}</td>
                                         <td>
                                             ${msg.is_active 
@@ -5291,6 +5319,17 @@ async function loadMinigamesMaintenance() {
                         </table>
                     `;
                     tableDiv.innerHTML = messagesHtml;
+
+                    // While any broadcast is still being delivered in the
+                    // background, poll the table so the admin sees live progress
+                    // without manually refreshing.
+                    const delivering = data.messages.some(m => m.tg_status === 'pending' || m.tg_status === 'partially_sent');
+                    if (delivering && !window._broadcastRefreshTimer) {
+                        window._broadcastRefreshTimer = setInterval(() => loadBroadcastMessages(), 15000);
+                    } else if (!delivering && window._broadcastRefreshTimer) {
+                        clearInterval(window._broadcastRefreshTimer);
+                        window._broadcastRefreshTimer = null;
+                    }
                 } else {
                     tableDiv.innerHTML = '<p style="text-align: center; color: rgba(241, 245, 249, 0.6);">No broadcast messages yet</p>';
                 }
