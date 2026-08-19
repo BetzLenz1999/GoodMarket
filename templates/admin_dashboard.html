@@ -1430,6 +1430,11 @@
                         <button class="btn btn-primary" onclick="sendBroadcastMessage()" style="width: 100%; padding: 1rem; font-size: 1.1rem; background: linear-gradient(135deg, #ef4444, #dc2626);">
                             📢 Send to All Users with Voice Notification
                         </button>
+
+                        <button class="btn btn-secondary" onclick="checkTelegramHealth()" style="width: 100%; margin-top: 0.75rem;">
+                            🩺 Check Telegram Delivery Health
+                        </button>
+                        <div id="telegram-health-panel" style="display: none; margin-top: 1rem; padding: 1rem; background: rgba(255, 255, 255, 0.05); border-radius: 8px; font-size: 0.9rem;"></div>
                     </div>
                 </div>
 
@@ -5233,7 +5238,14 @@ async function loadMinigamesMaintenance() {
                 const data = await response.json();
 
                 if (data.success) {
-                    alert('✅ Broadcast message sent successfully!\n\nAll users will see this message in their inbox.');
+                    let confirmText = '✅ Broadcast message sent successfully!\n\nAll users will see this message in their inbox.';
+                    if (data.telegram_warning) {
+                        confirmText += '\n\n⚠️ Telegram: ' + data.telegram_warning;
+                    } else if (data.telegram_recipients != null && data.telegram_recipients >= 0) {
+                        const mode = data.telegram_delivery_mode === 'durable_queued' ? 'queued for durable delivery' : 'sending (best-effort)';
+                        confirmText += `\n\n📨 Telegram: ${data.telegram_recipients} recipient(s) ${mode}.`;
+                    }
+                    alert(confirmText);
 
                     document.getElementById('broadcast-title').value = '';
                     document.getElementById('broadcast-message').value = '';
@@ -5245,6 +5257,51 @@ async function loadMinigamesMaintenance() {
             } catch (error) {
                 console.error('Error sending broadcast:', error);
                 alert('❌ Error sending broadcast message: ' + error.message);
+            }
+        }
+
+        async function checkTelegramHealth() {
+            const panel = document.getElementById('telegram-health-panel');
+            panel.style.display = 'block';
+            panel.innerHTML = '<span style="color: rgba(241,245,249,0.6);">Checking Telegram broadcast chain…</span>';
+            try {
+                const response = await fetch('/api/admin/telegram-diagnostics');
+                const data = await response.json();
+                if (!data.success) {
+                    panel.innerHTML = `<span style="color: #ef4444;">❌ ${data.error || 'Diagnostics failed'}</span>`;
+                    return;
+                }
+                const d = data.diagnostics;
+                const row = (ok, label, extra) => {
+                    const color = ok ? '#10b981' : '#ef4444';
+                    const icon = ok ? '✅' : '❌';
+                    return `<div style="margin: 0.25rem 0; color: ${color};">${icon} ${label}${extra ? ` <span style="color: rgba(241,245,249,0.7);">— ${extra}</span>` : ''}</div>`;
+                };
+                let html = '<div style="font-weight: 600; margin-bottom: 0.5rem; color: #f1f5f9;">Telegram broadcast chain</div>';
+                html += row(d.bot_token_configured, 'TELEGRAM_BOT_TOKEN configured');
+                html += row(d.database_available, 'Database reachable');
+                html += row(d.service_role_key_configured, 'Service-role key (RLS-safe reads)');
+                if (d.telegram_recipients != null) {
+                    html += row(d.telegram_recipients > 0, `Telegram recipients: ${d.telegram_recipients}`,
+                        d.telegram_recipients === 0 ? 'nobody can receive broadcasts' : 'users who saved a wallet in the bot');
+                } else {
+                    html += row(false, 'Telegram recipients: unreadable', d.telegram_recipients_error || '');
+                }
+                html += row(d.delivery_scheduler_enabled, 'Durable delivery scheduler enabled',
+                    d.delivery_scheduler_enabled ? '' : 'legacy thread in use — can be killed mid-send');
+                if (d.delivery_scheduler_enabled) {
+                    html += row(!!d.deliveries_table_ready, 'Delivery table migration applied', d.deliveries_table_error || '');
+                }
+                if (d.hints && d.hints.length) {
+                    html += '<div style="margin-top: 0.75rem; font-weight: 600; color: #fbbf24;">💡 What to fix:</div>';
+                    html += '<ul style="margin: 0.25rem 0 0 1.25rem; color: rgba(241,245,249,0.85);">'
+                        + d.hints.map(h => `<li style="margin: 0.25rem 0;">${h}</li>`).join('') + '</ul>';
+                } else {
+                    html += '<div style="margin-top: 0.75rem; color: #10b981; font-weight: 600;">All good — broadcasts should reach Telegram users.</div>';
+                }
+                panel.innerHTML = html;
+            } catch (error) {
+                panel.innerHTML = `<span style="color: #ef4444;">❌ Error: ${error.message}</span>`;
             }
         }
 
