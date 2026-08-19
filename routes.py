@@ -3167,23 +3167,52 @@ def send_broadcast_message():
             # which drains them independently of this request's lifetime (so a
             # gunicorn worker recycle can no longer swallow a half-finished
             # broadcast). Falls back to legacy fire-and-forget on failure.
+            telegram_mode = None
+            telegram_recipients = None
             try:
-                from telegram_notify import broadcast_message_async
-                broadcast_message_async(broadcast_id, title, message)
+                from telegram_notify import broadcast_message_async, count_broadcast_recipients
+                telegram_recipients = count_broadcast_recipients()
+                telegram_mode = broadcast_message_async(broadcast_id, title, message)
             except Exception as tg_err:
                 logger.warning(f"⚠️ Telegram broadcast push failed (DB broadcast still saved): {tg_err}")
 
-            logger.info(f"✅ Broadcast message sent by admin {admin_wallet[:8]}...")
-            return jsonify({
+            response_payload = {
                 "success": True,
                 "message": "Broadcast message sent successfully!",
-                "broadcast_id": broadcast_id
-            })
+                "broadcast_id": broadcast_id,
+                "telegram_delivery_mode": telegram_mode,
+                "telegram_recipients": telegram_recipients,
+            }
+            if telegram_recipients == 0:
+                # Surface the #1 silent failure: nobody to deliver to. The web
+                # inbox still got the broadcast — Telegram just has no one.
+                response_payload["telegram_warning"] = (
+                    "No Telegram bot users found. Users must /start the bot and save "
+                    "their wallet before they can receive broadcasts."
+                )
+            logger.info(f"✅ Broadcast message sent by admin {admin_wallet[:8]}...")
+            return jsonify(response_payload)
         else:
             return jsonify({"success": False, "error": "Failed to send broadcast message"}), 500
 
     except Exception as e:
         logger.error(f"❌ Send broadcast message error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@routes.route("/api/admin/telegram-diagnostics", methods=["GET"])
+@admin_required
+def telegram_broadcast_diagnostics():
+    """Health check for every link in the Telegram broadcast chain (admin only).
+
+    Returns per-check booleans (bot token, DB, recipient count, delivery
+    migration, scheduler) plus human-readable hints naming the exact fix, so a
+    "bot isn't receiving broadcasts" report is diagnosable without log access.
+    """
+    try:
+        from telegram_notify import get_broadcast_diagnostics
+        return jsonify({"success": True, "diagnostics": get_broadcast_diagnostics()})
+    except Exception as e:
+        logger.error(f"❌ Telegram diagnostics error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @routes.route("/api/admin/broadcast-messages", methods=["GET"])
