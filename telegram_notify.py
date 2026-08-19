@@ -22,7 +22,7 @@ import html
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 
 import requests
@@ -42,6 +42,11 @@ _BROADCAST_SEND_DELAY_SECONDS = float(os.getenv("TELEGRAM_BROADCAST_SEND_DELAY_S
 # before we give up and mark the recipient as permanently failed so the
 # scheduler doesn't spin on a permanently-broken chat forever.
 _MAX_RETRY_ATTEMPTS = int(os.getenv("TELEGRAM_BROADCAST_MAX_RETRY_ATTEMPTS", "5"))
+
+# A delivery row claimed (pending -> sending) by a worker that then dies
+# mid-batch (gunicorn recycle) would otherwise be stuck in 'sending' forever —
+# reclaim it after this many seconds so another pass can deliver it.
+_STALE_CLAIM_SECONDS = int(os.getenv("TELEGRAM_BROADCAST_STALE_CLAIM_SECONDS", "300"))
 
 
 def _now_iso() -> str:
@@ -138,15 +143,21 @@ def get_chat_id_by_wallet(wallet_address: str) -> Optional[str]:
     return None
 
 
-def _fetch_all_chat_ids() -> List[str]:
+def _fetch_all_chat_ids(strict: bool = False) -> List[str]:
     """Return de-duplicated Telegram chat_ids of every linked bot user.
 
     Reads from ``telegram_wallet_sessions`` (the same table the webhook writes
     when a Telegram user links a wallet). Uses the service-role client so RLS
     on the anon key can never silently hide users.
+
+    With ``strict=True`` a failed query raises instead of returning [] — the
+    durable queue path relies on this so an unreadable table can't masquerade
+    as "no Telegram users" and silently drop the whole broadcast.
     """
     supabase = get_supabase_admin_client() or get_supabase_client()
     if not supabase:
+        if strict:
+            raise RuntimeError("database unavailable")
         return []
     result = safe_supabase_operation(
         lambda: supabase.table('telegram_wallet_sessions')
@@ -157,6 +168,8 @@ def _fetch_all_chat_ids() -> List[str]:
         fallback_result=None,
         operation_name="fetch telegram chat ids for broadcast"
     )
+    if result is None and strict:
+        raise RuntimeError("could not fetch telegram chat ids (see log above)")
     chat_ids: List[str] = []
     seen = set()
     for row in (result.data if result and result.data else []):
@@ -178,17 +191,20 @@ def queue_broadcast_deliveries(broadcast_id, title: str, message: str) -> Dict[s
     The admin endpoint calls this and then wakes the delivery scheduler; the
     actual sends happen in the background, decoupled from the request lifetime
     so gunicorn worker recycling can never kill a half-finished broadcast.
+
+    Raises ``RuntimeError`` when the queue cannot be persisted (database down,
+    migration not applied, RLS denying writes, missing bot token) so the caller
+    can fall back to the legacy best-effort send — a silent no-op here would
+    mean zero Telegram users ever receive the broadcast.
     """
     summary = {"broadcast_id": broadcast_id, "total": 0, "queued": 0}
     supabase = get_supabase_admin_client() or get_supabase_client()
     if not supabase:
-        logger.warning("⚠️ Telegram broadcast queue skipped: database unavailable")
-        return summary
+        raise RuntimeError("database unavailable")
     if not TELEGRAM_API:
-        logger.warning("⚠️ Telegram broadcast queue skipped: TELEGRAM_BOT_TOKEN not configured")
-        return summary
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not configured")
 
-    chat_ids = _fetch_all_chat_ids()
+    chat_ids = _fetch_all_chat_ids(strict=True)
     summary["total"] = len(chat_ids)
 
     if not chat_ids:
@@ -224,14 +240,20 @@ def queue_broadcast_deliveries(broadcast_id, title: str, message: str) -> Dict[s
         fallback_result=None,
         operation_name="queue telegram broadcast deliveries",
     )
-    inserted = 0
-    if insert_result and getattr(insert_result, "data", None):
-        inserted = len(insert_result.data)
+    if insert_result is None:
+        # Typically: sql/telegram_broadcast_deliveries.sql not applied yet, or
+        # RLS denying the write. Raising lets the caller fall back to the
+        # legacy direct send instead of reporting success with zero sends.
+        raise RuntimeError(
+            "could not queue telegram broadcast deliveries — is the "
+            "telegram_broadcast_deliveries migration applied?"
+        )
+    inserted = len(insert_result.data) if getattr(insert_result, "data", None) else 0
     summary["queued"] = inserted
 
     # Stamp the broadcast aggregate as pending + total so the scheduler picks it.
     now = _now_iso()
-    safe_supabase_operation(
+    stamp_result = safe_supabase_operation(
         lambda: supabase.table('admin_broadcast_messages')
             .update({
                 'tg_status': 'pending',
@@ -243,6 +265,13 @@ def queue_broadcast_deliveries(broadcast_id, title: str, message: str) -> Dict[s
         fallback_result=None,
         operation_name="mark broadcast pending delivery",
     )
+    if stamp_result is None:
+        # Without the tg_status stamp the scheduler never sees this broadcast —
+        # the queued rows would sit forever. Fail loudly so the caller falls
+        # back to the legacy direct send.
+        raise RuntimeError(
+            "could not stamp broadcast tg_status — is the tg_* migration applied?"
+        )
 
     logger.info(
         "📢 Telegram broadcast %s queued %d recipient(s) (inserted %d new)",
@@ -283,7 +312,7 @@ def _claim_pending_deliveries(broadcast_id, limit: int) -> List[Dict[str, Any]]:
     ids = [r["id"] for r in rows]
     won = safe_supabase_operation(
         lambda: supabase.table('telegram_broadcast_deliveries')
-            .update({'status': 'sending'})
+            .update({'status': 'sending', 'updated_at': _now_iso()})
             .in_('id', ids)
             .eq('status', 'pending')
             .execute(),
@@ -295,6 +324,38 @@ def _claim_pending_deliveries(broadcast_id, limit: int) -> List[Dict[str, Any]]:
         won_ids = {r["id"] for r in won.data}
     # Only the rows we actually flipped to 'sending' are ours to send now.
     return [r for r in rows if r["id"] in won_ids] if won_ids else []
+
+
+def _reclaim_stale_sending(broadcast_id, stale_after_seconds: int = _STALE_CLAIM_SECONDS) -> int:
+    """Flip 'sending' rows idle longer than ``stale_after_seconds`` back to 'pending'.
+
+    A worker that claims rows (pending -> sending) and is then killed mid-batch
+    (gunicorn max_requests recycle / graceful timeout — the very failure this
+    durable path exists for) would otherwise leave those rows stuck in
+    'sending' forever: nothing re-claims them and the broadcast stays
+    'partially_sent' until the 48h age bound expires. Returns rows reclaimed.
+    """
+    supabase = get_supabase_admin_client() or get_supabase_client()
+    if not supabase:
+        return 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
+    res = safe_supabase_operation(
+        lambda: supabase.table('telegram_broadcast_deliveries')
+            .update({'status': 'pending', 'updated_at': _now_iso()})
+            .eq('broadcast_id', broadcast_id)
+            .eq('status', 'sending')
+            .lt('updated_at', cutoff)
+            .execute(),
+        fallback_result=None,
+        operation_name="reclaim stale sending deliveries",
+    )
+    reclaimed = len(res.data) if res and getattr(res, "data", None) else 0
+    if reclaimed:
+        logger.warning(
+            "♻️ Telegram broadcast %s: reclaimed %d stale 'sending' row(s) (worker died mid-batch)",
+            broadcast_id, reclaimed,
+        )
+    return reclaimed
 
 
 def _broadcast_text(title: str, message: str) -> str:
@@ -337,6 +398,9 @@ def deliver_broadcast_once(broadcast_id, batch_limit: int = 50) -> Dict[str, Any
         logger.warning("⚠️ Telegram broadcast %s: payload not found", broadcast_id)
         return summary
     text = _broadcast_text(payload["title"], payload["message"])
+
+    # Recover rows orphaned by a worker that died mid-batch before claiming anew.
+    _reclaim_stale_sending(broadcast_id)
 
     rows = _claim_pending_deliveries(broadcast_id, batch_limit)
     summary["processed"] = len(rows)
@@ -484,22 +548,36 @@ def broadcast_message(title: str, message: str) -> Dict[str, Any]:
     return summary
 
 
-def broadcast_message_async(broadcast_id=None, title: str = "", message: str = "") -> None:
+def broadcast_message_async(broadcast_id=None, title: str = "", message: str = "") -> str:
     """Queue a durable broadcast delivery and wake the scheduler.
 
     Called from the admin endpoint with the freshly-inserted broadcast_id.
     The actual sends happen in the background scheduler (``broadcast_delivery``),
     decoupled from the request lifetime so a gunicorn worker recycle mid-broadcast
-    can no longer swallow the delivery. Falls back to the legacy best-effort
-    path when the durable tables are unavailable or no broadcast_id is supplied.
+    can no longer swallow the delivery.
+
+    Falls back to the legacy best-effort fire-and-forget send whenever the
+    durable path cannot deliver: no broadcast_id, the delivery scheduler is
+    disabled (TELEGRAM_BROADCAST_DELIVERY_ENABLED unset), or queueing failed
+    (migration not applied / RLS denying writes). Queueing into a void while
+    the scheduler is off would silently deliver to nobody.
+
+    Returns which path was taken — "durable_queued" or "legacy_best_effort" —
+    so the admin endpoint can surface it instead of claiming blind success.
     """
     if broadcast_id is not None:
-        try:
-            queue_broadcast_deliveries(broadcast_id, title, message)
-            _wake_delivery_scheduler()
-            return
-        except Exception as e:  # noqa: BLE001
-            logger.warning("⚠️ Durable broadcast queue failed, falling back to best-effort: %s", e)
+        if _delivery_scheduler_enabled():
+            try:
+                queue_broadcast_deliveries(broadcast_id, title, message)
+                _wake_delivery_scheduler()
+                return "durable_queued"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("⚠️ Durable broadcast queue failed, falling back to best-effort: %s", e)
+        else:
+            logger.info(
+                "📢 Telegram broadcast delivery scheduler disabled "
+                "(TELEGRAM_BROADCAST_DELIVERY_ENABLED not set) — using best-effort direct send"
+            )
     # Legacy fire-and-forget fallback.
     import threading
     threading.Thread(
@@ -508,6 +586,20 @@ def broadcast_message_async(broadcast_id=None, title: str = "", message: str = "
         daemon=True,
         name="telegram-broadcast",
     ).start()
+    return "legacy_best_effort"
+
+
+def _delivery_scheduler_enabled() -> bool:
+    """True when the durable delivery scheduler is configured to run.
+
+    Imported lazily so telegram_notify has no hard dep on the scheduler module
+    (avoids a cycle); a missing module is treated as disabled.
+    """
+    try:
+        from broadcast_delivery import is_delivery_enabled
+        return bool(is_delivery_enabled())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _wake_delivery_scheduler() -> None:
@@ -519,3 +611,89 @@ def _wake_delivery_scheduler() -> None:
         wake_broadcast_delivery()
     except Exception:  # noqa: BLE001
         pass
+
+
+def count_broadcast_recipients() -> int:
+    """How many Telegram chat_ids a broadcast would target right now.
+
+    Returns -1 when the recipient list cannot be read (DB down / RLS denying),
+    so callers can tell "zero users" apart from "couldn't check".
+    """
+    try:
+        return len(_fetch_all_chat_ids(strict=True))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("⚠️ Could not count Telegram broadcast recipients: %s", e)
+        return -1
+
+
+def get_broadcast_diagnostics() -> Dict[str, Any]:
+    """Never-raises health check of every link in the Telegram broadcast chain.
+
+    Built so "the bot isn't receiving broadcasts" stops being a guessing game:
+    each check maps to one concrete failure (missing token, unreadable sessions
+    table, missing migration, scheduler off) and produces a human hint.
+    """
+    diag: Dict[str, Any] = {
+        "bot_token_configured": bool(TELEGRAM_API),
+        "service_role_key_configured": bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")),
+        "delivery_scheduler_enabled": _delivery_scheduler_enabled(),
+    }
+    hints: List[str] = []
+
+    if not diag["bot_token_configured"]:
+        hints.append("Set TELEGRAM_BOT_TOKEN — without it no Telegram message can be sent.")
+
+    supabase = get_supabase_admin_client() or get_supabase_client()
+    diag["database_available"] = bool(supabase)
+    if not supabase:
+        hints.append("Database unavailable — check SUPABASE_URL / SUPABASE_KEY.")
+    else:
+        # 1) Can we read the recipient list, and how many are there?
+        try:
+            diag["telegram_recipients"] = len(_fetch_all_chat_ids(strict=True))
+            if diag["telegram_recipients"] == 0:
+                hints.append(
+                    "0 Telegram recipients — telegram_wallet_sessions has no usable chat_ids. "
+                    "Users must /start the bot AND send their wallet address before they can "
+                    "receive broadcasts."
+                )
+        except Exception as e:  # noqa: BLE001
+            diag["telegram_recipients"] = None
+            diag["telegram_recipients_error"] = str(e)[:200]
+            hints.append(
+                "Could not read telegram_wallet_sessions — if SUPABASE_SERVICE_ROLE_KEY is "
+                "unset, RLS may be blocking the read. Set the service-role key."
+            )
+        # 2) Is the durable delivery migration applied?
+        try:
+            supabase.table('telegram_broadcast_deliveries').select('id').limit(1).execute()
+            diag["deliveries_table_ready"] = True
+        except Exception as e:  # noqa: BLE001
+            diag["deliveries_table_ready"] = False
+            diag["deliveries_table_error"] = str(e)[:200]
+            hints.append("Run sql/telegram_broadcast_deliveries.sql in the Supabase SQL editor.")
+        try:
+            supabase.table('admin_broadcast_messages').select('tg_status').limit(1).execute()
+            diag["broadcast_tg_columns_ready"] = True
+        except Exception as e:  # noqa: BLE001
+            diag["broadcast_tg_columns_ready"] = False
+            diag["broadcast_tg_columns_error"] = str(e)[:200]
+            if diag.get("deliveries_table_ready"):
+                hints.append("Run sql/telegram_broadcast_deliveries.sql (tg_* columns missing).")
+
+    if not diag["delivery_scheduler_enabled"]:
+        hints.append(
+            "TELEGRAM_BROADCAST_DELIVERY_ENABLED is not set — broadcasts use the legacy "
+            "in-request thread, which the server can kill mid-send. Enable it (and run the "
+            "SQL migration) for durable delivery."
+        )
+    elif supabase and not diag.get("deliveries_table_ready", True):
+        hints.append("Scheduler is enabled but the delivery table is missing — nothing will be drained.")
+
+    diag["hints"] = hints
+    diag["ready"] = (
+        diag["bot_token_configured"]
+        and diag["database_available"]
+        and bool(diag.get("telegram_recipients"))
+    )
+    return diag
