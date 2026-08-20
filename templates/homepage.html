@@ -2132,12 +2132,12 @@
     <!-- Panel: Referral Program -->
     <div class="section-panel" id="panel-referral">
         <h2 class="panel-title">🔗 Referral Program</h2>
-        <p class="panel-subtitle">Invite friends to GoodMarket and both of you earn G$ rewards when they create a new account (free local wallet or Privy email wallet) and get verified.</p>
+        <p class="panel-subtitle">Invite friends to GoodMarket and both of you earn G$ rewards when they create a new account (free local email + PIN wallet) and get verified.</p>
         <div class="earn-grid">
             <div class="earn-card">
                 <div class="earn-card-icon">📨</div>
                 <div class="earn-card-title">How to Refer</div>
-                <p class="earn-card-desc">Every GoodMarket user gets a unique referral link. Share it with friends, family, or on social media. Rewards apply when a new referee creates a fresh GoodMarket account — a free local email+PIN wallet or a Privy email/social wallet — not when they connect an existing wallet with WalletConnect, MiniPay, or MetaMask.</p>
+                <p class="earn-card-desc">Every GoodMarket user gets a unique referral link — no matter how YOU log in (MetaMask, WalletConnect, MiniPay, or a local account). Share it with friends, family, or on social media. Rewards apply when your friend creates a fresh GoodMarket account with the free local email+PIN wallet and enters your code at sign-up — not when they connect an existing wallet.</p>
             </div>
             <div class="earn-card">
                 <div class="earn-card-icon">💰</div>
@@ -2147,12 +2147,12 @@
                     <li>🟢 <strong style="color:#10b981;">500 G$</strong> — Your friend (referee) earns</li>
                     <li>🟢 No limit on how many friends you can refer</li>
                 </ul>
-                <p class="earn-card-note">🎯 Rewards are disbursed after the eligible Privy-created referee completes UBI verification.</p>
+                <p class="earn-card-note">🎯 Rewards are sent automatically once your friend completes face verification or makes their first UBI claim.</p>
             </div>
             <div class="earn-card">
                 <div class="earn-card-icon">✅</div>
                 <div class="earn-card-title">Requirements</div>
-                <p class="earn-card-desc">Your referred friend must connect their Web3 wallet and complete <strong>UBI verification</strong> (a recent GoodDollar claim on the Celo network). Once verified, both rewards are sent automatically.</p>
+                <p class="earn-card-desc">Your referred friend must create a <strong>free local account</strong> (email + PIN wallet) with your code, then complete <strong>face verification</strong> or make their first <strong>UBI claim</strong>. Once verified, both rewards are sent automatically.</p>
             </div>
             <div class="earn-card">
                 <div class="earn-card-icon">📊</div>
@@ -2354,18 +2354,6 @@
                     <span class="option-arrow">→</span>
                 </button>
                 {% if enable_privy_login %}
-                <div id="privyReferralWrap" class="wallet-input-group">
-                    <label class="wallet-label" for="privyReferralCode">Referral code <span style="font-weight:500;color:#9ca3af">(optional)</span></label>
-                    <input
-                        id="privyReferralCode"
-                        class="wallet-input"
-                        type="text"
-                        maxlength="16"
-                        autocomplete="off"
-                        placeholder="Referral works for new Privy email wallets"
-                        oninput="syncReferralInputs(this)"
-                    >
-                </div>
                 <button id="privyPrimaryButton" class="wallet-option-card wc-option" type="button" onclick="beginPrivyLogin(true)" aria-live="polite">
                     <div class="option-icon">✨</div>
                     <div class="option-text">
@@ -2609,9 +2597,6 @@
                         try { localStorage.setItem('privy_wallet_address', address); } catch (_) {}
                         const message = window.makeLoginMessage(address);
                         const isPrivyEmbeddedWallet = wallet && wallet.walletClientType === 'privy';
-                        const referralCodeForPrivy = isPrivyEmbeddedWallet
-                            ? (window.getPendingReferralCode?.() || '')
-                            : '';
                         let signature;
                         if (isPrivyEmbeddedWallet) {
                             const sigResult = await signMessage({message}, {address});
@@ -2627,14 +2612,17 @@
                             signature = await provider.request({ method: 'personal_sign', params: [messageHex, address] });
                         }
                         if (!signature) throw new Error('Privy did not return a login signature.');
+                        // Referral codes are only collected on the local
+                        // (email + PIN) create-account form — never on Privy
+                        // or any other wallet login.
                         const verifyData = await window.postVerifyIdentity(
                             address,
                             signature,
                             message,
-                            referralCodeForPrivy,
+                            '',
                             'privy',
                             {
-                                referralEligible: isPrivyEmbeddedWallet,
+                                referralEligible: false,
                                 privyWalletClientType: wallet && wallet.walletClientType ? wallet.walletClientType : ''
                             }
                         );
@@ -2739,7 +2727,7 @@
             window.restoreWalletModalAfterPrivy?.(false);
             document.getElementById('walletModal').classList.add('active');
             // Re-apply any referral code captured from the URL / sessionStorage
-            // so the Privy login receives the same referral context.
+            // so the local-wallet create form keeps the referral context.
             try { initReferralFromUrl(); } catch (e) {}
             detectInjectedWallet(0);
             if (window.GM_PRIVY_CONFIG && window.GM_PRIVY_CONFIG.enabled && window.GM_PRIVY_CONFIG.appId) {
@@ -2894,6 +2882,7 @@
             });
             const regData = await regResp.json();
             if (!regResp.ok || !regData.success) throw new Error(regData.error || 'Registration failed.');
+            if (regData.referral_message) lwStatus('🎁 ' + regData.referral_message, 'success');
 
             _lwPendingSignup = {
                 address: created.address,
@@ -3666,14 +3655,14 @@
 
 
         function getPendingReferralCode() {
-            const fromPrivy = ((document.getElementById('privyReferralCode') || {}).value || '').trim();
+            const fromLocal = ((document.getElementById('lwReferralCode') || {}).value || '').trim();
             const saved = (sessionStorage.getItem('pending_referral_code') || '').trim();
-            return (fromPrivy || saved || '').toUpperCase();
+            return (fromLocal || saved || '').toUpperCase();
         }
 
         function syncReferralInputs(sourceEl) {
             const value = (sourceEl && sourceEl.value ? sourceEl.value : '').trim().toUpperCase();
-            const ids = ['privyReferralCode', 'lwReferralCode'];
+            const ids = ['lwReferralCode'];
             ids.forEach(function(id) {
                 var el = document.getElementById(id);
                 if (el && el !== sourceEl && el.value !== value) el.value = value;
@@ -3718,8 +3707,9 @@
                     try { sessionStorage.setItem('pending_referral_code', ref); } catch (e) {}
                 }
 
-                const privyEl = document.getElementById('privyReferralCode');
-                if (privyEl && !privyEl.value.trim()) privyEl.value = ref;
+                // Only the local-wallet create form collects referral codes.
+                const lwEl = document.getElementById('lwReferralCode');
+                if (lwEl && !lwEl.value.trim()) lwEl.value = ref;
 
                 // Show the referral banner only once per page load — after it
                 // auto-dismisses we don't want subsequent openWalletModal() calls
@@ -3730,7 +3720,7 @@
                     banner.id = 'referralBanner';
                     banner.style.cssText = 'position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:9998;max-width:92%;padding:0.7rem 1rem;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,0.18);font-size:0.86rem;text-align:center;line-height:1.5;';
                     // Use textContent to prevent any HTML injection via the URL-derived ref value.
-                    banner.textContent = '🎁 Referral applied — Code ' + ref + ' will be used only if the new user creates a Privy email wallet.';
+                    banner.textContent = '🎁 Referral applied — Code ' + ref + ' will be used when you create a free GoodMarket account (email + PIN).';
                     document.body.appendChild(banner);
                     setTimeout(function () { banner.style.transition = 'opacity 0.6s'; banner.style.opacity = '0'; setTimeout(function () { banner.remove(); }, 700); }, 8000);
                 }
