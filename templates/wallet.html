@@ -4985,10 +4985,26 @@
                 const date = new Date(r.created_at).toLocaleDateString('en-PH', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
                 const gd = Number(r.amount_gd).toLocaleString();
                 const php = Number(r.amount_php).toLocaleString(undefined, {minimumFractionDigits:2});
-                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8rem;">'
+                let statusHtml = '<span style="color:' + color + ';font-weight:600;font-size:0.72rem;text-transform:uppercase">' + r.status + '</span>';
+                let detailHtml = '';
+                if (r.status === 'approved') {
+                    statusHtml = '<span style="color:#10b981;font-weight:600;font-size:0.72rem;">✅ SUCCESSFUL</span>';
+                    detailHtml = '<div style="font-size:0.72rem;color:#10b981;margin-top:0.15rem;">GCash sent!'
+                        + (r.reference_number ? ' Ref #: <strong>' + r.reference_number + '</strong>' : '')
+                        + (r.receipt_image_url ? ' · <a href="' + r.receipt_image_url + '" target="_blank" rel="noopener" style="color:#38bdf8;">View receipt ↗</a>' : '')
+                        + '</div>';
+                } else if (r.status === 'rejected' || r.status === 'refunded') {
+                    detailHtml = '<div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.15rem;">G$ refunded to your wallet'
+                        + (r.refund_tx_hash ? ' · <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">Refund tx ↗</a>' : '')
+                        + '</div>';
+                }
+                return '<div style="padding:0.5rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8rem;">'
+                    + '<div style="display:flex;justify-content:space-between;align-items:center;">'
                     + '<div><div style="font-weight:600">' + gd + ' G$ → ₱' + php + '</div>'
                     + '<div style="color:var(--text-dim);font-size:0.72rem">' + date + ' · ' + r.gcash_number + '</div></div>'
-                    + '<span style="color:' + color + ';font-weight:600;font-size:0.72rem;text-transform:uppercase">' + r.status + '</span>'
+                    + statusHtml
+                    + '</div>'
+                    + detailHtml
                     + '</div>';
             }).join('');
         } catch (_) { section.style.display = 'none'; }
