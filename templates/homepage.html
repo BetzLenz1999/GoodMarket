@@ -2996,6 +2996,11 @@
             try {
                 sessionStorage.setItem('wallet', data.wallet || '');
                 sessionStorage.setItem('verified', 'true');
+                // Keep the email around so the unlock modal can re-fetch the
+                // server keystore on devices without a local copy.
+                const saved = GMLocalWallet.getLocalKeystore();
+                if (saved && saved.email) sessionStorage.setItem('lw_session_email', saved.email);
+                if (data.wallet) window.GMLocalWalletEmail = saved && saved.email ? saved.email : null;
             } catch (e) {}
             lwStatus('✅ Welcome! Redirecting…', 'success');
             setTimeout(function () { window.location.href = data.redirect_to || '/wallet'; }, 900);
