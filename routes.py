@@ -285,11 +285,20 @@ def confirm_goodmarket_claim():
         except Exception as e_attr:
             logger.warning(f"[gm-claim-confirm] attribution backfill skipped: {e_attr}")
 
-    # REFERRAL PROGRAM: Manual approval only
-    # Auto-disbursement triggers have been disabled.
-    # All referrals must be manually approved via Admin Dashboard.
-    # Admin checks CeloScan first, then clicks "Approve & Disburse".
-    pass
+    # REFERRAL PROGRAM auto-disbursement trigger.
+    # A confirmed UBI claim through the GoodMarket UI is definitive proof the
+    # referee is face-verified (the UBI contract rejects non-whitelisted
+    # callers), so any pending referral for this wallet pays out right now.
+    # Runs on a daemon thread — disbursement waits on two on-chain receipts
+    # and must not block the claim confirmation response. The helper
+    # CAS-claims the referral row, so fv-callback / verify-identity /
+    # verify-ubi firing at the same time can never double-pay.
+    if status == "confirmed":
+        try:
+            from referral_program.referral_service import referral_service
+            referral_service.auto_disburse_pending_referral_async(wallet, source="claim_confirm")
+        except Exception as ref_err:
+            logger.warning(f"[gm-claim-confirm] referral auto-disburse skipped: {ref_err}")
 
     return jsonify({
         "success": True,
@@ -1681,42 +1690,26 @@ def verify_ubi():
             claim_amount = "N/A"
 
             # Referral Program Processing
-            # MANUAL APPROVAL ONLY - Auto-disbursement has been DISABLED.
-            # All referrals must be manually approved via Admin Dashboard.
-            # Admin checks CeloScan first, then clicks "Approve & Disburse".
+            # Referrals are RECORDED only at local-wallet account creation
+            # (/api/local-wallet/register) — wallet logins never record one.
+            # This endpoint is still an AUTO-DISBURSE trigger: if the user is
+            # already face-verified and has a pending referral (created earlier
+            # via a local-wallet signup), disburse it now. The helper CAS-claims
+            # the row, so concurrent triggers never double-pay.
             try:
                 from referral_program.referral_service import referral_service
 
-                is_face_verified = fv_result.get('verified', False)
+                if referral_code and str(referral_code).strip():
+                    logger.info(
+                        "ℹ️ Referral code ignored at wallet login: referrals are recorded only "
+                        f"when the new user creates a local (email + PIN) wallet account "
+                        f"({wallet_address[:8]}...)"
+                    )
 
-                # --- Case 1: New referral code provided ---
-                if referral_code and referral_code.strip():
-                    logger.info(f"Referral code provided: {referral_code} for {wallet_address[:8]}... face_verified={is_face_verified}")
-
-                    validation = referral_service.validate_referral_code(referral_code.strip().upper())
-                    if not validation.get('valid'):
-                        logger.warning(f"Invalid referral code {referral_code}: {validation.get('error')}")
-                    else:
-                        referrer_wallet = validation['referrer_wallet']
-                        record_result = referral_service.record_referral(
-                            referral_code=referral_code.strip().upper(),
-                            referee_wallet=wallet_address
-                        )
-                        if record_result.get('already_verified'):
-                            logger.info(
-                                f"Referral rejected (already verified externally): {wallet_address[:8]}... "
-                                f"code={referral_code}"
-                            )
-                        elif record_result.get('success'):
-                            logger.info(f"Referral recorded: {referral_code} | referrer={referrer_wallet[:8]}... | PENDING MANUAL APPROVAL")
-                        elif record_result.get('already_exists'):
-                            logger.info(f"Referral already recorded for {wallet_address[:8]}... | PENDING MANUAL APPROVAL")
-                        else:
-                            logger.warning(f"Could not record referral: {record_result.get('error')}")
-
-                # --- Case 2: No new code, log face verification for tracking ---
-                elif is_face_verified:
-                    logger.info(f"User {wallet_address[:8]}... is face-verified. Referral pending manual approval.")
+                if fv_result.get('verified', False):
+                    referral_service.auto_disburse_pending_referral(
+                        wallet_address, source="verify_ubi"
+                    )
 
             except Exception as ref_error:
                 logger.error(f"Referral processing error: {ref_error}")
@@ -1862,8 +1855,13 @@ def local_wallet_register():
         table.insert(row).execute()
         logger.info(f"🔐 Local wallet registered: {email_masked} → {_mask_wallet(address)}")
 
-        # Same referral rules as the WalletConnect entry: validate + record,
-        # pending manual approval.
+        # Referral recording happens HERE ONLY: the local-wallet create-account
+        # flow is the single place a referral can be recorded. Wallet logins
+        # (/verify-identity, /verify-ubi) ignore referral codes. The reward
+        # auto-disburses after the referee completes face verification or
+        # claims UBI; the referrer can use any provider (injected, WalletConnect,
+        # Privy, or local).
+        referral_status = None
         if referral_code:
             try:
                 from referral_program.referral_service import referral_service
@@ -1874,12 +1872,27 @@ def local_wallet_register():
                         referee_wallet=address,
                     )
                     if record_result.get("success"):
+                        referral_status = "recorded"
                         logger.info(f"Referral recorded via local wallet: {referral_code}")
+                    else:
+                        referral_status = record_result.get("error") or "not_recorded"
+                        if record_result.get("already_exists"):
+                            referral_status = "already_recorded"
+                else:
+                    referral_status = validation.get("error") or "invalid_code"
             except Exception as ref_error:
                 logger.error(f"Local wallet referral processing error: {ref_error}")
 
         message = _build_local_wallet_login_message(address, keystore_json)
-        return jsonify({"success": True, "address": address, "message": message})
+        response = {"success": True, "address": address, "message": message}
+        if referral_code:
+            response["referral_status"] = referral_status
+            if referral_status == "recorded":
+                response["referral_message"] = (
+                    "Referral applied! Your 500 G$ referee reward is sent automatically "
+                    "after you complete face verification or claim UBI."
+                )
+        return jsonify(response)
     except Exception as e:
         logger.exception("Local wallet register error")
         return jsonify({"success": False, "error": "Registration failed"}), 500
@@ -2637,6 +2650,7 @@ def get_pending_referrals():
                 "status": r.get("status"),
                 "onchain_verified": r.get("onchain_verified"),
                 "created_at": r.get("created_at"),
+                "error_message": r.get("error_message"),
                 "celoscan_url": f"https://celoscan.io/address/{r.get('referee_wallet')}" if r.get("referee_wallet") else None
             })
 
@@ -2817,14 +2831,15 @@ def get_completed_referrals():
 @admin_required
 def admin_approve_referral():
     """
-    MANUAL APPROVAL ONLY - No auto-disbursement triggers.
-    
-    Admin workflow:
+    Manual approve / retry for a referral.
+
+    Referrals normally auto-disburse (fv-callback, verify-identity, verify-ubi,
+    claim confirm, background reconciler). This endpoint is the admin override
+    for referrals that need manual verification or got stuck/failed:
+
     1. Admin checks referee's wallet on CeloScan
     2. If G$ tokens were claimed/transfered, admin clicks "Approve & Disburse"
     3. This endpoint marks onchain_verified=TRUE and triggers disbursement
-    
-    This is the ONLY way to disburse referral rewards - no automatic triggers.
     """
     try:
         from referral_program.referral_service import referral_service
@@ -4459,14 +4474,21 @@ def get_referral_key_balance():
             except Exception as e:
                 logger.warning(f"Could not fetch pending disbursements count: {e}")
         
+        celo_balance = balance_result.get("celo_balance")
+        has_gas = celo_balance is None or celo_balance >= 0.001
         return jsonify({
             "success": balance_result.get("success", False),
             "balance_g": balance_result.get("balance", 0),
             "balance_wei": balance_result.get("balance_wei", 0),
+            "celo_balance": celo_balance,
+            "celo_balance_wei": balance_result.get("celo_balance_wei"),
+            "has_gas": has_gas,
             "wallet": balance_result.get("wallet", "N/A"),
             "pending_disbursements_count": pending_count,
             "total_pending_amount_g": total_pending_amount,
-            "can_process": (balance_result.get("balance", 0) >= total_pending_amount) if balance_result.get("success") else False,
+            "can_process": (
+                balance_result.get("balance", 0) >= total_pending_amount and has_gas
+            ) if balance_result.get("success") else False,
             "error": balance_result.get("error")
         })
     except Exception as e:
