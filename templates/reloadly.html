@@ -1501,6 +1501,16 @@ async function dappConnect() {
     }
     // Local self-custodial accounts sign with the browser wallet (PIN-decrypted).
     if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+        // Self-prompt for PIN if the wallet auto-locked — the same pattern as
+        // savings.html. Without this, a locked wallet throws "Wallet is locked"
+        // from eth_requestAccounts below, showing a confusing "unlock failed".
+        if (!GMLocalWallet.isUnlocked()) {
+            if (typeof window._lwOpenUnlockModal === 'function') {
+                await window._lwOpenUnlockModal();
+            } else {
+                throw new Error('Please unlock your wallet. Reload the page and log in again.');
+            }
+        }
         const localProvider = GMLocalWallet.getProvider();
         const accounts = await localProvider.request({ method: 'eth_requestAccounts' });
         if (!accounts || !accounts[0]) throw new Error('Please unlock your GoodMarket wallet to continue.');
@@ -1552,18 +1562,9 @@ async function dappConnect() {
 async function dappSendPayment() {
     const btn = document.getElementById('dappPayBtn');
     btn.disabled = true;
-    // Local wallets: prompt for PIN if the wallet has auto-locked.
-    if ((LOGIN_METHOD || '').toLowerCase() === 'local'
-        && typeof GMLocalWallet !== 'undefined'
-        && !GMLocalWallet.isUnlocked()) {
-        if (typeof window._lwOpenUnlockModal === 'function') {
-            try { await window._lwOpenUnlockModal(); } catch (_) { setDappStatus('error', 'Please unlock your wallet to continue.'); btn.disabled = false; return; }
-        } else {
-            setDappStatus('error', 'Please unlock your wallet. Reload the page and log in again.');
-            btn.disabled = false;
-            return;
-        }
-    }
+    // Local-wallet unlock is handled inside dappConnect() below (self-prompts
+    // PIN if locked). No separate prompt needed here — having two caused a
+    // race where the wallet locked between prompts, showing "unlock failed".
     setDappStatus('info', '<i class="fas fa-spinner spin"></i> Checking your G$ balance...');
 
     try {
@@ -1675,6 +1676,27 @@ async function dappSendPayment() {
             };
             if (_isMiniPayContext(ep)) {
                 txHash = await _sendReloadlyMiniPayTx(ep, txParams);
+            } else if (isLocalLogin) {
+                // Retry once on lock: if the wallet auto-locked between
+                // dappConnect() and now, prompt the PIN modal and retry.
+                try {
+                    txHash = await ep.request({
+                        method: 'eth_sendTransaction',
+                        params: [txParams]
+                    });
+                } catch (sendErr) {
+                    if (sendErr && sendErr.code === 'GM_WALLET_LOCKED') {
+                        if (typeof window._lwOpenUnlockModal === 'function') {
+                            await window._lwOpenUnlockModal();
+                        }
+                        txHash = await ep.request({
+                            method: 'eth_sendTransaction',
+                            params: [txParams]
+                        });
+                    } else {
+                        throw sendErr;
+                    }
+                }
             } else {
                 txHash = await ep.request({
                     method: 'eth_sendTransaction',
