@@ -1820,7 +1820,12 @@ def local_wallet_register():
                 keystore_json = json.loads(keystore_json)
             except Exception:
                 return jsonify({"success": False, "error": "Malformed keystore"}), 400
-        if not isinstance(keystore_json, dict) or "crypto" not in keystore_json or "address" not in keystore_json:
+        # ethers v6 emits "Crypto" (capital C) per the V3 spec; some clients
+        # lowercase it to "crypto". Accept both.
+        has_crypto = isinstance(keystore_json, dict) and (
+            "crypto" in keystore_json or "Crypto" in keystore_json
+        )
+        if not isinstance(keystore_json, dict) or not has_crypto or "address" not in keystore_json:
             return jsonify({"success": False, "error": "Malformed keystore"}), 400
         # The keystore must belong to the claimed address, otherwise a user
         # could register someone else's keystore blob under their own address.
