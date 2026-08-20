@@ -195,6 +195,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
             integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM"
             crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/minipay-fee-currency.js', v=ASSET_VERSION) }}"></script>
     <script>
@@ -226,6 +227,9 @@
             // connected". Block injected discovery so all flows route through the
             // WalletConnect signer. LOGIN_METHOD is Jinja-rendered and reliable.
             if (PREFER_WC_SIGNING) return null;
+            // Local in-app wallets sign via GMLocalWallet only — an injected
+            // extension is a different account and must never be offered.
+            if (_isLocalLogin()) return null;
             if (!window.ethereum) return null;
             if (window.ethereum.providers && window.ethereum.providers.length) {
                 const miniPay = window.ethereum.providers.find(p => p && p.isMiniPay);
@@ -237,6 +241,25 @@
                 return window.ethereum.providers[0];
             }
             return window.ethereum;
+        }
+
+        // Local self-custodial accounts (login_method === 'local') sign with the
+        // browser-generated wallet decrypted via PIN — never with an injected
+        // MetaMask/extension, which is a different account entirely.
+        const _isLocalLogin = () => (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
+
+        // Resolves the signing provider for local logins (prompting the PIN
+        // unlock modal when needed). Returns null for all other login methods.
+        async function _getLocalSigningProvider() {
+            if (!_isLocalLogin()) return null;
+            if (!GMLocalWallet.isUnlocked()) {
+                if (typeof window._lwOpenUnlockModal === 'function') {
+                    await window._lwOpenUnlockModal();
+                } else {
+                    throw new Error('Please unlock your wallet. Reload the page and log in again.');
+                }
+            }
+            return GMLocalWallet.getProvider();
         }
 
         async function _awaitEthProvider(timeoutMs) {
@@ -265,6 +288,9 @@
 
         // ── MiniPay CIP-64 helpers ──
         function _isMiniPay() {
+            // The in-app wallet pays gas in CELO — CIP-64 feeCurrency params
+            // would break its plain eth_sendTransaction path.
+            if (_isLocalLogin()) return false;
             const ep = _getEthProvider();
             if (ep && ep.isMiniPay) return true;
             if (window.ethereum && window.ethereum.isMiniPay) return true;
@@ -722,10 +748,16 @@
         async function loadBalance() {
             try {
                 let addr = null;
-                const ep = _getEthProvider();
-                if (ep) {
-                    const acc = await ep.request({ method: "eth_accounts" });
-                    if (acc?.length) addr = acc[0];
+                if (_isLocalLogin()) {
+                    // Never read the account from an injected wallet for local
+                    // logins — it is a different account than the session wallet.
+                    addr = WALLET_ADDRESS;
+                } else {
+                    const ep = _getEthProvider();
+                    if (ep) {
+                        const acc = await ep.request({ method: "eth_accounts" });
+                        if (acc?.length) addr = acc[0];
+                    }
                 }
                 if (addr) {
                     const p = new ethers.JsonRpcProvider(CELO_RPC);
@@ -814,8 +846,8 @@
                         "function transferAndCall(address,uint256,bytes) returns (bool)",
                         [OTP_ADDRESS, amountWei, data]);
                 } else {
-                    const ep = _getEthProvider();
-                    if (!ep && !PREFER_WC_SIGNING) { showAlert("alert-error", "⚠️ No Web3 wallet detected. Open in MetaMask, MiniPay, or a Celo-compatible wallet."); return; }
+                    const ep = _isLocalLogin() ? await _getLocalSigningProvider() : _getEthProvider();
+                    if (!ep && !PREFER_WC_SIGNING && !_isLocalLogin()) { showAlert("alert-error", "⚠️ No Web3 wallet detected. Open in MetaMask, MiniPay, or a Celo-compatible wallet."); return; }
 
                     if (ep) {
                         setBtnState('<span class="spinner-inline"></span> Connecting wallet...', true);
@@ -985,7 +1017,7 @@
                         "function cancel(address) public",
                         [paymentId]);
                 } else {
-                    const ep = _getEthProvider();
+                    const ep = _isLocalLogin() ? await _getLocalSigningProvider() : _getEthProvider();
                     if (ep) {
                         const provider  = new ethers.BrowserProvider(ep);
                         const signer    = await provider.getSigner();
