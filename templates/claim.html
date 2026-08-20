@@ -109,6 +109,7 @@
     -->
     <script src="/static/js/gas-coverage-banner.js?v={{ ASSET_VERSION }}"></script>
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/minipay-fee-currency.js', v=ASSET_VERSION) }}"></script>
     <script>
         const LOGIN_METHOD = "{{ login_method | default('walletconnect') }}";
@@ -520,6 +521,8 @@
                 let txHash = "";
                 let otpCheck = null;
                 let signer = null;
+                let injectedProvider = null;
+                let isLocalWallet = false;
 
                 if (isServerSigningLoginMethod()) {
                     if (!SESSION_WALLET || SESSION_WALLET.length < 42) {
@@ -529,7 +532,23 @@
                     const provider = new ethers.JsonRpcProvider(CELO_RPC);
                     otpCheck = new ethers.Contract(OTP_ADDRESS, OTP_ABI, provider);
                 } else {
-                    const injectedProvider = await _awaitEthProvider(1200);
+                    // Local self-custodial accounts sign with the in-app browser
+                    // wallet (PIN-decrypted) — never with an injected MetaMask /
+                    // extension, which is a different account entirely.
+                    if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+                        isLocalWallet = true;
+                        if (!GMLocalWallet.isUnlocked()) {
+                            btn.innerHTML = '<span class="spinner-inline"></span> Unlock your wallet...';
+                            if (typeof window._lwOpenUnlockModal === 'function') {
+                                await window._lwOpenUnlockModal();
+                            } else {
+                                throw new Error('Please unlock your wallet. Reload the page and log in again.');
+                            }
+                        }
+                        injectedProvider = GMLocalWallet.getProvider();
+                    } else {
+                        injectedProvider = await _awaitEthProvider(1200);
+                    }
                     if (!injectedProvider) {
                         showAlert("alert-error", "⚠️ No Web3 wallet detected. Please open this page in MetaMask, MiniPay, Trust Wallet dApp browser, or another Celo-compatible wallet.");
                         return;
@@ -538,12 +557,16 @@
                     btn.innerHTML = '<span class="spinner-inline"></span> Connecting wallet...';
                     await injectedProvider.request({ method: "eth_requestAccounts" });
 
-                    const chainIdHex = await injectedProvider.request({ method: "eth_chainId" });
-                    if (parseInt(chainIdHex, 16) !== CELO_CHAIN_ID) {
-                        try {
-                            await injectedProvider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + CELO_CHAIN_ID.toString(16) }] });
-                        } catch {
-                            await injectedProvider.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0x" + CELO_CHAIN_ID.toString(16), chainName: "Celo Mainnet", nativeCurrency: { name: "CELO", symbol: "CELO", decimals: 18 }, rpcUrls: ["https://forno.celo.org"], blockExplorerUrls: ["https://celoscan.io"] }] });
+                    // The in-app wallet only ever talks to Celo — skip the chain
+                    // switch dance for it (it rejects wallet_switchEthereumChain).
+                    if (!isLocalWallet) {
+                        const chainIdHex = await injectedProvider.request({ method: "eth_chainId" });
+                        if (parseInt(chainIdHex, 16) !== CELO_CHAIN_ID) {
+                            try {
+                                await injectedProvider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x" + CELO_CHAIN_ID.toString(16) }] });
+                            } catch {
+                                await injectedProvider.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0x" + CELO_CHAIN_ID.toString(16), chainName: "Celo Mainnet", nativeCurrency: { name: "CELO", symbol: "CELO", decimals: 18 }, rpcUrls: ["https://forno.celo.org"], blockExplorerUrls: ["https://celoscan.io"] }] });
+                            }
                         }
                     }
 
@@ -598,7 +621,7 @@
                     btn.innerHTML = '<span class="spinner-inline"></span> Confirm in wallet...';
                     showAlert("alert-info", '<span class="spinner-inline"></span> Confirm the claim transaction in your wallet.');
                     const withdrawData = iface.encodeFunctionData("withdraw", [paymentWallet.address, signature]);
-                    if (_isMiniPayContext(injectedProvider)) {
+                    if (!isLocalWallet && _isMiniPayContext(injectedProvider)) {
                         txHash = await _sendMiniPayClaimLinkTx(injectedProvider, receiverAddr, withdrawData);
                     } else {
                         const otpSigner = new ethers.Contract(OTP_ADDRESS, OTP_ABI, signer);
