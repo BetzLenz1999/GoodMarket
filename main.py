@@ -650,6 +650,19 @@ try:
 except Exception as e:
     logger.error(f"❌ Telegram broadcast delivery scheduler initialization failed: {e}")
 
+# Referral auto-reconciler (env-gated, default ON — disable with
+# REFERRAL_RECONCILER_ENABLED=0). Safety net for referrals that missed the
+# event-based auto-disbursement triggers (fv-callback / verify-identity /
+# verify-ubi / claim confirm), e.g. referee verified while the RPC was down.
+try:
+    from referral_program.referral_reconciler import init_referral_reconciler
+    if init_referral_reconciler(app):
+        logger.info("✅ Referral reconciler started")
+    else:
+        logger.info("ℹ️ Referral reconciler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ Referral reconciler initialization failed: {e}")
+
 # Initialize G$ Savings
 logger.info("💰 Initializing G$ Savings system...")
 if init_savings(app):
@@ -1647,22 +1660,6 @@ def debug_session():
         logger.error(f"❌ Session debug error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def _process_referral_disbursement(referral_blockchain_service, referral_service,
-                                   referrer_wallet, referee_wallet, referral_code):
-    """Thin wrapper that delegates to ReferralService.process_referral_disbursement.
-
-    The blockchain service argument is kept for backward-compatibility with
-    existing call sites; the service method imports it on its own so the
-    parameter is intentionally unused here.
-    """
-    del referral_blockchain_service  # imported inside the service method
-    return referral_service.process_referral_disbursement(
-        referrer_wallet=referrer_wallet,
-        referee_wallet=referee_wallet,
-        referral_code=referral_code,
-    )
-
-
 @app.route('/verify-identity', methods=['POST'])
 def verify_identity():
     """Handle identity verification with UBI validation"""
@@ -1690,17 +1687,7 @@ def verify_identity():
         login_method = (data.get('login_method') or 'injected').strip().lower()
         if login_method not in {'injected', 'walletconnect', 'manual', 'manual_address', 'privy'}:
             login_method = 'injected'
-        raw_referral_eligible = data.get('referral_eligible')
-        referral_eligible = (
-            raw_referral_eligible is True
-            or str(raw_referral_eligible).strip().lower() in {'1', 'true', 'yes'}
-        )
         privy_wallet_client_type = (data.get('privy_wallet_client_type') or '').strip().lower()
-        is_privy_embedded_referee = (
-            login_method == 'privy'
-            and referral_eligible
-            and privy_wallet_client_type == 'privy'
-        )
 
         # Check if user is already verified in the session. Keep login_method fresh
         # because a user may re-enter through Privy after previously using another
@@ -1821,83 +1808,34 @@ def verify_identity():
 
         # ── REFERRAL PROCESSING ──────────────────────────────────────────────────
         # Rules:
-        #  1. Referral only valid for NEW users (not yet in user_data)
-        #  2. Referral only valid if the referee created/uses a Privy embedded
-        #     wallet (email/social Privy wallet), not WalletConnect/injected
-        #  3. Referral only valid if referee is NOT yet externally face-verified
-        #  4. Reward only disbursed after referee completes face verification
+        #  1. Referrals are RECORDED only when the referee creates a brand-new
+        #     account with the local (email + PIN) wallet on the homepage —
+        #     see /api/local-wallet/register. Injected, WalletConnect, and
+        #     Privy logins never record a referral here; the referral code box
+        #     exists only on the local-wallet create form. The referrer can
+        #     still use ANY provider — only the referee's signup method matters.
+        #  2. Rewards auto-disburse after the referee completes face
+        #     verification or claims UBI (fv-callback / claim confirm / this
+        #     endpoint when the user is already verified).
         referral_warning = None
         if referral_code:
+            logger.info(
+                "ℹ️ Referral code ignored at wallet login: referrals are recorded only "
+                f"when the new user creates a local (email + PIN) wallet account "
+                f"(login_method={login_method})"
+            )
+            referral_warning = (
+                "Referral rewards only apply when the new user creates a free GoodMarket account "
+                "(email + PIN wallet). Connecting an existing wallet — Privy, WalletConnect, "
+                "MiniPay, or MetaMask — is not eligible."
+            )
+        if is_face_verified:
+            # User is face-verified — check for a previously recorded pending
+            # referral and disburse the reward now. The helper CAS-claims the
+            # row, so concurrent triggers (fv-callback etc.) never double-pay.
             try:
                 from referral_program.referral_service import referral_service as ref_svc
-                from referral_program.blockchain import referral_blockchain_service as ref_bc_svc
-
-                if not is_privy_embedded_referee:
-                    logger.info(
-                        "ℹ️ Referral ignored: referee must create/use a Privy embedded wallet "
-                        f"(login_method={login_method}, privy_wallet_client_type={privy_wallet_client_type or 'none'})"
-                    )
-                    referral_warning = (
-                        "Referral rewards only apply when the new user creates a Privy email/social wallet. "
-                        "WalletConnect, MiniPay, MetaMask, and other existing-wallet logins are not eligible."
-                    )
-                elif not is_new_user:
-                    # Existing user — referral cannot apply
-                    logger.info(f"ℹ️ Referral ignored: {wallet_address[:8]}... is an existing user")
-                    referral_warning = "Referral rewards are only available for users joining the platform for the first time."
-                elif is_face_verified:
-                    # Already verified externally — referral cannot apply
-                    logger.info(f"ℹ️ Referral ignored: {wallet_address[:8]}... is already face-verified on GoodDollar")
-                    referral_warning = "Referral rewards are not applicable: your wallet is already verified on GoodDollar."
-                else:
-                    # Valid candidate — validate code and record referral
-                    validation = ref_svc.validate_referral_code(referral_code.upper())
-                    if validation.get('valid'):
-                        referrer_wallet = validation.get('referrer_wallet')
-                        record_result = ref_svc.record_referral(referral_code.upper(), wallet_address)
-                        if record_result.get('success'):
-                            logger.info(f"📋 Referral recorded: {referral_code} for {wallet_address[:8]}...")
-                            # Save referrer and referral code in user_data for this new user
-                            try:
-                                from supabase_client import supabase_logger as _sb_log
-                                if _sb_log:
-                                    _sb_log.save_referrer_wallet(
-                                        wallet_address, referrer_wallet, referral_code.upper()
-                                    )
-                            except Exception as _sr_err:
-                                logger.warning(f"⚠️ Could not save referral data: {_sr_err}")
-                            # Do NOT disburse yet — wait for face verification completion
-                            logger.info(f"⏳ Referral pending face verification: {referral_code}")
-                        elif record_result.get('already_exists'):
-                            logger.info(f"ℹ️ Referral already recorded for {wallet_address[:8]}...")
-                        else:
-                            logger.warning(f"⚠️ Could not record referral: {record_result.get('error')}")
-                    else:
-                        code_len = len(referral_code)
-                        if code_len < 8:
-                            referral_warning = f"Referral code \"{referral_code.upper()}\" looks incomplete ({code_len}/8 characters). Please check the full code and try again."
-                        else:
-                            referral_warning = f"Referral code \"{referral_code.upper()}\" was not recognized. Please check the code and try again."
-                        logger.warning(f"⚠️ Invalid referral code: {referral_code} — {validation.get('error')}")
-            except Exception as ref_err:
-                logger.warning(f"⚠️ Referral processing error in verify-identity: {ref_err}")
-        elif is_face_verified:
-            # No referral code submitted but user is face-verified — check for a
-            # previously recorded pending referral and disburse reward now.
-            # Use atomic claim to prevent double-disbursement with fv-callback.
-            try:
-                from referral_program.referral_service import referral_service as ref_svc
-                from referral_program.blockchain import referral_blockchain_service as ref_bc_svc
-                claimed = ref_svc.claim_pending_referral_for_disbursement(wallet_address)
-                if claimed.get('claimed'):
-                    referral_row = claimed.get('referral', {})
-                    referrer_wallet = referral_row.get('referrer_wallet')
-                    ref_code = referral_row.get('referral_code')
-                    if referrer_wallet and ref_code:
-                        logger.info(f"🔄 Pending referral claimed for {wallet_address[:8]}... — disbursing now")
-                        _process_referral_disbursement(ref_bc_svc, ref_svc, referrer_wallet, wallet_address, ref_code)
-                else:
-                    logger.info(f"ℹ️ No pending referral to claim for {wallet_address[:8]}... in verify-identity.")
+                ref_svc.auto_disburse_pending_referral(wallet_address, source="verify_identity")
             except Exception as ref_err:
                 logger.warning(f"⚠️ Pending referral check error in verify-identity: {ref_err}")
 
@@ -2005,20 +1943,11 @@ def fv_callback():
                 logger.warning(f"⚠ GoodMarket attribution backfill skipped in fv-callback: {attr_err}")
 
         # Disburse any pending referral reward now that this user is face-verified.
-        # Use atomic claim to prevent double-disbursement if verify-identity fires concurrently.
+        # The helper CAS-claims the row, so concurrent triggers (verify-identity,
+        # claim confirm, reconciler) can never double-disburse.
         try:
             from referral_program.referral_service import referral_service as ref_svc
-            from referral_program.blockchain import referral_blockchain_service as ref_bc_svc
-            claimed = ref_svc.claim_pending_referral_for_disbursement(wallet_address)
-            if claimed.get('claimed'):
-                referral_row = claimed.get('referral', {})
-                referrer_wallet = referral_row.get('referrer_wallet')
-                ref_code = referral_row.get('referral_code')
-                if referrer_wallet and ref_code:
-                    logger.info(f"🎁 FV callback: disbursing pending referral {ref_code} for {wallet_address[:8]}...")
-                    _process_referral_disbursement(ref_bc_svc, ref_svc, referrer_wallet, wallet_address, ref_code)
-            else:
-                logger.info(f"ℹ️ FV callback: no pending referral to claim for {wallet_address[:8]}... (already processed or none).")
+            ref_svc.auto_disburse_pending_referral(wallet_address, source="fv_callback")
         except Exception as ref_err:
             logger.warning(f"⚠️ Referral disbursement error in fv-callback: {ref_err}")
 
