@@ -16,6 +16,7 @@ import uuid
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from datetime import datetime, timedelta, timezone
 import re
+import hashlib
 from collaboration_automation import (
     automate_collaboration_assets,
     generate_collaboration_quiz_draft as generate_collaboration_quiz_draft_rows
@@ -1742,6 +1743,219 @@ def verify_ubi():
             "message": error_message,
             "reason": "verification_error"
         }), 500
+
+# ─── Local (self-custodial browser) wallet accounts ──────────────────────────
+# The raw private key and PIN never reach the server: registration stores the
+# address + scrypt-encrypted keystore only, and login is proven with a
+# signature over the fetched keystore. Sessions reuse the standard
+# session["wallet"] / session["login_method"] pattern so every existing page
+# keeps working.
+
+_LOCAL_WALLET_LOGIN_SCOPE = "login"
+
+def _local_wallet_email_hash(email: str) -> str:
+    """sha256 of the normalized email — the ONLY lookup key; the raw email is
+    never stored, matching the codebase's wallet-masking privacy convention."""
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+
+def _mask_email(email: str) -> str:
+    """j***@gmail.com / ab***@x.co — safe for logs and admin display."""
+    try:
+        local, domain = email.strip().split("@", 1)
+        return (local[:2] if len(local) > 1 else local[:1]) + "***@" + domain
+    except Exception:
+        return "***"
+
+def _local_wallet_table(admin_only=True):
+    admin_client = get_supabase_admin_client()
+    client = admin_client or get_supabase_client()
+    if admin_only and admin_client is None:
+        logger.warning("⚠️ local_wallet_accounts accessed without service-role key")
+    return client.table("local_wallet_accounts") if client else None
+
+def _build_local_wallet_login_message(address, keystore_json):
+    """The message the user signs to prove key ownership. Binding the keystore
+    fingerprint into the signed text prevents a stolen keystore from being
+    paired with a replayed signature from a different keystore."""
+    # sort_keys: JSON dict ordering differs between client/server, so the
+    # fingerprint must be computed over a canonical serialization.
+    fingerprint = Web3.keccak(text=json.dumps(keystore_json, sort_keys=True)).hex()
+    return (
+        "GoodMarket local wallet login\n"
+        f"Address: {address}\n"
+        f"Keystore: {fingerprint}\n"
+        f"Scope: {_LOCAL_WALLET_LOGIN_SCOPE}"
+    )
+
+def _verify_local_wallet_signature(address, message, signature):
+    try:
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+        recovered = Account.recover_message(encode_defunct(text=message), signature=signature)
+        return recovered.lower() == address.lower()
+    except Exception as e:
+        logger.warning(f"Local wallet signature verification failed: {e}")
+        return False
+
+@routes.route("/api/local-wallet/register", methods=["POST"])
+def local_wallet_register():
+    try:
+        data = request.get_json(silent=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        address = (data.get("address") or "").strip()
+        keystore_json = data.get("keystore") or data.get("keystore_json")
+        referral_code = (data.get("referral_code") or "").strip() or None
+
+        if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+            return jsonify({"success": False, "error": "Valid email required"}), 400
+        if not Web3.is_address(address):
+            return jsonify({"success": False, "error": "Valid wallet address required"}), 400
+        address = Web3.to_checksum_address(address)
+        # Keystore must at least look like an ethers V3 JSON blob — the AES key
+        # is derived client-side from the PIN, so anything else means a broken client.
+        if not isinstance(keystore_json, (dict, str)):
+            return jsonify({"success": False, "error": "Encrypted keystore required"}), 400
+        if isinstance(keystore_json, str):
+            try:
+                keystore_json = json.loads(keystore_json)
+            except Exception:
+                return jsonify({"success": False, "error": "Malformed keystore"}), 400
+        if not isinstance(keystore_json, dict) or "crypto" not in keystore_json or "address" not in keystore_json:
+            return jsonify({"success": False, "error": "Malformed keystore"}), 400
+        # The keystore must belong to the claimed address, otherwise a user
+        # could register someone else's keystore blob under their own address.
+        keystore_addr = Web3.to_checksum_address(str(keystore_json.get("address", "")))
+        if keystore_addr.lower() != address.lower():
+            return jsonify({"success": False, "error": "Keystore does not match address"}), 400
+
+        table = _local_wallet_table()
+        if table is None:
+            return jsonify({"success": False, "error": "Storage unavailable"}), 503
+
+        email_hash = _local_wallet_email_hash(email)
+        email_masked = _mask_email(email)
+
+        # If the email already has an account, never silently overwrite the
+        # saved keystore — that brick the existing wallet for the user.
+        existing = table.select("address,keystore_json").eq("email_hash", email_hash).limit(1).execute()
+        existing_rows = getattr(existing, "data", None) or []
+        if existing_rows:
+            if existing_rows[0].get("address", "").lower() == address.lower():
+                # Idempotent re-registration: fingerprint the STORED keystore,
+                # not the just-submitted duplicate.
+                message = _build_local_wallet_login_message(address, existing_rows[0]["keystore_json"])
+                return jsonify({"success": True, "address": address, "message": message, "already_exists": True})
+            return jsonify({"success": False, "error": "That email already has a GoodMarket account. Use Unlock instead."}), 409
+
+        row = {
+            "email_hash": email_hash,
+            "email_masked": email_masked,
+            "address": address,
+            "keystore_json": keystore_json,
+            "referral_code": referral_code,
+        }
+        table.insert(row).execute()
+        logger.info(f"🔐 Local wallet registered: {email_masked} → {_mask_wallet(address)}")
+
+        # Same referral rules as the WalletConnect entry: validate + record,
+        # pending manual approval.
+        if referral_code:
+            try:
+                from referral_program.referral_service import referral_service
+                validation = referral_service.validate_referral_code(referral_code.upper())
+                if validation.get("valid"):
+                    record_result = referral_service.record_referral(
+                        referral_code=referral_code.upper(),
+                        referee_wallet=address,
+                    )
+                    if record_result.get("success"):
+                        logger.info(f"Referral recorded via local wallet: {referral_code}")
+            except Exception as ref_error:
+                logger.error(f"Local wallet referral processing error: {ref_error}")
+
+        message = _build_local_wallet_login_message(address, keystore_json)
+        return jsonify({"success": True, "address": address, "message": message})
+    except Exception as e:
+        logger.exception("Local wallet register error")
+        return jsonify({"success": False, "error": "Registration failed"}), 500
+
+@routes.route("/api/local-wallet/keystore", methods=["GET"])
+def local_wallet_keystore():
+    """Return the encrypted keystore + the exact login message to sign.
+    Public data only: the address is public and the keystore is useless
+    without the PIN."""
+    try:
+        email = (request.args.get("email") or "").strip().lower()
+        if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+            return jsonify({"success": False, "error": "Valid email required"}), 400
+        table = _local_wallet_table()
+        if table is None:
+            return jsonify({"success": False, "error": "Storage unavailable"}), 503
+        email_hash = _local_wallet_email_hash(email)
+        res = table.select("address,keystore_json").eq("email_hash", email_hash).limit(1).execute()
+        rows = getattr(res, "data", None) or []
+        if not rows:
+            return jsonify({"success": False, "error": "No account found for that email"}), 404
+        row = rows[0]
+        message = _build_local_wallet_login_message(row["address"], row["keystore_json"])
+        return jsonify({
+            "success": True,
+            "address": row["address"],
+            "keystore": row["keystore_json"],
+            "email_hash": email_hash,
+            "message": message,
+        })
+    except Exception as e:
+        logger.exception("Local wallet keystore fetch error")
+        return jsonify({"success": False, "error": "Lookup failed"}), 500
+
+@routes.route("/api/local-wallet/login", methods=["POST"])
+def local_wallet_login():
+    try:
+        data = request.get_json(silent=True) or {}
+        # Lookup by email_hash so the raw email never transits the login call.
+        email_hash = (data.get("email_hash") or "").strip().lower()
+        address = (data.get("address") or "").strip()
+        message = data.get("message") or ""
+        signature = data.get("signature") or ""
+
+        if not re.fullmatch(r"[0-9a-f]{64}", email_hash):
+            return jsonify({"success": False, "error": "Valid email hash required"}), 400
+        if not Web3.is_address(address):
+            return jsonify({"success": False, "error": "Valid wallet address required"}), 400
+        address = Web3.to_checksum_address(address)
+        if not message or not signature:
+            return jsonify({"success": False, "error": "Signed login message required"}), 400
+
+        table = _local_wallet_table()
+        if table is None:
+            return jsonify({"success": False, "error": "Storage unavailable"}), 503
+        res = table.select("address,keystore_json").eq("email_hash", email_hash).limit(1).execute()
+        rows = getattr(res, "data", None) or []
+        if not rows or rows[0].get("address", "").lower() != address.lower():
+            return jsonify({"success": False, "error": "Account not found"}), 404
+
+        expected = _build_local_wallet_login_message(address, rows[0]["keystore_json"])
+        if message != expected:
+            return jsonify({"success": False, "error": "Stale login message — retry"}), 400
+        if not _verify_local_wallet_signature(address, message, signature):
+            return jsonify({"success": False, "error": "Signature verification failed"}), 401
+
+        session["wallet"] = address
+        session["verified"] = True
+        session["login_method"] = "local"
+        session.permanent = True
+        try:
+            table.update({"last_login_at": datetime.now(timezone.utc).isoformat()}).eq("email_hash", email_hash).execute()
+        except Exception:
+            pass
+
+        analytics.track_user_session(address)
+        logger.info(f"✅ Local wallet login: hash:{email_hash[:8]}… → {_mask_wallet(address)}")
+        return jsonify({"success": True, "wallet": address, "redirect_to": "/wallet"})
+    except Exception as e:
+        logger.exception("Local wallet login error")
+        return jsonify({"success": False, "error": "Login failed"}), 500
 
 @routes.route("/overview")
 def overview():
