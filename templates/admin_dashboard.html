@@ -822,6 +822,12 @@
                         <span>cUSD Faucet</span>
                     </a>
                 </li>
+                <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('gcash-cashout-section')">
+                        <span class="menu-icon">💸</span>
+                        <span>GCash Cashout</span>
+                    </a>
+                </li>
             </ul>
         </aside>
 
@@ -2805,6 +2811,48 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
+            <!-- GCash Cashout Section -->
+            <section id="gcash-cashout-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">💸 GCash Cashout Requests</h1>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Review and process user GCash cashout requests. 100 G$ = ₱1.00.</p>
+                </div>
+
+                <div style="margin-bottom:1rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                    <select id="gcashStatusFilter" onchange="loadGcashRequests()" style="padding:0.5rem 0.75rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e2e8f0;font-size:0.85rem;">
+                        <option value="">All Status</option>
+                        <option value="pending" selected>Pending</option>
+                        <option value="approved">Approved</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="refunded">Refunded</option>
+                        <option value="refund_failed">Refund Failed</option>
+                    </select>
+                    <button onclick="loadGcashRequests()" class="btn btn-primary" style="padding:0.5rem 1rem;font-size:0.85rem;">
+                        🔄 Refresh
+                    </button>
+                </div>
+
+                <div class="data-table-wrapper" style="overflow-x:auto;">
+                    <table class="data-table" id="gcashTable" style="width:100%;font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Wallet</th>
+                                <th>GCash #</th>
+                                <th>Name</th>
+                                <th>Amount G$</th>
+                                <th>Amount ₱</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="gcashTableBody">
+                            <tr><td colspan="8" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -3015,7 +3063,112 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 case 'daily-voucher':
                     adminLoadVoucherStatus();
                     break;
+                case 'gcash-cashout':
+                    loadGcashRequests();
+                    break;
             }
+        }
+
+        // ── GCash Cashout ──────────────────────────────────────────────
+
+        async function loadGcashRequests() {
+            const tbody = document.getElementById('gcashTableBody');
+            const status = document.getElementById('gcashStatusFilter').value;
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);"><div class="spinner" style="margin:0 auto 0.5rem;"></div>Loading…</td></tr>';
+            try {
+                const url = '/api/gcash/admin/requests' + (status ? '?status=' + status : '');
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!data.success) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#ef4444;">❌ ' + (data.error || 'Failed to load') + '</td></tr>';
+                    return;
+                }
+                const requests = data.requests || [];
+                if (!requests.length) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.4);">No ' + (status || '') + ' requests found.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = requests.map(function(r) {
+                    const date = new Date(r.created_at).toLocaleDateString('en-PH', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+                    const walletShort = r.wallet_address.slice(0,6) + '…' + r.wallet_address.slice(-4);
+                    const gd = Number(r.amount_gd).toLocaleString();
+                    const php = Number(r.amount_php).toLocaleString(undefined, {minimumFractionDigits:2});
+                    const statusColors = {
+                        pending: '#f59e0b', refunding: '#f59e0b',
+                        approved: '#10b981', rejected: '#ef4444',
+                        refunded: '#06b6d4', refund_failed: '#ef4444'
+                    };
+                    const color = statusColors[r.status] || '#888';
+                    const elapsed = _gcashElapsed(r.created_at);
+                    let actions = '';
+                    if (r.status === 'pending') {
+                        actions = '<button onclick="gcashApprove(' + r.id + ')" class="btn" style="background:#10b981;color:#fff;padding:0.3rem 0.6rem;font-size:0.75rem;border:none;border-radius:6px;cursor:pointer;margin-right:0.3rem;">✅ Approve</button>'
+                            + '<button onclick="gcashReject(' + r.id + ')" class="btn" style="background:#ef4444;color:#fff;padding:0.3rem 0.6rem;font-size:0.75rem;border:none;border-radius:6px;cursor:pointer;">❌ Reject</button>';
+                    } else {
+                        actions = '<span style="color:rgba(241,245,249,0.4);font-size:0.75rem;">' + (r.admin_note || r.status) + '</span>';
+                    }
+                    return '<tr style="' + (r.status === 'pending' ? 'background:rgba(245,158,11,0.06);' : '') + '">'
+                        + '<td>' + date + (r.status === 'pending' ? '<br><small style="color:#f59e0b;">' + elapsed + '</small>' : '') + '</td>'
+                        + '<td style="font-family:monospace;font-size:0.75rem;">' + walletShort + '</td>'
+                        + '<td>' + r.gcash_number + '</td>'
+                        + '<td>' + r.gcash_name + '</td>'
+                        + '<td style="font-weight:600;">' + gd + '</td>'
+                        + '<td>₱' + php + '</td>'
+                        + '<td><span style="color:' + color + ';font-weight:600;text-transform:uppercase;font-size:0.72rem;">' + r.status + '</span></td>'
+                        + '<td>' + actions + '</td>'
+                        + '</tr>';
+                }).join('');
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#ef4444;">❌ Network error</td></tr>';
+            }
+        }
+
+        function _gcashElapsed(createdAt) {
+            const diff = Date.now() - new Date(createdAt).getTime();
+            const hours = Math.floor(diff / 3600000);
+            const mins = Math.floor((diff % 3600000) / 60000);
+            if (hours >= 24) return '⚠️ ' + Math.floor(hours/24) + 'd ' + (hours%24) + 'h ago';
+            if (hours > 0) return hours + 'h ' + mins + 'm ago';
+            return mins + 'm ago';
+        }
+
+        async function gcashApprove(id) {
+            if (!confirm('Approve GCash cashout request #' + id + '? Confirm you have sent the GCash payment.')) return;
+            try {
+                const res = await fetch('/api/gcash/admin/requests/' + id + '/approve', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({note: 'Approved by admin'})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                    loadGcashRequests();
+                } else {
+                    alert('❌ ' + (data.error || 'Failed to approve'));
+                }
+            } catch (e) { alert('❌ Network error'); }
+        }
+
+        async function gcashReject(id) {
+            const note = prompt('Reject reason (optional):');
+            if (note === null) return; // cancelled
+            if (!confirm('Reject request #' + id + '? The user\'s G$ will be automatically refunded.')) return;
+            try {
+                const res = await fetch('/api/gcash/admin/requests/' + id + '/reject', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({note: note || 'Rejected by admin'})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                    loadGcashRequests();
+                } else {
+                    alert('❌ ' + (data.error || 'Failed to reject'));
+                    loadGcashRequests(); // refresh anyway — refund may have failed
+                }
+            } catch (e) { alert('❌ Network error'); }
         }
 
         async function loadPriceVisibility() {
