@@ -2851,6 +2851,32 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Approve modal: reference # + receipt screenshot -->
+                <div id="gcashApproveModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;padding:1rem;">
+                    <div style="background:#1e293b;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:1.5rem;max-width:420px;width:100%;">
+                        <h3 style="margin:0 0 0.5rem;color:#f1f5f9;font-size:1.1rem;">✅ Approve GCash Cashout</h3>
+                        <p style="color:rgba(241,245,249,0.6);font-size:0.82rem;margin-bottom:1rem;">
+                            Send the GCash payment first, then enter the reference number and upload the receipt screenshot as proof.
+                        </p>
+                        <input type="hidden" id="gcashApproveId">
+                        <div style="margin-bottom:0.75rem;">
+                            <label style="display:block;color:rgba(241,245,249,0.7);font-size:0.78rem;margin-bottom:0.3rem;">GCash Reference Number *</label>
+                            <input id="gcashApproveRef" type="text" placeholder="e.g. 0123 456 789012" style="width:100%;padding:0.6rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#f1f5f9;font-size:0.9rem;outline:none;box-sizing:border-box;">
+                        </div>
+                        <div style="margin-bottom:0.75rem;">
+                            <label style="display:block;color:rgba(241,245,249,0.7);font-size:0.78rem;margin-bottom:0.3rem;">Receipt Screenshot *</label>
+                            <input id="gcashApproveFile" type="file" accept="image/*" style="width:100%;padding:0.5rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#f1f5f9;font-size:0.82rem;box-sizing:border-box;">
+                        </div>
+                        <div style="margin-bottom:0.75rem;">
+                            <label style="display:block;color:rgba(241,245,249,0.7);font-size:0.78rem;margin-bottom:0.3rem;">Note (optional)</label>
+                            <input id="gcashApproveNote" type="text" placeholder="✅ Successful — GCash payment sent." style="width:100%;padding:0.6rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#f1f5f9;font-size:0.9rem;outline:none;box-sizing:border-box;">
+                        </div>
+                        <div id="gcashApproveError" style="display:none;color:#f87171;font-size:0.8rem;margin-bottom:0.75rem;"></div>
+                        <button id="gcashApproveBtn" onclick="gcashApproveSubmit()" style="width:100%;padding:0.7rem;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem;">✅ Confirm Approval</button>
+                        <button onclick="gcashApproveClose()" style="width:100%;padding:0.6rem;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;font-size:0.85rem;">Cancel</button>
+                    </div>
+                </div>
             </section>
 
         </main>
@@ -3104,6 +3130,12 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     if (r.status === 'pending') {
                         actions = '<button onclick="gcashApprove(' + r.id + ')" class="btn" style="background:#10b981;color:#fff;padding:0.3rem 0.6rem;font-size:0.75rem;border:none;border-radius:6px;cursor:pointer;margin-right:0.3rem;">✅ Approve</button>'
                             + '<button onclick="gcashReject(' + r.id + ')" class="btn" style="background:#ef4444;color:#fff;padding:0.3rem 0.6rem;font-size:0.75rem;border:none;border-radius:6px;cursor:pointer;">❌ Reject</button>';
+                    } else if (r.status === 'approved') {
+                        actions = '<div style="font-size:0.72rem;color:rgba(241,245,249,0.6);">'
+                            + (r.reference_number ? 'Ref: <strong style="color:#e2e8f0;">' + r.reference_number + '</strong><br>' : '')
+                            + (r.receipt_image_url ? '<a href="' + r.receipt_image_url + '" target="_blank" rel="noopener" style="color:#38bdf8;">📷 Receipt ↗</a><br>' : '')
+                            + (r.admin_note || '')
+                            + '</div>';
                     } else {
                         actions = '<span style="color:rgba(241,245,249,0.4);font-size:0.75rem;">' + (r.admin_note || r.status) + '</span>';
                     }
@@ -3132,22 +3164,59 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
             return mins + 'm ago';
         }
 
-        async function gcashApprove(id) {
-            if (!confirm('Approve GCash cashout request #' + id + '? Confirm you have sent the GCash payment.')) return;
+        function gcashApprove(id) {
+            // Open the approve form (reference # + receipt screenshot required).
+            document.getElementById('gcashApproveId').value = id;
+            document.getElementById('gcashApproveRef').value = '';
+            document.getElementById('gcashApproveNote').value = '';
+            document.getElementById('gcashApproveFile').value = '';
+            document.getElementById('gcashApproveError').style.display = 'none';
+            document.getElementById('gcashApproveModal').style.display = 'flex';
+        }
+
+        function gcashApproveClose() {
+            document.getElementById('gcashApproveModal').style.display = 'none';
+        }
+
+        async function gcashApproveSubmit() {
+            const id = document.getElementById('gcashApproveId').value;
+            const ref = document.getElementById('gcashApproveRef').value.trim();
+            const note = document.getElementById('gcashApproveNote').value.trim();
+            const fileInput = document.getElementById('gcashApproveFile');
+            const errEl = document.getElementById('gcashApproveError');
+            const btn = document.getElementById('gcashApproveBtn');
+
+            errEl.style.display = 'none';
+            if (!ref) { errEl.textContent = 'GCash reference number is required.'; errEl.style.display = 'block'; return; }
+            if (!fileInput.files || !fileInput.files[0]) { errEl.textContent = 'Receipt screenshot is required as proof of payment.'; errEl.style.display = 'block'; return; }
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Uploading…';
             try {
+                const fd = new FormData();
+                fd.append('reference_number', ref);
+                fd.append('note', note);
+                fd.append('receipt_image', fileInput.files[0]);
                 const res = await fetch('/api/gcash/admin/requests/' + id + '/approve', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({note: 'Approved by admin'})
+                    body: fd
                 });
                 const data = await res.json();
                 if (data.success) {
+                    gcashApproveClose();
                     alert('✅ ' + data.message);
                     loadGcashRequests();
                 } else {
-                    alert('❌ ' + (data.error || 'Failed to approve'));
+                    errEl.textContent = data.error || 'Failed to approve';
+                    errEl.style.display = 'block';
                 }
-            } catch (e) { alert('❌ Network error'); }
+            } catch (e) {
+                errEl.textContent = 'Network error. Please try again.';
+                errEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '✅ Confirm Approval';
+            }
         }
 
         async function gcashReject(id) {
