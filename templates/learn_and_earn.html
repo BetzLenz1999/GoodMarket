@@ -1957,6 +1957,11 @@
          users that logged in via WalletConnect (no `window.ethereum`). -->
     <script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <!-- ethers + GMLocalWallet: local self-custodial accounts (login_method
+         'local') sign in-app via the PIN-decrypted browser wallet. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script>
         if (typeof GMWalletConnect !== "undefined") {
             GMWalletConnect.configure({
@@ -1977,6 +1982,25 @@
             } catch (_) {
                 return null;
             }
+        }
+        // Local self-custodial accounts sign with the browser-generated wallet
+        // decrypted via PIN — never with an injected MetaMask/extension, which
+        // is a different account entirely.
+        function _learnIsLocalLogin() {
+            return "{{ login_method }}".toLowerCase() === "local" && typeof GMLocalWallet !== "undefined";
+        }
+        // Resolves the signing provider for local logins (prompting the PIN
+        // unlock modal when needed). Returns null for all other login methods.
+        async function _learnGetLocalProvider() {
+            if (!_learnIsLocalLogin()) return null;
+            if (!GMLocalWallet.isUnlocked()) {
+                if (typeof window._lwOpenUnlockModal === "function") {
+                    await window._lwOpenUnlockModal();
+                } else {
+                    throw new Error("Please unlock your wallet. Reload the page and log in again.");
+                }
+            }
+            return GMLocalWallet.getProvider();
         }
     </script>
 
@@ -3534,8 +3558,9 @@ document.addEventListener('DOMContentLoaded', function() {
             swAllowTestAmount = false;
             swStopScan();
 
-            // Detect DApp browser (injected wallet)
-            swIsDappBrowser = !!_vGetEthProvider();
+            // Detect DApp browser (injected wallet). Local in-app wallets can
+            // also sign (PIN prompt), so count them as a wallet-capable context.
+            swIsDappBrowser = !!_vGetEthProvider() || _learnIsLocalLogin();
             var dappAmountWrap = document.getElementById('sw-dapp-amount-wrap');
             if (dappAmountWrap) dappAmountWrap.style.display = swIsDappBrowser ? 'block' : 'none';
 
@@ -3726,7 +3751,20 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         async function swSendViaWallet(amountG) {
-            var provider = await _vAwaitEthProvider(1200);
+            // Local in-app wallets sign via GMLocalWallet (PIN prompt) — never
+            // route them to an injected MetaMask on a different account.
+            var provider = null;
+            if (_learnIsLocalLogin()) {
+                try {
+                    provider = await _learnGetLocalProvider();
+                } catch (e) {
+                    alert((e && e.message) ? e.message : 'Please unlock your wallet to continue.');
+                    return;
+                }
+            }
+            if (!provider) {
+                provider = await _vAwaitEthProvider(1200);
+            }
             if (!provider) {
                 provider = _learnGetWcProviderIfPreferred();
             }
@@ -5064,6 +5102,29 @@ document.addEventListener('DOMContentLoaded', function() {
             const _buyIsWcLogin = (typeof GMWalletConnect !== 'undefined' && typeof GMWalletConnect.prefersWcSigning === 'function')
                 ? GMWalletConnect.prefersWcSigning()
                 : ['walletconnect', 'manual', 'manual_address'].includes((BUY_LOGIN_METHOD || '').toLowerCase());
+
+            // ── Local in-app wallet → sign directly with GMLocalWallet ────────
+            // Never fall through to an injected MetaMask/extension — that is a
+            // different account than the logged-in GoodMarket wallet.
+            if (_learnIsLocalLogin()) {
+                _buyModalShowStep('processing');
+                const procMsgLocal = document.getElementById('nft-buy-processing-msg');
+                try {
+                    if (procMsgLocal) procMsgLocal.textContent = 'Unlock your GoodMarket wallet…';
+                    const localProvider = await _learnGetLocalProvider();
+                    const accounts = await localProvider.request({ method: 'eth_requestAccounts' });
+                    const buyerAddress = (accounts && accounts[0]) || '';
+                    if (!buyerAddress) throw new Error('No wallet account found. Please unlock your wallet.');
+                    if (BUY_WALLET_ADDRESS && buyerAddress.toLowerCase() !== BUY_WALLET_ADDRESS.toLowerCase()) {
+                        throw new Error('Wrong wallet unlocked. Please use your GoodMarket wallet.');
+                    }
+                    if (procMsgLocal) procMsgLocal.textContent = ESCROW_ENABLED ? 'Please approve G$ spending in your wallet…' : 'Please confirm sending G$ to seller in your wallet…';
+                    await _executeBuyWithProvider(localProvider, buyerAddress);
+                } catch (e) {
+                    _buyHandleError(e);
+                }
+                return;
+            }
 
             // ── DApp browser detected → direct ethereum flow ──────────────────
             if (window.ethereum && !_buyIsWcLogin) {
