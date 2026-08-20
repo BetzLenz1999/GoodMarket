@@ -7614,6 +7614,25 @@
         }
 
         window._fvGenerateLink = async function(address) {
+            // Local self-custodial wallets: unlock via PIN modal first, then sign
+            // with the browser wallet (not an injected provider).
+            if ((LOGIN_METHOD || '').toLowerCase() === 'local'
+                && typeof GMLocalWallet !== 'undefined') {
+                if (!GMLocalWallet.isUnlocked()) {
+                    if (typeof window._lwOpenUnlockModal === 'function') {
+                        await window._lwOpenUnlockModal();
+                    } else {
+                        throw new Error('Please unlock your wallet to continue.');
+                    }
+                }
+                const provider = GMLocalWallet.getProvider();
+                const msg = FV_IDENTIFIER_MSG2.replace('<account>', address);
+                const sig = await provider.request({
+                    method: 'personal_sign',
+                    params: [ethers.hexlify(ethers.toUtf8Bytes(msg)), address]
+                });
+                return buildFVLink(address, sig);
+            }
             const sig = window.useServerSigning
                 ? await signServerSide(address)
                 : (PREFER_WC_SIGNING
