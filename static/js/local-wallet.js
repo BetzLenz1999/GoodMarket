@@ -291,19 +291,91 @@
     // ── Inline unlock prompt (for pages without a modal markup) ──────────
     // wallet.html has its own richer modal; savings/reloadly/swap call
     // _lwOpenUnlockModal which renders a minimal inline prompt.
+    // ── Shared unlock modal ─────────────────────────────────────────────
+    // Injects a styled modal into the page (no page-specific HTML needed).
+    // Returns a Promise that resolves when unlocked, rejects on cancel/error.
+    let _lwModalInjected = false;
+
+    function _lwInjectModal() {
+        if (_lwModalInjected) return;
+        _lwModalInjected = true;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'lwUnlockModalOverlay';
+        overlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;align-items:center;justify-content:center;padding:1rem;';
+        overlay.innerHTML = `
+            <div style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:1.5rem;max-width:320px;width:100%;text-align:center;">
+                <div style="font-size:1.5rem;margin-bottom:0.5rem">🔒</div>
+                <h3 style="margin:0 0 0.5rem;color:#fff;font-size:1.1rem">Unlock Your Wallet</h3>
+                <p style="color:#aaa;font-size:0.8rem;margin-bottom:1rem">Enter your 6-digit PIN to continue</p>
+                <input type="password" id="lwModalPin" inputmode="numeric" maxlength="6" placeholder="••••••"
+                    style="width:100%;padding:0.8rem;text-align:center;font-size:1.3rem;letter-spacing:0.4rem;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;outline:none;margin-bottom:0.8rem;">
+                <div id="lwModalError" style="display:none;color:#f87171;font-size:0.75rem;margin-bottom:0.8rem"></div>
+                <button id="lwModalSubmit" style="width:100%;padding:0.75rem;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem">Unlock</button>
+                <button id="lwModalCancel" style="width:100%;padding:0.6rem;background:transparent;color:#888;border:1px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;font-size:0.85rem">Cancel</button>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const pinInput = overlay.querySelector('#lwModalPin');
+        const errorEl = overlay.querySelector('#lwModalError');
+        const submitBtn = overlay.querySelector('#lwModalSubmit');
+        const cancelBtn = overlay.querySelector('#lwModalCancel');
+
+        let resolveFn, rejectFn;
+
+        function close() {
+            overlay.style.display = 'none';
+            pinInput.value = '';
+            errorEl.style.display = 'none';
+        }
+
+        function showError(msg) {
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+        }
+
+        submitBtn.onclick = async function () {
+            const pin = pinInput.value.trim();
+            if (!/^\d{6}$/.test(pin)) { showError('PIN must be exactly 6 digits.'); return; }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Unlocking…';
+            try {
+                const saved = getLocalKeystore();
+                if (!saved || !saved.keystore) throw new Error('No saved wallet on this device.');
+                await unlockWithKeystore(saved.keystore, pin);
+                close();
+                if (resolveFn) resolveFn();
+            } catch (err) {
+                showError(/password|decrypt|mac/i.test(err && err.message) ? 'Wrong PIN.' : 'Unlock failed.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Unlock';
+            }
+        };
+
+        cancelBtn.onclick = function () {
+            close();
+            if (rejectFn) rejectFn(new Error('Unlock cancelled.'));
+        };
+
+        pinInput.onkeydown = function (e) {
+            if (e.key === 'Enter') submitBtn.click();
+        };
+
+        window._lwModalShow = function () {
+            return new Promise(function (resolve, reject) {
+                resolveFn = resolve;
+                rejectFn = reject;
+                overlay.style.display = 'flex';
+                setTimeout(() => pinInput.focus(), 100);
+            });
+        };
+    }
+
     window._lwOpenUnlockModal = function () {
-        return new Promise(function (resolve, reject) {
-            const pin = prompt('Enter your 6-digit wallet PIN to continue:');
-            if (pin === null) { reject(new Error('Unlock cancelled.')); return; }
-            if (!/^\d{6}$/.test(pin)) { reject(new Error('PIN must be exactly 6 digits.')); return; }
-            const saved = getLocalKeystore();
-            if (!saved || !saved.keystore) { reject(new Error('No saved wallet on this device.')); return; }
-            unlockWithKeystore(saved.keystore, pin)
-                .then(resolve)
-                .catch(function (err) {
-                    reject(new Error(/password|decrypt|mac/i.test(err && err.message) ? 'Wrong PIN.' : 'Unlock failed.'));
-                });
-        });
+        _lwInjectModal();
+        return window._lwModalShow();
     };
 
     // ── Login helper (signature proof for the backend) ──────────────────
