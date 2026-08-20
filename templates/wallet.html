@@ -1063,6 +1063,30 @@
             overflow-y: auto;
             animation: slideUp 0.3s ease;
         }
+        /* Tall modal forms (e.g. GCash cashout) push their submit button past
+           the fold on mobile browsers — the sheet scrolls but users don't
+           realize it, so the form feels "unsubmittable". Pin the footer
+           buttons to the bottom of the visible sheet instead. */
+        .modal-sheet .modal-sheet-footer {
+            position: sticky;
+            bottom: -2.5rem; /* cancel the sheet's bottom padding */
+            margin: 1rem -1.5rem -2.5rem;
+            padding: 0.75rem 1.5rem calc(1.25rem + env(safe-area-inset-bottom, 0px));
+            background: #0d1424;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            z-index: 5;
+        }
+        .modal-sheet .modal-sheet-footer .btn-primary,
+        .modal-sheet .modal-sheet-footer .btn-secondary { margin-top: 0.5rem; }
+        /* Keep the sheet's sticky footer above the bottom nav (≈66px tall) —
+           at 90vh the footer can slide under the nav on short viewports. */
+        @media (max-width: 640px) {
+            .modal-sheet { max-height: calc(100dvh - 76px); }
+        }
+        /* The floating GoodMarket Agent launcher (z-index 9999) outranks the
+           modal overlay (200) and lands right on top of the submit button.
+           Hide it while any bottom-sheet modal is open. */
+        body.gm-modal-open .gm-ai-agent { display: none; }
         @keyframes slideUp {
             from { transform: translateY(100%); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
@@ -1823,9 +1847,12 @@
             width: 100%;
             max-width: 480px;
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 0.2rem;
-            padding: 0.5rem 0.6rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+            /* 5 items (Earn / Wallet / Services / News / GCash): a 4-column
+               grid wraps the 5th onto a second row, where it lands under the
+               floating GoodMarket Agent chatbox and becomes untappable. */
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.15rem;
+            padding: 0.5rem 0.4rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
             background: rgba(9,12,28,0.96);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
@@ -1853,9 +1880,9 @@
             color: #fff;
             box-shadow: inset 0 0 0 1px rgba(var(--gold-rgb),0.22);
         }
-        .bn-icon { font-size: 1.25rem; line-height: 1; }
+        .bn-icon { font-size: 1.15rem; line-height: 1; }
         .bn-label {
-            font-size: 0.63rem;
+            font-size: 0.58rem;
             font-weight: 700;
             text-align: center;
             line-height: 1.1;
@@ -2575,18 +2602,21 @@
                 Your balance: <strong id="gcashBalance">—</strong> G$
             </div>
 
-            <button class="btn-primary" id="gcashSubmitBtn" onclick="submitGcashCashout()" style="background:linear-gradient(135deg,#007DFE,#0056b3);">
-                Submit Cashout Request
-            </button>
-            <div class="alert" id="gcashAlert"></div>
-
             <!-- Transaction history inside the modal -->
             <div id="gcashHistorySection" style="margin-top:1.25rem;display:none;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Your Cashout History</div>
                 <div id="gcashHistoryList" style="max-height:200px;overflow-y:auto;"></div>
             </div>
 
-            <button class="btn-secondary" onclick="closeModal('gcashModal')">Close</button>
+            <!-- Sticky footer: keeps the submit button visible above the fold
+                 on mobile browsers even when the form fills the sheet. -->
+            <div class="modal-sheet-footer">
+                <button class="btn-primary" id="gcashSubmitBtn" onclick="submitGcashCashout()" style="background:linear-gradient(135deg,#007DFE,#0056b3);">
+                    Submit Cashout Request
+                </button>
+                <div class="alert" id="gcashAlert"></div>
+                <button class="btn-secondary" onclick="closeModal('gcashModal')">Close</button>
+            </div>
         </div>
     </div>
 
@@ -4149,6 +4179,10 @@
     function openModal(id) {
         document.getElementById(id).classList.add('open');
         document.body.style.overflow = 'hidden';
+        // Hide the floating GoodMarket Agent launcher while a modal is open —
+        // it outranks the modal overlay (z-index 9999 > 200) and covers the
+        // GCash submit button on mobile.
+        document.body.classList.add('gm-modal-open');
         if (id === 'settingsModal') {
             // Refresh FV status each time Settings opens so the user sees fresh data.
             loadFvStatus(true);
@@ -4161,6 +4195,9 @@
     function closeModal(id) {
         document.getElementById(id).classList.remove('open');
         document.body.style.overflow = '';
+        if (!document.querySelector('.modal-overlay.open')) {
+            document.body.classList.remove('gm-modal-open');
+        }
     }
     document.querySelectorAll('.modal-overlay').forEach(el => {
         el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
