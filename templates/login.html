@@ -427,11 +427,6 @@
                     We'll create a new Celo wallet for you instantly — no app or seed phrase needed to get started.
                 </div>
 
-                <div style="margin-bottom:14px;">
-                    <input type="text" id="create-referral-code" placeholder="Referral code (optional)"
-                           style="width:100%; padding:14px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:12px; color:white; font-size:0.95rem; box-sizing:border-box; text-transform:uppercase;">
-                </div>
-
                 <button class="verify-btn" onclick="createInAppWallet()" style="background:linear-gradient(135deg,#059669,#047857);">
                     <span class="btn-text-create">🆕 Create My Wallet</span>
                     <span class="btn-loader-create" style="display:none; align-items:center; justify-content:center; gap:8px;">
@@ -467,8 +462,6 @@
     </div>
 
     <script>
-        let referralCode = null;
-
         function showLoginOptions() {
             document.getElementById('loginOptions').style.display = 'block';
             document.getElementById('panelCreate').style.display = 'none';
@@ -507,37 +500,8 @@
         }
 
         async function init() {
-            // Check for referral code in URL
-            const urlParams = new URLSearchParams(window.location.search);
-            referralCode = urlParams.get('ref');
-
-            if (referralCode) {
-                console.log('Referral code detected:', referralCode);
-
-                ['create-referral-code'].forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el && !el.value.trim()) el.value = referralCode.toUpperCase();
-                });
-
-                const referralNotification = document.createElement('div');
-                referralNotification.style.cssText = `
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    color: white;
-                    padding: 15px;
-                    text-align: center;
-                    border-radius: 10px;
-                    margin-bottom: 20px;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                `;
-                referralNotification.innerHTML = `
-                    🎁 <strong>Referral Bonus!</strong><br>
-                    You were referred with code: <strong>${referralCode}</strong><br>
-                    Complete verification to earn bonus rewards!
-                `;
-
-                const loginContainer = document.querySelector('.login-container');
-                loginContainer.insertBefore(referralNotification, loginContainer.firstChild);
-            }
+            // Referral codes are only collected on the homepage local-wallet
+            // (email + PIN) create-account form — not on this page.
         }
 
         // Analytics tracking function
@@ -732,29 +696,6 @@
         // Initialize web3 on page load
         init();
 
-        // Login form event listener and referral code handling
-        document.addEventListener('DOMContentLoaded', function() {
-            const loginForm = document.getElementById('login-form');
-            const walletInput = document.getElementById('wallet');
-            const referralCodeInput = document.getElementById('referral-code');
-            // Referral code validation removedferral code! You\'ll earn 100 G$ bonus!';
-                        referralMessage.style.color = '#10b981'; // Green
-                    } else {
-                        referralMessage.innerHTML = '❌ Invalid referral code';
-                        referralMessage.style.color = '#ef4444'; // Red
-                    }
-                } catch (error) {
-                    console.error('Error validating referral code:', error);
-                    referralMessage.textContent = 'Error validating code. Please try again later.';
-                    referralMessage.style.color = '#ef4444'; // Red
-                }
-            }
-
-            // Event listener for the verify button (since there's no form with id 'login-form')
-            if (verifyBtn) {
-                verifyBtn.addEventListener('click', verifyLogin);
-            }
-        });
     </script>
 </body>
 </html>
