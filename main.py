@@ -694,6 +694,25 @@ try:
 except Exception as e:
     logger.error(f"❌ Reloadly refund retry scheduler initialization failed: {e}")
 
+# GCash Cashout — user cashout requests + auto-refund after 24h if unreviewed.
+try:
+    from gcash import init_gcash
+    if init_gcash(app):
+        logger.info("✅ GCash Cashout initialized")
+    else:
+        logger.warning("⚠️ GCash Cashout initialization failed")
+except Exception as e:
+    logger.error(f"❌ GCash Cashout initialization failed: {e}")
+
+try:
+    from gcash.refund_retry import init_gcash_refund_scheduler
+    if init_gcash_refund_scheduler(app):
+        logger.info("✅ GCash auto-refund scheduler started")
+    else:
+        logger.info("ℹ️ GCash auto-refund scheduler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ GCash auto-refund scheduler initialization failed: {e}")
+
 # Initialize Jumble Words System
 logger.info("🔤 Initializing Jumble Words system...")
 from jumble import init_jumble
