@@ -2426,6 +2426,28 @@
     </div>
 
 
+    <!-- Local Wallet Unlock Modal -->
+    <div class="modal-overlay" id="lwUnlockModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">🔒 Unlock Your Wallet</div>
+            <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:1rem;text-align:center">
+                Enter your 6-digit PIN to continue. Your wallet locks automatically after 15 minutes for security.
+            </p>
+            <div style="margin-bottom:1rem">
+                <input type="password" id="lwUnlockPin" inputmode="numeric" maxlength="6"
+                    placeholder="••••••" autocomplete="off"
+                    style="width:100%;padding:0.8rem 1rem;text-align:center;font-size:1.4rem;letter-spacing:0.5rem;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;outline:none"
+                    onkeydown="if(event.key==='Enter')_lwUnlockSubmit()">
+            </div>
+            <div id="lwUnlockError" style="display:none;color:var(--red);font-size:0.8rem;margin-bottom:0.8rem;text-align:center"></div>
+            <button id="lwUnlockBtn" onclick="_lwUnlockSubmit()" class="btn-primary">
+                Unlock & Continue
+            </button>
+            <button class="btn-secondary" onclick="_lwUnlockCancel()" style="margin-top:0.5rem">Cancel</button>
+        </div>
+    </div>
+
     <!-- Savings Popup Modal -->
     <div class="modal-overlay" id="savingsPopupModal" aria-hidden="true">
         <div class="modal-sheet savings-popup-sheet">
@@ -2734,6 +2756,7 @@
     <script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
     <!-- Shared WalletConnect bridge (claim / send / FV signing fallback for WC users). -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <!--
         MiniPay gas top-up: detect users with CELO but no stablecoin and
         auto-prompt a CELO -> cUSD swap before tx-bound actions (claim, etc.)
@@ -3384,6 +3407,13 @@
             console.log('[getClaimSigner] WC session invalid or expired, falling back to injected');
         }
         
+        // Local self-custodial accounts (login_method === 'local') sign with
+        // the browser-generated wallet decrypted via PIN.
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+            console.log('[getClaimSigner] Using local wallet provider');
+            return GMLocalWallet.getProvider();
+        }
+
         if (IS_PRIVY_LOGIN) {
             const privyProvider = await _walletGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
             if (privyProvider) {
@@ -4590,6 +4620,13 @@
 
     async function doSend() {
         clearAlert('sendAlert');
+        // Local wallets: prompt for PIN if the wallet has auto-locked.
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined' && !GMLocalWallet.isUnlocked()) {
+            await _lwUnlockIfNeeded().catch(function (e) {
+                if (e.message !== 'Unlock cancelled.') clearAlert('sendAlert');
+                return Promise.reject(e);
+            });
+        }
         const toAddrRaw = document.getElementById('sendTo').value.trim();
         const amount = document.getElementById('sendAmount').value.trim().replace(/,/g, '');
         const btn = document.getElementById('sendBtn');
@@ -7206,6 +7243,67 @@
             }
         }
 
+        // ── Local-wallet unlock helpers ──────────────────────────────────
+        // The browser wallet auto-locks after 15 min. Any tx action (claim,
+        // send, etc.) calls _lwUnlockIfNeeded() first, which opens a PIN
+        // prompt and resumes after unlock.
+        function _lwIsNeeded() {
+            return (LOGIN_METHOD || '').toLowerCase() === 'local'
+                && typeof GMLocalWallet !== 'undefined'
+                && !GMLocalWallet.isUnlocked();
+        }
+
+        function _lwUnlockIfNeeded() {
+            if (!_lwIsNeeded()) return Promise.resolve();
+            return new Promise(function (resolve, reject) {
+                window._lwUnlockResolve = resolve;
+                window._lwUnlockReject = reject;
+                const modal = document.getElementById('lwUnlockModal');
+                const pinInput = document.getElementById('lwUnlockPin');
+                const errEl = document.getElementById('lwUnlockError');
+                if (errEl) errEl.style.display = 'none';
+                if (pinInput) pinInput.value = '';
+                if (modal) modal.classList.add('open');
+                setTimeout(function () { if (pinInput) pinInput.focus(); }, 100);
+            });
+        }
+
+        window._lwUnlockSubmit = async function () {
+            const pinInput = document.getElementById('lwUnlockPin');
+            const errEl = document.getElementById('lwUnlockError');
+            const unlockBtn = document.getElementById('lwUnlockBtn');
+            const pin = pinInput ? pinInput.value.trim() : '';
+            if (!/^\d{6}$/.test(pin)) {
+                if (errEl) { errEl.textContent = 'PIN must be exactly 6 digits.'; errEl.style.display = 'block'; }
+                return;
+            }
+            if (unlockBtn) { unlockBtn.disabled = true; unlockBtn.textContent = 'Unlocking…'; }
+            try {
+                const saved = GMLocalWallet.getLocalKeystore();
+                if (!saved || !saved.keystore) throw new Error('No saved wallet found on this device. Please log in again.');
+                if ((saved.address || '').toLowerCase() !== WALLET.toLowerCase()) {
+                    throw new Error('Saved wallet does not match this account. Please log in again.');
+                }
+                await GMLocalWallet.unlockWithKeystore(saved.keystore, pin);
+                if (window._lwUnlockResolve) { window._lwUnlockResolve(); window._lwUnlockResolve = null; window._lwUnlockReject = null; }
+                document.getElementById('lwUnlockModal').classList.remove('open');
+            } catch (err) {
+                if (errEl) {
+                    errEl.textContent = (err && err.message && /password|decrypt|mac/i.test(err.message))
+                        ? 'Wrong PIN. Try again.' : (err.message || 'Unlock failed.');
+                    errEl.style.display = 'block';
+                }
+            } finally {
+                if (unlockBtn) { unlockBtn.disabled = false; unlockBtn.textContent = 'Unlock & Continue'; }
+                if (pinInput) pinInput.value = '';
+            }
+        };
+
+        window._lwUnlockCancel = function () {
+            document.getElementById('lwUnlockModal').classList.remove('open');
+            if (window._lwUnlockReject) { window._lwUnlockReject(new Error('Unlock cancelled.')); window._lwUnlockResolve = null; window._lwUnlockReject = null; }
+        };
+
         window.doUbiClaim = async function() {
             if (btn.disabled) return;
             recommendedClaimNetwork = pickRecommendedClaimNetwork() || recommendedClaimNetwork;
@@ -7223,6 +7321,13 @@
             // MiniPay CIP-64 fee abstraction will handle stablecoin gas payment.
             console.log('[v0] doUbiClaim: Attempting direct claim (GoodDapp-style, no threshold check)');
 
+            // Local wallets: prompt for PIN if the wallet has auto-locked.
+            try {
+                await _lwUnlockIfNeeded();
+            } catch (unlockErr) {
+                if (unlockErr.message !== 'Unlock cancelled.') setStatus(unlockErr.message, 'var(--red)');
+                return;
+            }
 
             if (!window.useServerSigning) {
                 // GoodDapp-style: No pre-flight balance check.
