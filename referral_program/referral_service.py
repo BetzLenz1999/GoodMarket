@@ -1182,6 +1182,56 @@ class ReferralService:
     # PHASE 2: Auto-trigger referral after verification/UBI claim
     # =========================================================================
 
+    def auto_disburse_pending_referral(self, referee_wallet: str, source: str = "auto") -> dict:
+        """CAS-claim any pending referral for this referee and disburse it.
+
+        Single entry point for every automatic trigger (fv-callback,
+        verify-identity, verify-ubi, claim confirm, background reconciler).
+        The claim is atomic, so concurrent triggers can never double-disburse;
+        the duplicate checks inside process_referral_disbursement are the
+        second layer of protection.
+        """
+        if not referee_wallet:
+            return {"success": False, "reason": "no_wallet"}
+        try:
+            claimed = self.claim_pending_referral_for_disbursement(referee_wallet)
+            if not claimed.get('claimed'):
+                logger.info(f"ℹ️ [{source}] No claimable pending referral for {referee_wallet[:8]}...")
+                return {"success": False, "reason": "no_pending_referral"}
+            referral_row = claimed.get('referral', {})
+            referrer_wallet = referral_row.get('referrer_wallet')
+            ref_code = referral_row.get('referral_code')
+            if not referrer_wallet or not ref_code:
+                logger.warning(f"⚠️ [{source}] Claimed referral missing data for {referee_wallet[:8]}...")
+                return {"success": False, "reason": "incomplete_referral_row"}
+            logger.info(f"🎁 [{source}] Auto-disbursing referral {ref_code} for {referee_wallet[:8]}...")
+            result = self.process_referral_disbursement(
+                referrer_wallet=referrer_wallet,
+                referee_wallet=referee_wallet,
+                referral_code=ref_code,
+                referral_id=referral_row.get('id'),
+            )
+            return {
+                "success": result.get('success', False),
+                "already_disbursed": result.get('already_disbursed', False),
+                "pending": result.get('pending', False),
+                "referral_code": ref_code,
+                "source": source,
+                "result": result,
+            }
+        except Exception as e:
+            logger.warning(f"⚠️ [{source}] Auto referral disbursement error for {referee_wallet[:8]}...: {e}")
+            return {"success": False, "reason": "error", "error": str(e)}
+
+    def auto_disburse_pending_referral_async(self, referee_wallet: str, source: str = "auto") -> None:
+        """Fire-and-forget variant for latency-sensitive request paths."""
+        import threading
+        threading.Thread(
+            target=self.auto_disburse_pending_referral,
+            args=(referee_wallet, source),
+            daemon=True,
+        ).start()
+
     def verify_and_disburse_referral(self, wallet_address: str, referral_code: str = None) -> dict:
         """
         PHASE 2 FIX: Called after user completes any verification action 
@@ -1249,6 +1299,26 @@ class ReferralService:
             referrer_wallet = referral.get('referrer_wallet')
 
         logger.info(f"🔔 Triggering referral disbursement for {wallet_address[:8]}... (code: {referral_code})")
+
+        # Atomically claim the row before the verification checks. Without this,
+        # two concurrent reconcilers (multi-worker gunicorn / scheduler vs manual
+        # endpoint) could both pass the duplicate check and send the rewards
+        # twice. If the referee turns out NOT verified, the claim is released
+        # back to 'pending_face_verification' below.
+        claim = self.claim_pending_referral_for_disbursement(
+            wallet_address,
+            referral.get('id'),
+            allowed_statuses=['pending_face_verification', 'pending_disbursed'],
+        )
+        if not claim.get('claimed'):
+            logger.info(f"ℹ️ Referral for {wallet_address[:8]}... already claimed by another process")
+            return {"success": False, "reason": "already_claimed", "referral_code": referral_code}
+
+        def _release_claim(reason):
+            self.update_referral_status(
+                wallet_address, 'pending_face_verification', reason,
+                referral_id=referral.get('id')
+            )
 
         # Step 1: Check verification status - SIMPLE logic
         user = _safe(
@@ -1335,6 +1405,9 @@ class ReferralService:
             }
         else:
             logger.info(f"❌ User {wallet_address[:8]} not verified yet - reason: {verification_reason}")
+            # Referee is not verified — release the claim so the next trigger
+            # (fv-callback / claim confirm / reconciler) can pick it up again.
+            _release_claim(f"Referee not verified yet ({verification_reason})")
             return {
                 "success": False,
                 "reason": "user_not_verified",
