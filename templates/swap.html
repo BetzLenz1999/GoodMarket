@@ -3351,10 +3351,12 @@
             const needed = (LOGIN_METHOD || '').toLowerCase() === 'local'
                 && typeof GMLocalWallet !== 'undefined'
                 && !GMLocalWallet.isUnlocked();
-            if (!needed) return Promise.resolve();
-            return window._lwOpenUnlockModal
-                ? window._lwOpenUnlockModal()
-                : Promise.reject(new Error('Please unlock your wallet. Reload the page and log in again.'));
+            if (!needed) return;
+            if (typeof window._lwOpenUnlockModal === 'function') {
+                await window._lwOpenUnlockModal();
+            } else {
+                throw new Error('Please unlock your wallet. Reload the page and log in again.');
+            }
         }
 
         async function startSwap() {
