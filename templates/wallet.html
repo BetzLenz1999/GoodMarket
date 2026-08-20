@@ -2537,6 +2537,59 @@
         </div>
     </div>
 
+    <!-- GCash Cashout Modal -->
+    <div class="modal-overlay" id="gcashModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">💸 GCash Cashout</div>
+
+            <div style="background:rgba(0,125,254,0.08);border:1px solid rgba(0,125,254,0.2);border-radius:10px;padding:0.75rem 0.9rem;margin-bottom:1rem;font-size:0.82rem;line-height:1.6;">
+                <div style="font-weight:600;color:#007DFE;margin-bottom:0.35rem;">🇵🇭 For Philippines users only</div>
+                <div style="color:var(--text-dim);">
+                    • <strong>100 G$ = ₱1.00 PHP</strong><br>
+                    • Minimum cashout: <strong>5,000 G$</strong> (₱50.00)<br>
+                    • Processing time: <strong>1–24 hours</strong> (manual review)<br>
+                    • If not reviewed within 24 hours, your G$ is <strong>automatically refunded</strong>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Amount (G$)</label>
+                <input class="form-input" id="gcashAmount" type="text" inputmode="decimal" placeholder="5,000" autocomplete="off"
+                       oninput="_gcashUpdatePhp()">
+                <div id="gcashPhpPreview" style="font-size:0.78rem;color:#007DFE;margin-top:0.3rem;font-weight:600;"></div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">GCash Mobile Number</label>
+                <input class="form-input" id="gcashNumber" type="tel" inputmode="numeric" maxlength="11" placeholder="09651234567" autocomplete="off">
+                <div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.25rem;">11 digits, starts with 09</div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Full Name (as registered on GCash)</label>
+                <input class="form-input" id="gcashName" type="text" placeholder="Juan Dela Cruz" autocomplete="off">
+            </div>
+
+            <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:0.75rem;">
+                Your balance: <strong id="gcashBalance">—</strong> G$
+            </div>
+
+            <button class="btn-primary" id="gcashSubmitBtn" onclick="submitGcashCashout()" style="background:linear-gradient(135deg,#007DFE,#0056b3);">
+                Submit Cashout Request
+            </button>
+            <div class="alert" id="gcashAlert"></div>
+
+            <!-- Transaction history inside the modal -->
+            <div id="gcashHistorySection" style="margin-top:1.25rem;display:none;">
+                <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.05em;">Your Cashout History</div>
+                <div id="gcashHistoryList" style="max-height:200px;overflow-y:auto;"></div>
+            </div>
+
+            <button class="btn-secondary" onclick="closeModal('gcashModal')">Close</button>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settingsModal">
         <div class="modal-sheet">
@@ -2958,6 +3011,21 @@
     }
 
     async function getRaffleSignerProvider() {
+        // Local self-custodial accounts sign with the in-app browser wallet —
+        // never with an injected MetaMask/extension (a different account).
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+            if (!GMLocalWallet.isUnlocked() && typeof _lwUnlockIfNeeded === 'function') {
+                await _lwUnlockIfNeeded();
+            }
+            const localProvider = GMLocalWallet.getProvider();
+            const browserProvider = new ethers.BrowserProvider(localProvider);
+            const signer = await browserProvider.getSigner();
+            const signerAddress = await signer.getAddress();
+            if (signerAddress.toLowerCase() !== WALLET.toLowerCase()) {
+                throw new Error('Wrong wallet unlocked. Please use your GoodMarket wallet.');
+            }
+            return { provider: browserProvider, signer };
+        }
         const ep = await _vAwaitEthProvider();
         if (!ep) throw new Error('No Web3 wallet detected. Open this page in MiniPay, Privy, or WalletConnect.');
         const chainHex = await ep.request({ method: 'eth_chainId' });
@@ -4085,6 +4153,10 @@
             // Refresh FV status each time Settings opens so the user sees fresh data.
             loadFvStatus(true);
         }
+        if (id === 'gcashModal') {
+            _gcashLoadBalance();
+            _gcashLoadHistory();
+        }
     }
     function closeModal(id) {
         document.getElementById(id).classList.remove('open');
@@ -4633,6 +4705,13 @@
         const meta = getSelectedTokenMeta();
         const isXdcToken = meta.network === 'xdc';
         const isFuseToken = meta.network === 'fuse';
+        const isLocalLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
+        // The in-app wallet signs Celo transactions only — stop before an
+        // injected MetaMask (a different account) gets prompted for XDC/FUSE.
+        if (isLocalLogin && (isXdcToken || isFuseToken)) {
+            showAlert('sendAlert', 'alert-error', '❌ Your in-app GoodMarket wallet can sign Celo transactions only. Sending ' + (meta.label || 'this token') + ' on ' + (isXdcToken ? 'XDC' : 'Fuse') + ' needs MetaMask or WalletConnect — log in with that wallet to use it.');
+            return;
+        }
 
         // Accept both 0x... and xdc... addresses; convert xdc prefix to 0x for validation
         let toAddr = toAddrRaw;
@@ -4674,9 +4753,17 @@
 
             let txHash = null;
             if (!window.useServerSigning) {
-                let provider = await _vAwaitEthProvider();
-                if (!provider) {
-                    provider = await _walletGetWcProviderIfPreferred();
+                // Local self-custodial accounts sign with the in-app browser
+                // wallet (unlocked via PIN above) — never with an injected
+                // MetaMask/extension, which is a different account entirely.
+                let provider = null;
+                if (isLocalLogin) {
+                    provider = GMLocalWallet.getProvider();
+                } else {
+                    provider = await _vAwaitEthProvider();
+                    if (!provider) {
+                        provider = await _walletGetWcProviderIfPreferred();
+                    }
                 }
                 if (!provider) {
                     throw new Error('No wallet detected. Please connect your GoodMarket wallet via MetaMask, Trust Wallet, MiniPay, or use WalletConnect to sign transactions.');
@@ -4691,7 +4778,9 @@
 
                 const targetChainId = Number(txData.chain_id || meta.chainId);
                 const isCeloTx = targetChainId === 42220;
-                const miniPay = (_isMiniPayProvider(provider) || _isMiniPay()) && isCeloTx;
+                // The in-app wallet pays gas in CELO — CIP-64 feeCurrency params
+                // would break its plain eth_sendTransaction path.
+                const miniPay = !isLocalLogin && (_isMiniPayProvider(provider) || _isMiniPay()) && isCeloTx;
 
                 // MiniPay is always on Celo — skip wallet_switchEthereumChain
                 // which MiniPay may not support.
@@ -4836,6 +4925,213 @@
         } finally {
             btn.disabled = false;
             btn.textContent = `Send ${getSelectedTokenMeta().label}`;
+        }
+    }
+
+    // ── GCash Cashout ────────────────────────────────────────────────────
+    // User sends G$ to GCASH_ADDRESS on-chain, then submits a request.
+    // Admin reviews in dashboard; auto-refund after 24h if unreviewed.
+
+    let _gcashConfig = null;
+
+    async function _gcashFetchConfig() {
+        if (_gcashConfig) return _gcashConfig;
+        try {
+            const res = await fetch('/api/gcash/config');
+            const data = await res.json();
+            if (data.success) _gcashConfig = data;
+        } catch (_) {}
+        return _gcashConfig;
+    }
+
+    async function _gcashLoadBalance() {
+        const el = document.getElementById('gcashBalance');
+        try {
+            const res = await fetch('/api/gooddollar-balance');
+            const data = await res.json();
+            if (data.success && data.balance != null) {
+                el.textContent = Math.floor(data.balance).toLocaleString();
+            }
+        } catch (_) { el.textContent = '—'; }
+    }
+
+    function _gcashUpdatePhp() {
+        const raw = document.getElementById('gcashAmount').value.trim().replace(/,/g, '');
+        const preview = document.getElementById('gcashPhpPreview');
+        const amt = parseFloat(raw);
+        if (!raw || isNaN(amt) || amt <= 0) { preview.textContent = ''; return; }
+        const php = (amt / 100).toFixed(2);
+        preview.textContent = '≈ ₱' + Number(php).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    async function _gcashLoadHistory() {
+        const section = document.getElementById('gcashHistorySection');
+        const list = document.getElementById('gcashHistoryList');
+        try {
+            const res = await fetch('/api/gcash/my-requests');
+            const data = await res.json();
+            if (!data.success || !data.requests || !data.requests.length) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+            list.innerHTML = data.requests.map(function(r) {
+                const statusColors = {
+                    pending: '#f59e0b', refunding: '#f59e0b',
+                    approved: '#10b981', rejected: '#ef4444',
+                    refunded: '#06b6d4', refund_failed: '#ef4444'
+                };
+                const color = statusColors[r.status] || '#888';
+                const date = new Date(r.created_at).toLocaleDateString('en-PH', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+                const gd = Number(r.amount_gd).toLocaleString();
+                const php = Number(r.amount_php).toLocaleString(undefined, {minimumFractionDigits:2});
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8rem;">'
+                    + '<div><div style="font-weight:600">' + gd + ' G$ → ₱' + php + '</div>'
+                    + '<div style="color:var(--text-dim);font-size:0.72rem">' + date + ' · ' + r.gcash_number + '</div></div>'
+                    + '<span style="color:' + color + ';font-weight:600;font-size:0.72rem;text-transform:uppercase">' + r.status + '</span>'
+                    + '</div>';
+            }).join('');
+        } catch (_) { section.style.display = 'none'; }
+    }
+
+    async function submitGcashCashout() {
+        clearAlert('gcashAlert');
+        const btn = document.getElementById('gcashSubmitBtn');
+
+        // Local wallets: prompt for PIN if locked
+        const isLocalLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
+        if (isLocalLogin && !GMLocalWallet.isUnlocked()) {
+            await _lwUnlockIfNeeded().catch(function(e) {
+                if (e.message !== 'Unlock cancelled.') clearAlert('gcashAlert');
+                return Promise.reject(e);
+            });
+        }
+
+        // Read + validate form
+        const amountRaw = document.getElementById('gcashAmount').value.trim().replace(/,/g, '');
+        const gcashNumber = document.getElementById('gcashNumber').value.trim();
+        const gcashName = document.getElementById('gcashName').value.trim();
+        const amount = parseFloat(amountRaw);
+
+        if (!amountRaw || isNaN(amount) || amount < 5000) {
+            showAlert('gcashAlert', 'alert-error', '⚠️ Minimum cashout is 5,000 G$ (₱50.00).');
+            return;
+        }
+        if (!/^09\d{9}$/.test(gcashNumber)) {
+            showAlert('gcashAlert', 'alert-error', '⚠️ GCash number must be exactly 11 digits starting with 09 (e.g. 09651234567).');
+            return;
+        }
+        if (!gcashName || gcashName.length < 2) {
+            showAlert('gcashAlert', 'alert-error', '⚠️ Enter the full name registered on your GCash account.');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Preparing…';
+
+        try {
+            // Fetch config to get GCASH_ADDRESS
+            const config = await _gcashFetchConfig();
+            if (!config || !config.enabled || !config.gcash_address) {
+                showAlert('gcashAlert', 'alert-error', '❌ GCash cashout is not available right now. Please try again later.');
+                return;
+            }
+
+            // Prepare the G$ transfer via existing prepare-send endpoint
+            const prepRes = await fetch('/api/wallet/prepare-send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: 'GD', to: config.gcash_address, amount: amountRaw })
+            });
+            const txData = await prepRes.json();
+            if (!txData.success) {
+                showAlert('gcashAlert', 'alert-error', '❌ ' + (txData.error || 'Failed to prepare transaction'));
+                return;
+            }
+
+            // Sign and send the G$ transfer
+            let provider = null;
+            if (isLocalLogin) {
+                provider = GMLocalWallet.getProvider();
+            } else {
+                provider = await _vAwaitEthProvider();
+                if (!provider) provider = await _walletGetWcProviderIfPreferred();
+            }
+            if (!provider) throw new Error('No wallet detected. Please connect your wallet.');
+
+            const accounts = await provider.request({ method: 'eth_requestAccounts' });
+            if (!accounts || !accounts.length) throw new Error('No wallet account available.');
+            const from = accounts[0];
+            if (from.toLowerCase() !== WALLET.toLowerCase()) {
+                throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+            }
+
+            btn.innerHTML = '<span class="spinner"></span> Confirm in wallet…';
+            showAlert('gcashAlert', 'alert-info', '<span class="spinner"></span> Sending ' + amount.toLocaleString() + ' G$ to GCash cashout address…');
+
+            const txParams = {
+                from: from,
+                to: txData.to,
+                data: txData.data || '0x',
+                value: txData.value || '0x0'
+            };
+            if (txData.gas) txParams.gas = txData.gas;
+            if (txData.gasPrice) txParams.gasPrice = txData.gasPrice;
+
+            const txHash = await provider.request({
+                method: 'eth_sendTransaction',
+                params: [txParams]
+            });
+
+            btn.innerHTML = '<span class="spinner"></span> Submitting request…';
+            showAlert('gcashAlert', 'alert-info', '<span class="spinner"></span> Transaction sent! Submitting cashout request…');
+
+            // Submit to backend
+            const submitRes = await fetch('/api/gcash/cashout-request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    amount_gd: amountRaw,
+                    gcash_number: gcashNumber,
+                    gcash_name: gcashName,
+                    tx_hash: txHash
+                })
+            });
+            const submitData = await submitRes.json();
+
+            if (!submitData.success) {
+                showAlert('gcashAlert', 'alert-error', '❌ ' + (submitData.error || 'Failed to submit request'));
+                return;
+            }
+
+            showAlert('gcashAlert', 'alert-success',
+                '✅ Cashout request #' + submitData.request_id + ' submitted!<br>'
+                + '<strong>' + amount.toLocaleString() + ' G$ → ₱' + Number(submitData.amount_php).toLocaleString(undefined,{minimumFractionDigits:2}) + '</strong><br>'
+                + '<small>Processing time: 1–24 hours. You will be notified once reviewed.</small>'
+            );
+
+            // Clear form + refresh history
+            document.getElementById('gcashAmount').value = '';
+            document.getElementById('gcashNumber').value = '';
+            document.getElementById('gcashName').value = '';
+            document.getElementById('gcashPhpPreview').textContent = '';
+            _gcashLoadHistory();
+            setTimeout(() => loadBalances(true), 3000);
+
+            window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', {
+                detail: {
+                    txHash,
+                    explorerUrl: 'https://celoscan.io/tx/' + txHash,
+                    message: '✅ GCash cashout request submitted. ' + amount.toLocaleString() + ' G$ sent.'
+                }
+            }));
+
+        } catch (err) {
+            const msg = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.message || 'Transaction failed');
+            showAlert('gcashAlert', 'alert-error', '❌ ' + msg);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Submit Cashout Request';
         }
     }
 
@@ -5456,11 +5752,14 @@
             const login = '{{ login_method }}'.toLowerCase();
             const provider = _getEthProvider && _getEthProvider();
             const isMiniPay = _isMiniPay();
+            // The in-app wallet signs Celo transactions only — never recommend
+            // the XDC route to local logins, even if an extension is installed.
+            const isLocal = login === 'local';
             const isWalletConnect = ['walletconnect', 'manual', 'manual_address'].includes(login) || !!(provider && provider.isWalletConnect);
             const isMetaMask = !!(provider && provider.isMetaMask) || !!(window.ethereum && window.ethereum.isMetaMask);
             const isTrustWallet = _isTrustWalletMobileContext && _isTrustWalletMobileContext();
             const hasInjected = !!provider || !!window.ethereum;
-            const supportsXdc = !isMiniPay && !isTrustWallet && (isMetaMask || isWalletConnect || hasInjected);
+            const supportsXdc = !isLocal && !isMiniPay && !isTrustWallet && (isMetaMask || isWalletConnect || hasInjected);
             return { isMiniPay, isWalletConnect, isMetaMask, isTrustWallet, hasInjected, supportsFuse: false, supportsXdc };
         }
 
@@ -6752,12 +7051,16 @@
                 });
             };
 
-            let provider = await _vAwaitEthProvider();
+            // Local self-custodial accounts: use the in-app wallet (already
+            // PIN-unlocked by doUbiClaim) for the gas preflight too, so no
+            // injected MetaMask on a different account is ever probed.
+            const isLocalClaimLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
+            let provider = isLocalClaimLogin ? GMLocalWallet.getProvider() : await _vAwaitEthProvider();
             let usingWcBridge = false;
             if (!provider) {
                 provider = await _walletGetWcProviderIfPreferred();
                 usingWcBridge = !!provider;
-            } else if (typeof GMWalletConnect !== 'undefined' && GMWalletConnect.isPreferred()) {
+            } else if (!isLocalClaimLogin && typeof GMWalletConnect !== 'undefined' && GMWalletConnect.isPreferred()) {
                 // User logged in via WalletConnect but an injected wallet (e.g. MetaMask
                 // browser extension) was also detected. MetaMask is on a different network
                 // (Ethereum, not Celo) and may be locked — its eth_getBalance call will
@@ -9119,6 +9422,10 @@
             <div class="bn-sheet-item" onclick="bnGo(function(){ openModal('streamModal'); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#06b6d4,#0891b2);color:#fff;">💸</div>
                 <div class="bn-sheet-name">Stream G$</div>
+            </div>
+            <div class="bn-sheet-item" onclick="bnGo(function(){ openModal('gcashModal'); })">
+                <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#007DFE,#0056b3);color:#fff;">💸</div>
+                <div class="bn-sheet-name">GCash Cashout</div>
             </div>
             <div class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/xdc-wallet', 'Opening XSwap…'); })">
                 <div class="bn-sheet-circle">💠</div>
