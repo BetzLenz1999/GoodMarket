@@ -1612,9 +1612,12 @@ async function dappSendPayment() {
             return;
         }
 
+        // Local self-custodial accounts sign with the in-app browser wallet —
+        // never with an injected MetaMask/extension (a different account).
+        const isLocalLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
         // Privy email/social embedded-wallet logins must sign with Privy.
-        const privyProvider = await _getPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
-        const ep = privyProvider || _getEthProvider();
+        const privyProvider = isLocalLogin ? null : await _getPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
+        const ep = isLocalLogin ? GMLocalWallet.getProvider() : (privyProvider || _getEthProvider());
         let from;
         if (ep) {
             from = await dappConnect();
@@ -1832,8 +1835,11 @@ async function openPayModal(order) {
 
     showStep('stepPay');
 
+    // Local in-app wallets sign via GMLocalWallet (PIN prompt on Pay), so they
+    // use the signing flow even with no injected provider present.
+    const isLocalLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
     const hasInjectedWallet = isDAppBrowser();
-    const shouldUseSigningFlow = hasInjectedWallet || PREFER_WC_SIGNING || IS_PRIVY_LOGIN;
+    const shouldUseSigningFlow = hasInjectedWallet || PREFER_WC_SIGNING || IS_PRIVY_LOGIN || isLocalLogin;
     if (shouldUseSigningFlow) {
         // DApp browser / WalletConnect / Privy embedded wallets — collect payment
         // through an actual signed ERC-20 transfer. Privy email/social users do
@@ -1842,7 +1848,9 @@ async function openPayModal(order) {
         document.getElementById('dappFlow').style.display = 'block';
         document.getElementById('dappGdAmt').textContent = _activePaymentQuote.gdAmountDisplay;
         let signingMessage = '<i class="fas fa-mobile-alt"></i> Wallet detected! Click below to pay.';
-        if (IS_PRIVY_LOGIN) {
+        if (isLocalLogin) {
+            signingMessage = '<i class="fas fa-lock"></i> GoodMarket wallet ready. Click below to unlock with your PIN and pay.';
+        } else if (IS_PRIVY_LOGIN) {
             signingMessage = '<i class="fas fa-shield-alt"></i> Privy wallet ready. Click below to sign and pay.';
         } else if (!hasInjectedWallet && PREFER_WC_SIGNING) {
             signingMessage = '<i class="fas fa-link"></i> WalletConnect signing ready. Click below to connect and pay.';
