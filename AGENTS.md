@@ -13,6 +13,16 @@ Repository-specific notes for OpenHands agents.
 - `templates/swap.html` has its OWN inline `_celoJsonRpc` + `_wcBridgeRequest` (a second copy of the bridge logic for the swap page). **Changes to RPC error handling must be mirrored in both wc-bridge.js and swap.html.**
 - Signer resolution: `getConnectedSwapSigner()` in swap.html picks Privy / WalletConnect / injected (Trust/MetaMask) in that order based on `IS_PRIVY_LOGIN` / `PREFER_WC_SIGNING`.
 
+## Local self-custodial wallet (GMLocalWallet) signing (2026-08)
+Local-wallet users (`login_method === 'local'`, session wallet created in-browser via `static/js/local-wallet.js`) must sign with the **PIN-decrypted in-app wallet** — never with an injected MetaMask/extension, which is a *different account*. When the wallet auto-locks, prompt the built-in PIN modal (`window._lwOpenUnlockModal()`), then use `GMLocalWallet.getProvider()` (an EIP-1193 provider; wrap in `new ethers.BrowserProvider(...)` + `getSigner()` when callers need a real ethers Signer, e.g. swap.html's `getConnectedSwapSigner()`).
+
+Key invariants when touching signing flows:
+- **Celo only** — the in-app wallet signs Celo transactions ONLY. XDC/FUSE paths (swap bridge, wallet.html token sends, raffle) are blocked up-front with a friendly error for local logins; never call `wallet_switchEthereumChain` for the local provider (it always reports 0xa4ec).
+- **No injected fall-through** — every `_getEthProvider()`-style resolver must return null / be bypassed for local logins so a desktop MetaMask can't hijack the account ("Wrong wallet connected").
+- **No CIP-64** — MiniPay `isMiniPay()` checks return false for local logins (in-app wallet pays CELO gas); the `MPGasTopUp.isMiniPay()` preflight gates in swap.html are skipped too.
+- Pages wired: `savings.html` (reference implementation), `swap.html` (real ethers signer + Celo-only guards + no-wallet button gate), `reloadly.html` (send + signing-flow gating), `claim.html` (claim branch; also fixed `injectedProvider` block-scope bug), `static/js/p2p/p2p-wallet.js` (`getProvider()` unlock prompt, `_getInjected()`/`isMiniPay()` guards), `wallet.html` (doSend, raffle signer, claim capabilities/preflight), `send-link.html` (send/cancel/balance), `learn_and_earn.html` (loads ethers+local-wallet.js; L&E deposit `swSendViaWallet` + NFT buy `executeBuyNFT`).
+- Tests: `tests/test_local_wallet_signing_content.py` (content, no deps).
+
 ## "missing revert data" — root cause & fix (2026-08)
 ethers.js v6 throws `"missing revert data in call exception"` whenever an `eth_call` / `eth_estimateGas` reverts and the returned JSON-RPC error object has **no `data` field** (the revert bytes). Public Celo RPC nodes and mobile wallet providers (Trust, MiniPay) are inconsistent — some return `error.data`, some don't. The bridge used to forward reverts as `new Error(data.error.message)`, **dropping `error.data` and `error.code`**, which forced ethers into the opaque "missing revert data" path.
 
@@ -61,6 +71,7 @@ Admin broadcasts (`/api/admin/broadcast-message`) push to Telegram bot users. Th
 
 ## Testing
 - `tests/test_revert_data_handling.py` — content/behavior tests locking in the fix. Run with `python -m pytest tests/test_revert_data_handling.py`.
+- `tests/test_local_wallet_signing_content.py` — content tests locking in GMLocalWallet (local self-custodial) signing routing across swap/reloadly/claim/p2p/wallet/send-link/learn_and_earn. No deps; run with `python -m pytest tests/test_local_wallet_signing_content.py`.
 - `tests/test_ubi_reminder_content.py` — content tests for the Telegram UBI reminder (message builders + per-wallet processing). Run with `python -m unittest tests.test_ubi_reminder_content`.
 - `tests/test_ai_agent_tx_lookup_content.py` — functional (loads `ai_agent/tx_lookup.py` via importlib, no deps) + text-based wiring tests for the agent tx-hash lookup. Run with `python -m pytest tests/test_ai_agent_tx_lookup_content.py`.
 - `tests/test_broadcast_delivery_content.py` — durable Telegram broadcast delivery (error classification, queue, CAS claim, aggregates, retry cap, scheduler, routes, dashboard). Run with `python -m unittest tests.test_broadcast_delivery_content`.
