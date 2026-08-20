@@ -113,7 +113,15 @@ window.P2PWallet = (function () {
         return typeof navigator !== "undefined" && /minipay/i.test(navigator.userAgent || "");
     }
 
+    function _isLocalLogin() {
+        return String(cfg.loginMethod || "").toLowerCase() === "local";
+    }
+
     async function getProvider() {
+        // Local self-custodial accounts sign with the browser wallet (PIN-decrypted).
+        if (_isLocalLogin() && typeof GMLocalWallet !== "undefined") {
+            return GMLocalWallet.getProvider();
+        }
         var privy = await _getPrivyProvider({ promptLogin: true, timeoutMs: 10000 });
         if (privy) return privy;
         var ep = _getInjected();
