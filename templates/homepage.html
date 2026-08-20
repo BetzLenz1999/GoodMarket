@@ -1435,6 +1435,54 @@
             line-height: 1.45;
         }
 
+        /* Local free-account panel */
+        .lw-words {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.4rem;
+            margin: 0.65rem 0;
+        }
+
+        .lw-word {
+            background: #f5f3ff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0.4rem 0.5rem;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: #1f2937;
+            text-align: center;
+        }
+
+        .lw-word span {
+            color: #9ca3af;
+            font-weight: 500;
+            margin-right: 0.3rem;
+            font-size: 0.72rem;
+        }
+
+        .lw-warning {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 10px;
+            padding: 0.6rem 0.75rem;
+            font-size: 0.8rem;
+            color: #92400e;
+            line-height: 1.45;
+            margin-bottom: 0.75rem;
+        }
+
+        .lw-confirm-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            font-size: 0.84rem;
+            color: #1f2937;
+            margin-bottom: 0.85rem;
+            cursor: pointer;
+            line-height: 1.4;
+        }
+
         .wc-qr-wrap {
             display: none;
             margin-top: 0.9rem;
@@ -1767,6 +1815,9 @@
     </style>
     <!-- WalletConnect bridge for users without injected wallet -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <!-- ethers.js for in-browser wallet generation (local self-custodial accounts) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script>
         if (typeof GMWalletConnect !== "undefined") {
             GMWalletConnect.configure({
@@ -2081,12 +2132,12 @@
     <!-- Panel: Referral Program -->
     <div class="section-panel" id="panel-referral">
         <h2 class="panel-title">🔗 Referral Program</h2>
-        <p class="panel-subtitle">Invite friends to GoodMarket and both of you earn G$ rewards when they create a new Privy email wallet and get verified.</p>
+        <p class="panel-subtitle">Invite friends to GoodMarket and both of you earn G$ rewards when they create a new account (free local wallet or Privy email wallet) and get verified.</p>
         <div class="earn-grid">
             <div class="earn-card">
                 <div class="earn-card-icon">📨</div>
                 <div class="earn-card-title">How to Refer</div>
-                <p class="earn-card-desc">Every GoodMarket user gets a unique referral link. Share it with friends, family, or on social media. Rewards apply only when a new referee creates a Privy email/social wallet, not when they connect an existing wallet with WalletConnect, MiniPay, or MetaMask.</p>
+                <p class="earn-card-desc">Every GoodMarket user gets a unique referral link. Share it with friends, family, or on social media. Rewards apply when a new referee creates a fresh GoodMarket account — a free local email+PIN wallet or a Privy email/social wallet — not when they connect an existing wallet with WalletConnect, MiniPay, or MetaMask.</p>
             </div>
             <div class="earn-card">
                 <div class="earn-card-icon">💰</div>
@@ -2286,6 +2337,14 @@
 
             <!-- Step 1: injected-wallet-first login -->
             <div class="wallet-options" id="walletOptions">
+                <button id="localWalletBtn" class="wallet-option-card primary" type="button" onclick="showLocalWalletPanel('create')">
+                    <div class="option-icon">🆓</div>
+                    <div class="option-text">
+                        <div class="option-title">Create a Free Account</div>
+                        <p class="option-desc">Email + PIN — no wallet app needed. Your wallet is created instantly, free.</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
                 <button id="injectedWalletBtn" class="wallet-option-card primary" type="button" onclick="connectInjectedWallet()" style="display:none">
                     <div class="option-icon" id="injectedWalletIcon">👛</div>
                     <div class="option-text">
@@ -2334,6 +2393,56 @@
                 </button>
                 <div id="privyLoginMount" style="display:none"></div>
                 <div id="walletConnectStatus" class="status-message" style="margin-top:0.85rem;"></div>
+            </div>
+
+            <!-- Local self-custodial account: email + PIN. The private key is
+                 generated and encrypted in the browser; only the encrypted
+                 keystore reaches the server (phone-loss recovery). -->
+            <div class="wallet-form" id="localWalletOptions">
+                <button class="back-btn" type="button" onclick="showWalletOptions()">← Back to login options</button>
+
+                <div id="lwCreateStep">
+                    <p class="wc-panel-note" id="lwModeNote">
+                        Make a free GoodMarket account & wallet — secured by your email and a 6-digit PIN. No app install, no fees.
+                    </p>
+                    <div class="wallet-input-group">
+                        <label class="wallet-label" for="lwEmail">Email <small style="opacity:0.7;font-weight:normal">(we store only a masked copy)</small></label>
+                        <input id="lwEmail" class="wallet-input" type="email" autocomplete="email" placeholder="you@example.com">
+                    </div>
+                    <div class="wallet-input-group">
+                        <label class="wallet-label" for="lwPin">6-digit PIN</label>
+                        <input id="lwPin" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••••">
+                    </div>
+                    <div class="wallet-input-group" id="lwPinConfirmWrap">
+                        <label class="wallet-label" for="lwPinConfirm">Confirm PIN</label>
+                        <input id="lwPinConfirm" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••••">
+                    </div>
+                    <div class="wallet-input-group" id="lwReferralWrap">
+                        <label class="wallet-label" for="lwReferralCode">Referral code <span style="font-weight:500;color:#9ca3af">(optional)</span></label>
+                        <input id="lwReferralCode" class="wallet-input" type="text" maxlength="16" autocomplete="off" placeholder="Referral code" oninput="syncReferralInputs(this)">
+                    </div>
+                    <button id="lwSubmitBtn" class="connect-btn" type="button" onclick="submitLocalWallet()">Create my free wallet</button>
+                    <p class="wc-panel-note" style="margin-top:0.7rem;text-align:center;" id="lwToggleNote">
+                        Already have an account?
+                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode('unlock')">Unlock with email + PIN</button>
+                    </p>
+                </div>
+
+                <div id="lwPhraseStep" style="display:none">
+                    <p class="wc-panel-note"><strong>Save your 12 recovery words.</strong> These restore your wallet if you forget your PIN or lose your phone:</p>
+                    <div class="lw-words" id="lwWords"></div>
+                    <div class="lw-warning">
+                        ⚠️ Anyone with these words can access your funds. GoodMarket support can never reset your PIN or recover your account for you — write the words down and keep them private.
+                        <br><small>🔒 We store only a masked copy of your email — the full address is never saved on our servers.</small>
+                    </div>
+                    <label class="lw-confirm-row">
+                        <input type="checkbox" id="lwPhraseConfirm" onchange="document.getElementById('lwFinishBtn').disabled = !this.checked">
+                        <span>I wrote down my 12 recovery words and understand my PIN cannot be reset.</span>
+                    </label>
+                    <button id="lwFinishBtn" class="connect-btn" type="button" onclick="finishLocalWalletSignup()" disabled>Continue to GoodMarket</button>
+                </div>
+
+                <div id="localWalletStatus" class="status-message" style="margin-top:0.85rem;"></div>
             </div>
 
             <!-- Optional WalletConnect path kept separate from Privy so users can
@@ -2663,7 +2772,7 @@
 
         function showWalletOptions() {
             document.getElementById('walletOptions').style.display = 'flex';
-            ['walletConnectOptions', 'googleLoginOptions'].forEach(id => {
+            ['walletConnectOptions', 'googleLoginOptions', 'localWalletOptions'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.classList.remove('visible');
             });
@@ -2672,6 +2781,224 @@
                 panelStatus.className = 'status-message';
                 panelStatus.textContent = '';
             }
+        }
+
+        // ─── Local self-custodial account (email + PIN) ─────────────────────
+        // The wallet is generated and encrypted in the browser via
+        // GMLocalWallet; the server only ever sees the address + encrypted
+        // keystore, and login is proven with a signature.
+
+        let _lwMode = 'create';
+        let _lwPendingSignup = null; // {address, keystore, mnemonic, message}
+
+        function showLocalWalletPanel(mode) {
+            if (typeof GMLocalWallet === 'undefined' || typeof ethers === 'undefined') {
+                showWalletStatus('walletConnectStatus', '⚠️ Wallet tools are still loading — try again in a moment.', 'warning');
+                return;
+            }
+            document.getElementById('walletOptions').style.display = 'none';
+            ['walletConnectOptions', 'googleLoginOptions'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.remove('visible');
+            });
+            document.getElementById('localWalletOptions').classList.add('visible');
+            document.getElementById('lwPhraseStep').style.display = 'none';
+            document.getElementById('lwCreateStep').style.display = 'block';
+            setLocalWalletMode(mode || 'create');
+            // Prefill from a same-device keystore for a quick unlock.
+            const saved = GMLocalWallet.getLocalKeystore();
+            if (saved && saved.email && !document.getElementById('lwEmail').value) {
+                document.getElementById('lwEmail').value = saved.email;
+            }
+            const refEl = document.getElementById('lwReferralCode');
+            if (refEl && !refEl.value) {
+                try {
+                    const ref = (sessionStorage.getItem('pending_referral_code') || '').trim();
+                    if (ref) refEl.value = ref;
+                } catch (e) {}
+            }
+            lwStatus('', 'info');
+        }
+
+        function setLocalWalletMode(mode) {
+            _lwMode = mode === 'unlock' ? 'unlock' : 'create';
+            const isUnlock = _lwMode === 'unlock';
+            document.getElementById('lwPinConfirmWrap').style.display = isUnlock ? 'none' : 'block';
+            document.getElementById('lwReferralWrap').style.display = isUnlock ? 'none' : 'block';
+            document.getElementById('lwModeNote').textContent = isUnlock
+                ? 'Enter the email and PIN for your GoodMarket account. Works on any device — we fetch your encrypted wallet and your PIN unlocks it here in the browser.'
+                : 'Make a free GoodMarket account & wallet — secured by your email and a 6-digit PIN. No app install, no fees.';
+            document.getElementById('lwSubmitBtn').textContent = isUnlock ? 'Unlock my account' : 'Create my free wallet';
+            document.getElementById('lwToggleNote').innerHTML = isUnlock
+                ? 'New here? <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode(\'create\')">Create a free account</button>'
+                : 'Already have an account? <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode(\'unlock\')">Unlock with email + PIN</button>';
+        }
+
+        function lwStatus(message, type) {
+            const el = document.getElementById('localWalletStatus');
+            if (!el) return;
+            if (!message) { el.textContent = ''; el.className = 'status-message'; return; }
+            showWalletStatus('localWalletStatus', message, type || 'info');
+        }
+
+        // sha256 of the normalized email — the login call sends this instead of
+        // the raw email so PII never transits the login endpoint.
+        async function _lwEmailHash(email) {
+            const normalized = String(email).trim().toLowerCase();
+            if (window.crypto && window.crypto.subtle) {
+                const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+                return Array.from(new Uint8Array(digest)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+            }
+            throw new Error('Secure context required. Please open GoodMarket over HTTPS.');
+        }
+
+        async function submitLocalWallet() {
+            const btn = document.getElementById('lwSubmitBtn');
+            try {
+                const email = document.getElementById('lwEmail').value;
+                const pin = document.getElementById('lwPin').value;
+                GMLocalWallet.normalizeEmail(email);
+                GMLocalWallet.normalizePin(pin);
+
+                btn.disabled = true;
+                if (_lwMode === 'create') {
+                    const confirmPin = document.getElementById('lwPinConfirm').value;
+                    if (pin !== confirmPin) throw new Error('PINs do not match.');
+                    await _lwCreateAccount(email, pin, btn);
+                } else {
+                    await _lwUnlockAccount(email, pin, btn);
+                }
+            } catch (err) {
+                lwStatus('❌ ' + (err && err.message ? err.message : 'Something went wrong.'), 'error');
+                btn.disabled = false;
+            }
+        }
+
+        async function _lwCreateAccount(email, pin, btn) {
+            lwStatus('⏳ Generating your wallet & encrypting with your PIN (a few seconds)…', 'info');
+            const created = await GMLocalWallet.create({ email: email, pin: pin });
+            // Canonical (sorted-keys) keystore: the server fingerprints this
+            // exact form for the login signature message.
+            const canonicalKeystore = GMLocalWallet.canonicalizeKeystore(created.keystore);
+
+            lwStatus('⏳ Registering your account…', 'info');
+            const regResp = await fetch('/api/local-wallet/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: created.email,
+                    address: created.address,
+                    keystore: JSON.parse(canonicalKeystore),
+                    referral_code: (document.getElementById('lwReferralCode').value || '').trim() || null
+                })
+            });
+            const regData = await regResp.json();
+            if (!regResp.ok || !regData.success) throw new Error(regData.error || 'Registration failed.');
+
+            _lwPendingSignup = {
+                address: created.address,
+                keystore: canonicalKeystore,
+                mnemonic: created.mnemonic,
+                message: regData.message,
+                emailHash: await _lwEmailHash(created.email),
+                pin: pin
+            };
+            _lwRenderPhraseStep(created.mnemonic);
+            lwStatus('✅ Wallet created! Save your recovery words to continue.', 'success');
+        }
+
+        function _lwRenderPhraseStep(mnemonic) {
+            const words = String(mnemonic || '').trim().split(/\s+/);
+            const wrap = document.getElementById('lwWords');
+            wrap.innerHTML = '';
+            words.forEach(function (word, i) {
+                const cell = document.createElement('div');
+                cell.className = 'lw-word';
+                const num = document.createElement('span');
+                num.textContent = String(i + 1);
+                cell.appendChild(num);
+                cell.appendChild(document.createTextNode(word));
+                wrap.appendChild(cell);
+            });
+            document.getElementById('lwPhraseConfirm').checked = false;
+            document.getElementById('lwFinishBtn').disabled = true;
+            document.getElementById('lwCreateStep').style.display = 'none';
+            document.getElementById('lwPhraseStep').style.display = 'block';
+        }
+
+        async function finishLocalWalletSignup() {
+            const btn = document.getElementById('lwFinishBtn');
+            if (!_lwPendingSignup) return;
+            btn.disabled = true;
+            try {
+                lwStatus('⏳ Signing you in…', 'info');
+                await GMLocalWallet.unlockWithKeystore(_lwPendingSignup.keystore, _lwPendingSignup.pin);
+                const signature = await GMLocalWallet.loginSignature(_lwPendingSignup.message);
+                const resp = await fetch('/api/local-wallet/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email_hash: _lwPendingSignup.emailHash,
+                        address: _lwPendingSignup.address,
+                        message: _lwPendingSignup.message,
+                        signature: signature
+                    })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) throw new Error(data.error || 'Login failed.');
+                _lwCompleteLogin(data);
+            } catch (err) {
+                lwStatus('❌ ' + (err && err.message ? err.message : 'Login failed.'), 'error');
+                btn.disabled = false;
+            }
+        }
+
+        async function _lwUnlockAccount(email, pin, btn) {
+            let keystore = null;
+            let address = null;
+            let message = null;
+            // Same-device fast path: use the saved keystore, but always fetch
+            // the server copy for the login message (keystore fingerprint).
+            const saved = GMLocalWallet.getLocalKeystore();
+            if (saved && saved.email && saved.email.toLowerCase() === String(email).trim().toLowerCase()) {
+                keystore = saved.keystore;
+                address = saved.address;
+            }
+            lwStatus('⏳ Fetching your encrypted wallet…', 'info');
+            const ksResp = await fetch('/api/local-wallet/keystore?email=' + encodeURIComponent(String(email).trim().toLowerCase()));
+            const ksData = await ksResp.json();
+            if (!ksResp.ok || !ksData.success) throw new Error(ksData.error || 'No account found for that email.');
+            keystore = typeof ksData.keystore === 'string' ? ksData.keystore : JSON.stringify(ksData.keystore);
+            address = ksData.address;
+            message = ksData.message;
+
+            lwStatus('⏳ Unlocking with your PIN…', 'info');
+            await GMLocalWallet.unlockWithKeystore(keystore, pin);
+            GMLocalWallet.saveLocalKeystore(String(email).trim().toLowerCase(), address, keystore);
+            const signature = await GMLocalWallet.loginSignature(message);
+
+            const resp = await fetch('/api/local-wallet/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email_hash: ksData.email_hash, address: address, message: message, signature: signature })
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) throw new Error(data.error || 'Login failed.');
+            _lwCompleteLogin(data);
+        }
+
+        function _lwCompleteLogin(data) {
+            const pinEl = document.getElementById('lwPin');
+            const confirmEl = document.getElementById('lwPinConfirm');
+            if (pinEl) pinEl.value = '';
+            if (confirmEl) confirmEl.value = '';
+            _lwPendingSignup = null;
+            try {
+                sessionStorage.setItem('wallet', data.wallet || '');
+                sessionStorage.setItem('verified', 'true');
+            } catch (e) {}
+            lwStatus('✅ Welcome! Redirecting…', 'success');
+            setTimeout(function () { window.location.href = data.redirect_to || '/wallet'; }, 900);
         }
 
         function showPrivyRetry() {
@@ -3341,7 +3668,7 @@
 
         function syncReferralInputs(sourceEl) {
             const value = (sourceEl && sourceEl.value ? sourceEl.value : '').trim().toUpperCase();
-            const ids = ['privyReferralCode'];
+            const ids = ['privyReferralCode', 'lwReferralCode'];
             ids.forEach(function(id) {
                 var el = document.getElementById(id);
                 if (el && el !== sourceEl && el.value !== value) el.value = value;
