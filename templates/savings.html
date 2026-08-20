@@ -2108,6 +2108,23 @@
         throw new Error('No wallet connected. Install MetaMask or scan the QR code below to connect via WalletConnect.');
     }
 
+    // ── Local wallet unlock wrapper ─────────────────────────────────────
+    // When the browser wallet auto-locks (15 min), getSigner() would throw
+    // "Wallet is locked". Wrap it to show the unlock modal first, then retry.
+    const _originalGetSigner = getSigner;
+    getSigner = async function () {
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local'
+            && typeof GMLocalWallet !== 'undefined'
+            && !GMLocalWallet.isUnlocked()) {
+            if (typeof window._lwOpenUnlockModal === 'function') {
+                await window._lwOpenUnlockModal();
+            } else {
+                throw new Error('Please unlock your wallet. Reload the page and log in again.');
+            }
+        }
+        return _originalGetSigner();
+    };
+
     // ── Approve ──
     async function doApprove() {
         const amtStr = document.getElementById('saveAmount').value.trim();
@@ -2209,22 +2226,8 @@
         }
     }
 
-    // ── Local wallet unlock (shared helper with wallet.html) ──
-
-    function _lwUnlockIfNeeded() {
-        const needed = (LOGIN_METHOD || '').toLowerCase() === 'local'
-            && typeof GMLocalWallet !== 'undefined'
-            && !GMLocalWallet.isUnlocked();
-        if (!needed) return Promise.resolve();
-        return window._lwOpenUnlockModal
-            ? window._lwOpenUnlockModal()
-            : Promise.reject(new Error('Please unlock your wallet. Reload the page and log in again.'));
-    }
-
     // ── Save ──
     async function doSave() {
-        // Local wallets: prompt for PIN if the wallet has auto-locked.
-        try { await _lwUnlockIfNeeded(); } catch (_) { showAlert('saveAlert', 'error', 'Please unlock your wallet to continue.'); return; }
         const amtStr = document.getElementById('saveAmount').value.trim();
         const amt = parseFloat(amtStr);
         const sym = selectedToken.symbol;
@@ -2352,8 +2355,6 @@
 
     // ── Withdraw ──
     async function doWithdraw(tokenAddr, lockDays, contractAddr = SAVINGS_CONTRACT) {
-        // Local wallets: prompt for PIN if the wallet has auto-locked.
-        try { await _lwUnlockIfNeeded(); } catch (_) { showAlert('depositsAlert', 'error', 'Please unlock your wallet to continue.'); return; }
         try {
             const args = [tokenAddr, BigInt(lockDays)];
             const fn   = "function withdraw(address token, uint256 lockDays) external";
