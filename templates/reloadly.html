@@ -660,6 +660,12 @@
     </div>
 </div>
 
+<!-- local-wallet.js needs ethers for PIN decrypt (Wallet.fromEncryptedJson)
+     and for broadcasting eth_sendTransaction — without it the unlock modal
+     fails with "ethers.js is not loaded on this page." -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
+        integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
 <script src="{{ url_for('static', filename='js/minipay-fee-currency.js', v=ASSET_VERSION) }}"></script>
 <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
@@ -1103,6 +1109,9 @@ function _isMiniPayProvider(provider) {
     return !!(provider && (provider.isMiniPay || provider.isMiniPayWallet || provider.isOperaMiniPay));
 }
 function _isMiniPayContext(provider) {
+    // The in-app wallet pays CELO gas itself — never route it through the
+    // CIP-64 feeCurrency path even inside the MiniPay dApp browser.
+    if (provider && provider.isGMLocalWallet) return false;
     if (_isMiniPayProvider(provider)) return true;
     if (_isMiniPayProvider(window.ethereum)) return true;
     if (window.ethereum && Array.isArray(window.ethereum.providers)
