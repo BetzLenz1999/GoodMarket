@@ -21,12 +21,18 @@ CREATE TABLE IF NOT EXISTS gcash_cashout_requests (
                         'refund_failed'   -- refund tx failed (manual intervention)
                     )),
     admin_note      TEXT,                        -- admin's reason/note
+    reference_number TEXT,                       -- GCash reference # (set on approve)
+    receipt_image_url TEXT,                      -- ImgBB receipt screenshot (set on approve)
     refund_tx_hash  TEXT,                        -- refund tx (if rejected/refunded)
     reviewed_by     TEXT,                        -- admin wallet address
     reviewed_at     TIMESTAMPTZ,
     created_at      TIMESTAMPTZ DEFAULT now(),
     updated_at      TIMESTAMPTZ DEFAULT now()
 );
+
+-- Safety for installs that ran an earlier version of this migration:
+ALTER TABLE gcash_cashout_requests ADD COLUMN IF NOT EXISTS reference_number TEXT;
+ALTER TABLE gcash_cashout_requests ADD COLUMN IF NOT EXISTS receipt_image_url TEXT;
 
 -- Indexes for fast admin + user queries
 CREATE INDEX IF NOT EXISTS idx_gcash_status  ON gcash_cashout_requests(status);
