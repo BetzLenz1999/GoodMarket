@@ -69,9 +69,21 @@ Admin broadcasts (`/api/admin/broadcast-message`) push to Telegram bot users. Th
 - **Diagnostics (2026-08 follow-up):** `GET /api/admin/telegram-diagnostics` (admin-only) runs `telegram_notify.get_broadcast_diagnostics()` — never-raises health check of every link (bot token, DB, service-role key, recipient count from `telegram_wallet_sessions`, deliveries-table + tg_* column probes, scheduler enabled) with human `hints`. The admin dashboard "🩺 Check Telegram Delivery Health" button renders it. `send_broadcast_message` response now includes `telegram_recipients` + `telegram_delivery_mode` (`durable_queued`|`legacy_best_effort`) + `telegram_warning` when 0 recipients — the #1 silent failure is "no Telegram bot users" (users must /start the bot AND save a wallet; only then do they appear in `telegram_wallet_sessions`). `count_broadcast_recipients()` returns -1 for "couldn't read" vs 0 for "no users".
 - Tests: `tests/test_broadcast_delivery_content.py` (error classification, idempotent queue, CAS claim, aggregate status, retry cap, scheduler wiring, routes wiring, dashboard rendering — no deps, stubs `requests`/`supabase`). Run with `python -m unittest tests.test_broadcast_delivery_content`.
 
+## GCash Cashout (2026-08)
+Users cash out G$ → PHP via GCash. 100 G$ = ₱1.00, minimum 5,000 G$ (₱50), Philippines-only.
+- **Flow:** `templates/wallet.html` `gcashModal` → user fills amount/number/name → signs G$ transfer to `GCASH_ADDRESS` (uses the standard signer routing — local/injected/WC) → `POST /api/gcash/cashout-request` verifies the tx **on-chain** (Transfer event: from=user, to=GCASH_ADDRESS, exact amount) then stores a `pending` row. One pending request per user.
+- **Backend:** `gcash/` package (routes.py + service.py + refund_retry.py), blueprint `url_prefix=/api/gcash`. Admin endpoints: `GET /admin/requests`, `POST /admin/requests/<id>/approve` (manual GCash send), `POST .../reject` (auto-refund via `GCASH_KEY`).
+- **Auto-refund:** `gcash/refund_retry.py` — env-gated (`GCASH_AUTO_REFUND_ENABLED`, interval `GCASH_AUTO_REFUND_INTERVAL_SEC` default 300s). Requests still `pending` after 24h are CAS-claimed (`pending`→`refunding`) and refunded. Same gas-preflight pattern as reloadly refund (estimate_gas, fallback 80k, cap 150k).
+- **Env vars:** `GCASH_ADDRESS` (receives user G$), `GCASH_KEY` (signs refunds — needs CELO gas), `GCASH_AUTO_REFUND_ENABLED`.
+- **DB:** `sql/gcash_cashout.sql` — `gcash_cashout_requests` (statuses: pending/refunding/approved/rejected/refunded/refund_failed; `tx_hash` UNIQUE prevents reuse). Run in Supabase before enabling.
+- **Admin UI:** `templates/admin_dashboard.html` "GCash Cashout" section — filter by status, approve/reject buttons, elapsed-time badge for pending.
+- **User history:** inside the cashout modal (`/api/gcash/my-requests`).
+- Tests: `tests/test_gcash_cashout_content.py`.
+
 ## Testing
 - `tests/test_revert_data_handling.py` — content/behavior tests locking in the fix. Run with `python -m pytest tests/test_revert_data_handling.py`.
 - `tests/test_local_wallet_signing_content.py` — content tests locking in GMLocalWallet (local self-custodial) signing routing across swap/reloadly/claim/p2p/wallet/send-link/learn_and_earn. No deps; run with `python -m pytest tests/test_local_wallet_signing_content.py`.
+- `tests/test_gcash_cashout_content.py` — content tests for the GCash cashout feature (SQL, gcash/ package, wallet.html modal, admin dashboard, main.py wiring). No deps; run with `python -m pytest tests/test_gcash_cashout_content.py`.
 - `tests/test_ubi_reminder_content.py` — content tests for the Telegram UBI reminder (message builders + per-wallet processing). Run with `python -m unittest tests.test_ubi_reminder_content`.
 - `tests/test_ai_agent_tx_lookup_content.py` — functional (loads `ai_agent/tx_lookup.py` via importlib, no deps) + text-based wiring tests for the agent tx-hash lookup. Run with `python -m pytest tests/test_ai_agent_tx_lookup_content.py`.
 - `tests/test_broadcast_delivery_content.py` — durable Telegram broadcast delivery (error classification, queue, CAS claim, aggregates, retry cap, scheduler, routes, dashboard). Run with `python -m unittest tests.test_broadcast_delivery_content`.
