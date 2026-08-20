@@ -96,7 +96,8 @@ window.P2PWallet = (function () {
     function _getInjected() {
         // WalletConnect / manual logins must never use an injected wallet — its
         // account differs from the logged-in GoodMarket wallet.
-        if (_preferWc() || _isPrivyLogin()) return null;
+        // Same for local in-app wallets: an injected MetaMask is a different account.
+        if (_preferWc() || _isPrivyLogin() || _isLocalLogin()) return null;
         try { window.dispatchEvent(new Event("eip6963:requestProvider")); } catch (_) {}
         var providers = _collectInjected();
         if (!providers.length) return null;
@@ -107,6 +108,9 @@ window.P2PWallet = (function () {
     }
 
     function isMiniPay() {
+        // The in-app wallet pays gas in CELO — CIP-64 feeCurrency params would
+        // break its plain eth_sendTransaction path.
+        if (_isLocalLogin()) return false;
         var ep = _getInjected();
         if (ep && ep.isMiniPay) return true;
         if (window.ethereum && window.ethereum.isMiniPay) return true;
@@ -119,7 +123,16 @@ window.P2PWallet = (function () {
 
     async function getProvider() {
         // Local self-custodial accounts sign with the browser wallet (PIN-decrypted).
+        // The wallet auto-locks after 15 min — prompt for the PIN instead of
+        // failing with "Wallet is locked" deep inside a transaction flow.
         if (_isLocalLogin() && typeof GMLocalWallet !== "undefined") {
+            if (!GMLocalWallet.isUnlocked()) {
+                if (typeof window._lwOpenUnlockModal === "function") {
+                    await window._lwOpenUnlockModal();
+                } else {
+                    throw new Error("Please unlock your GoodMarket wallet to continue.");
+                }
+            }
             return GMLocalWallet.getProvider();
         }
         var privy = await _getPrivyProvider({ promptLogin: true, timeoutMs: 10000 });
