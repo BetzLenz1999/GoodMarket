@@ -54,7 +54,9 @@ class ReferralBlockchain:
         return addr[:6] + "..." + addr[-4:]
 
     def get_referral_wallet_balance(self):
-        """Return the G$ balance of the REFERRAL_KEY wallet."""
+        """Return the G$ balance of the REFERRAL_KEY wallet, plus its CELO gas
+        balance so the admin dashboard can warn before a disbursement is
+        attempted with no gas."""
         if not self.referral_key:
             return {"success": False, "error": "REFERRAL_KEY not configured", "balance": 0}
         try:
@@ -66,12 +68,21 @@ class ReferralBlockchain:
             )
             balance_wei = contract.functions.balanceOf(account.address).call()
             balance_g = balance_wei / (10 ** 18)
-            return {
+            result = {
                 "success": True,
                 "balance": balance_g,
                 "balance_wei": balance_wei,
                 "wallet": account.address
             }
+            try:
+                celo_wei = self.w3.eth.get_balance(account.address)
+                result["celo_balance"] = celo_wei / (10 ** 18)
+                result["celo_balance_wei"] = celo_wei
+            except Exception as celo_err:
+                logger.warning(f"Could not read REFERRAL_KEY CELO balance: {celo_err}")
+                result["celo_balance"] = None
+                result["celo_balance_wei"] = None
+            return result
         except Exception as e:
             logger.error(f"Failed to get referral wallet balance: {e}")
             return {"success": False, "error": str(e), "balance": 0}
@@ -147,6 +158,26 @@ class ReferralBlockchain:
                 )
                 gas_limit = 250000
 
+            # CELO gas preflight: without this, a REFERRAL_KEY wallet holding
+            # G$ but no CELO fails on-chain with "insufficient funds for gas"
+            # and the referral lands in 'failed'. Queue it as pending instead so
+            # it pays out automatically once the wallet is refilled with gas.
+            celo_wei = self.w3.eth.get_balance(referral_account.address)
+            gas_cost_wei = gas_limit * gas_price
+            if celo_wei < gas_cost_wei:
+                logger.warning(
+                    f"Insufficient CELO gas on referral wallet: "
+                    f"{celo_wei / 1e18:.6f} CELO < {gas_cost_wei / 1e18:.6f} CELO needed. "
+                    f"Marking as pending_disbursed."
+                )
+                return {
+                    "success": False,
+                    "pending": True,
+                    "error": "insufficient_gas",
+                    "celo_available": celo_wei / 1e18,
+                    "celo_required": gas_cost_wei / 1e18,
+                }
+
             txn = contract.functions.transfer(
                 Web3.to_checksum_address(wallet_address),
                 amount_wei
@@ -191,6 +222,12 @@ class ReferralBlockchain:
             logger.error(f"Referral reward disbursement error for {reward_type}: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            # A gas failure should never strand the referral in 'failed' — it
+            # resolves itself once the REFERRAL_KEY wallet is refilled with
+            # CELO, so report it as pending and let the queue retry it.
+            err_text = str(e).lower()
+            if 'insufficient funds' in err_text or 'gas required exceeds' in err_text:
+                return {"success": False, "pending": True, "error": "insufficient_gas"}
             return {"success": False, "pending": False, "error": str(e)}
 
     def disburse_referral_reward_sync(self, wallet_address: str, amount: float, reward_type: str) -> dict:
