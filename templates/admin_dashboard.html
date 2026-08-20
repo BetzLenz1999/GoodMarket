@@ -2465,11 +2465,11 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
-            <!-- Referral Program Section - NEW MANUAL APPROVAL WORKFLOW -->
+            <!-- Referral Program Section - auto-disbursement + admin recovery -->
             <section id="referral-stats-section" class="section">
                 <div class="page-header">
                     <h1 class="page-title">🤝 Referral Management</h1>
-                    <p style="color: rgba(241, 245, 249, 0.7);">Manual approval workflow: Check CeloScan → Verify claim → Approve & Disburse</p>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Rewards auto-disburse after the referee finishes face verification or claims UBI. Use this page to monitor and to retry stuck/failed payouts.</p>
                 </div>
 
                 <!-- Summary Stats -->
@@ -2482,7 +2482,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1rem;">
                         <div>
                             <h2 style="margin:0 0 0.25rem;">💰 REFERRAL_KEY Wallet Status</h2>
-                            <p style="margin:0;font-size:0.85rem;color:rgba(241,245,249,0.6);">Monitor G$ balance needed for disbursements (Referrer: 1000 G$, Referee: 500 G$)</p>
+                            <p style="margin:0;font-size:0.85rem;color:rgba(241,245,249,0.6);">Monitor the G$ balance and CELO gas needed for disbursements (Referrer: 1000 G$, Referee: 500 G$)</p>
                         </div>
                         <button onclick="loadReferralKeyBalance()" class="admin-btn" style="background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.5);color:#86efac;white-space:nowrap;">
                             🔄 Refresh Balance
@@ -2496,14 +2496,20 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
 
                 <!-- Instructions Box -->
                 <div class="content-box" style="margin-bottom: 2rem; border: 1px solid rgba(251,191,36,0.3); background: rgba(251,191,36,0.05);">
-                    <h2 style="margin:0 0 0.5rem;color:#fbbf24;">📋 Manual Verification Instructions</h2>
+                    <h2 style="margin:0 0 0.5rem;color:#fbbf24;">📋 How Referral Disbursement Works</h2>
                     <p style="margin:0;font-size:0.9rem;color:rgba(241,245,249,0.7);line-height:1.6;">
-                        <strong>Workflow:</strong><br>
-                        1. Look at <strong>PENDING REFERRALS</strong> below<br>
-                        2. Click <strong>👁️ View</strong> to see referral details<br>
-                        3. Check referee's wallet on <strong>CeloScan</strong> to verify G$ claim<br>
-                        4. If verified, click <strong>✅ Approve & Disburse</strong><br>
-                        5. Rewards sent: Referrer <strong>1,000 G$</strong> | Referee <strong>500 G$</strong>
+                        <strong>Eligibility:</strong> the referee must create a NEW account with the free local
+                        (email + PIN) wallet and enter the referral code at sign-up. The referrer can use any
+                        provider (MetaMask, WalletConnect, MiniPay, or local).<br><br>
+                        <strong>Automatic flow:</strong><br>
+                        1. Referral is recorded as <strong>pending_face_verification</strong> at sign-up<br>
+                        2. When the referee finishes <strong>face verification</strong> or makes a <strong>UBI claim</strong>,
+                           rewards send automatically (Referrer <strong>1,000 G$</strong> | Referee <strong>500 G$</strong>)<br>
+                        3. A background reconciler re-checks stuck referrals every few minutes<br><br>
+                        <strong>Manual recovery:</strong> if a referral is stuck (<em>failed</em> / <em>disbursing</em> /
+                        <em>pending_disbursed</em>), first make sure the <strong>REFERRAL_KEY wallet has enough G$ AND CELO gas</strong>
+                        (see status above), then click <strong>👁️ View → ✅ Approve & Disburse</strong>. Retrying is safe —
+                        already-paid legs are never sent twice.
                     </p>
                 </div>
 
@@ -2511,8 +2517,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 <div class="content-box" style="margin-bottom: 2rem; border: 1px solid rgba(251,191,36,0.3); background: rgba(251,191,36,0.05);">
                     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1rem;">
                         <div>
-                            <h2 style="margin:0 0 0.25rem;color:#fbbf24;">⏳ Pending Referrals (Requires Admin Action)</h2>
-                            <p style="margin:0;font-size:0.85rem;color:rgba(241,245,249,0.6);">These referrals need manual CeloScan verification and approval</p>
+                            <h2 style="margin:0 0 0.25rem;color:#fbbf24;">⏳ Pending Referrals</h2>
+                            <p style="margin:0;font-size:0.85rem;color:rgba(241,245,249,0.6);">Awaiting referee face verification / UBI claim — these disburse automatically. Stuck or failed ones can be retried from 👁️ View.</p>
                         </div>
                         <button onclick="loadPendingReferrals()" class="admin-btn" style="background:rgba(251,191,36,0.2);border:1px solid rgba(251,191,36,0.5);color:#fbbf24;white-space:nowrap;">
                             🔄 Refresh List
@@ -7195,9 +7201,9 @@ async function loadMinigamesMaintenance() {
         function statusBadge(status) {
             const map = {
                 'completed': { label: '✅ Completed', color: '#10b981', bg: 'rgba(16,185,129,0.15)' },
-                'pending_face_verification': { label: '⏳ Pending Face Verify', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
-                'pending_disbursed': { label: '💸 Pending Disbursement', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
-                'disbursing': { label: '⏳ Disbursing (stuck?)', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+                'pending_face_verification': { label: '⏳ Awaiting FV / UBI claim', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+                'pending_disbursed': { label: '💸 Queued (low G$/gas)', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
+                'disbursing': { label: '⏳ Disbursing (stuck? retry)', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
                 'failed': { label: '❌ Failed (retry)', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' }
             };
             const s = map[status] || { label: status, color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
@@ -7279,10 +7285,12 @@ async function loadMinigamesMaintenance() {
                 }
                 
                 const balanceG = Number(data.balance_g || 0);
+                const celoBalance = data.celo_balance === null || data.celo_balance === undefined ? null : Number(data.celo_balance);
+                const hasGas = data.has_gas !== false;
                 const pendingCount = data.pending_disbursements_count || 0;
                 const pendingAmount = Number(data.total_pending_amount_g || 0);
                 const canProcess = data.can_process || false;
-                
+
                 // Determine color based on balance status
                 let balanceColor = '#10b981'; // green
                 let balanceStatus = '✅ Sufficient';
@@ -7293,12 +7301,21 @@ async function loadMinigamesMaintenance() {
                     balanceColor = '#f59e0b'; // yellow
                     balanceStatus = '⚠️ Medium Balance';
                 }
-                
+
+                const gasColor = celoBalance === null ? '#94a3b8' : (hasGas ? '#10b981' : '#ef4444');
+                const gasLabel = celoBalance === null ? 'Unknown' : `${celoBalance.toFixed(5)} CELO`;
+                const gasStatus = celoBalance === null ? 'Could not read gas balance' : (hasGas ? '✅ Gas OK' : '⚠️ No gas — payouts will queue!');
+
                 balanceBox.innerHTML = `
                     <div class="stat-card" style="border-color:${balanceColor};">
                         <div class="stat-label">G$ Balance</div>
                         <div class="stat-value" style="color:${balanceColor}">${balanceG.toFixed(2)} G$</div>
                         <div style="font-size:0.75rem;color:${balanceColor};margin-top:0.5rem">${balanceStatus}</div>
+                    </div>
+                    <div class="stat-card" style="border-color:${gasColor};">
+                        <div class="stat-label">CELO Gas Balance</div>
+                        <div class="stat-value" style="color:${gasColor}">${gasLabel}</div>
+                        <div style="font-size:0.75rem;color:${gasColor};margin-top:0.5rem">${gasStatus}</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">Pending Disbursements</div>
@@ -7308,20 +7325,25 @@ async function loadMinigamesMaintenance() {
                     <div class="stat-card">
                         <div class="stat-label">Can Process Now?</div>
                         <div class="stat-value" style="color:${canProcess ? '#10b981' : '#ef4444'}">${canProcess ? '✅ Yes' : '❌ No'}</div>
-                        <div style="font-size:0.75rem;color:rgba(241,245,249,0.5);margin-top:0.5rem">${canProcess ? 'Balance sufficient' : 'Need more funds'}</div>
+                        <div style="font-size:0.75rem;color:rgba(241,245,249,0.5);margin-top:0.5rem">${canProcess ? 'G$ and gas sufficient' : 'Top up G$ and/or CELO gas'}</div>
                     </div>
                 `;
-                
-                // Show alert if balance is low
+
+                // Show alerts for low G$ balance and/or missing CELO gas — both
+                // would queue disbursements instead of paying out.
+                const referralKeyAlerts = [];
                 if (balanceG < pendingAmount) {
+                    referralKeyAlerts.push(`⚠️ <strong>Low G$ Balance:</strong> REFERRAL_KEY needs at least ${(pendingAmount - balanceG).toFixed(2)} more G$ to process pending disbursements.`);
+                }
+                if (!hasGas) {
+                    referralKeyAlerts.push('⛽ <strong>No CELO Gas:</strong> the REFERRAL_KEY wallet has no CELO for gas — referral payouts stay queued until you send a small amount of CELO to it.');
+                }
+                if (referralKeyAlerts.length) {
                     alertBox.style.display = 'block';
                     alertBox.style.background = 'rgba(239,68,68,0.15)';
                     alertBox.style.color = '#ef4444';
                     alertBox.style.borderLeft = '4px solid #ef4444';
-                    alertBox.innerHTML = `
-                        ⚠️ <strong>Low Balance Alert:</strong> REFERRAL_KEY needs at least ${(pendingAmount - balanceG).toFixed(2)} more G$ to process pending disbursements. 
-                        Please top up the wallet.
-                    `;
+                    alertBox.innerHTML = referralKeyAlerts.join('<br>');
                 } else {
                     alertBox.style.display = 'none';
                 }
@@ -7417,7 +7439,7 @@ async function loadMinigamesMaintenance() {
                         <td style="padding:0.75rem 0.5rem"><code style="background:rgba(251,191,36,0.15);padding:0.25rem 0.5rem;border-radius:4px;font-size:0.85rem;color:#fbbf24">${r.referral_code || '—'}</code></td>
                         <td style="padding:0.75rem 0.5rem;font-family:monospace;font-size:0.82rem">${shortWallet(r.referee_wallet)}</td>
                         <td style="padding:0.75rem 0.5rem;font-family:monospace;font-size:0.82rem">${shortWallet(r.referrer_wallet)}</td>
-                        <td style="padding:0.75rem 0.5rem">${statusBadge(r.status)}</td>
+                        <td style="padding:0.75rem 0.5rem">${statusBadge(r.status)}${r.error_message ? `<div style="font-size:0.72rem;color:#fca5a5;margin-top:0.3rem;max-width:220px;word-break:break-word">${String(r.error_message).replace(/</g, '&lt;')}</div>` : ''}</td>
                         <td style="padding:0.75rem 0.5rem;color:rgba(241,245,249,0.6);font-size:0.8rem">${r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}</td>
                         <td style="padding:0.75rem 0.5rem">
                             <button class="admin-btn" style="padding:0.4rem 0.75rem;font-size:0.82rem;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.5);color:#a5b4fc;" onclick="viewReferralDetail('${(r.referral_code || '').replace(/'/g, '')}', '${r.id || ''}')">
@@ -7631,23 +7653,37 @@ async function loadMinigamesMaintenance() {
                     body: JSON.stringify({ referral_code: referralCode, referral_id: referralId || undefined })
                 });
                 const data = await res.json();
-                
+
                 if (data.success) {
-                    alert(`✅ SUCCESS!\n\nReferral ${referralCode} approved and disbursed!\n\n• Referrer: 1,000 G$\n• Referee: 500 G$`);
+                    const result = data.result || {};
+                    const txLines = [
+                        result.referee_tx ? `Referee TX: https://celoscan.io/tx/${result.referee_tx}` : '',
+                        result.referrer_tx ? `Referrer TX: https://celoscan.io/tx/${result.referrer_tx}` : '',
+                    ].filter(Boolean).join('\n');
+                    alert(`✅ SUCCESS!\n\nReferral ${referralCode} approved and disbursed!\n\n• Referrer: 1,000 G$\n• Referee: 500 G$${txLines ? '\n\n' + txLines : ''}`);
                     closeReferralModal();
                     loadPendingReferrals();
                     loadCompletedReferrals();
                     loadReferralStats();
                     loadReferralKeyBalance();
+                } else if (data.result && data.result.pending) {
+                    // Queued because the REFERRAL_KEY wallet lacks G$ or CELO
+                    // gas — not an error: the reconciler pays it after top-up.
+                    alert(`⏳ QUEUED\n\nReferral ${referralCode} could not be paid yet (insufficient G$ balance or CELO gas on the REFERRAL_KEY wallet).\n\nTop up the wallet, then retry from this dashboard — the background reconciler also retries automatically.`);
+                    closeReferralModal();
+                    loadPendingReferrals();
+                    loadReferralStats();
+                    loadReferralKeyBalance();
                 } else {
                     const referrerStatus = data.referrer_status || 'unknown';
                     const refereeStatus = data.referee_status || 'unknown';
-                    alert(`❌ Failed: ${data.error || 'Unknown error'}\n\nReferrer Status: ${referrerStatus}\nReferee Status: ${refereeStatus}\n\nCheck server logs for details.`);
+                    alert(`❌ Failed: ${data.error || 'Unknown error'}\n\nReferrer Status: ${referrerStatus}\nReferee Status: ${refereeStatus}\n\nCheck the REFERRAL_KEY wallet G$ + CELO gas above, then retry.`);
                     if (btn) {
                         btn.disabled = false;
                         btn.innerHTML = '🟢 ✅ Approve & Disburse Rewards';
                     }
                 }
+
             } catch (e) {
                 alert(`❌ Error: ${e.message}`);
                 if (btn) {
