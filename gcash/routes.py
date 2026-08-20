@@ -5,6 +5,7 @@ Admin reviews in the dashboard and approves (sends GCash manually) or rejects
 (triggers auto-refund). Unreviewed requests auto-refund after 24 hours.
 """
 import logging
+import re
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, session
 
@@ -137,7 +138,8 @@ def admin_list_requests():
 
 @gcash_bp.route("/admin/requests/<int:request_id>/approve", methods=["POST"])
 def admin_approve(request_id):
-    """Approve a cashout request (admin has sent GCash payment manually)."""
+    """Approve a cashout request: requires the GCash reference # and a receipt
+    screenshot (uploaded to ImgBB) proving the payment was actually sent."""
     admin_wallet, err = _require_admin()
     if err:
         return err
@@ -148,12 +150,40 @@ def admin_approve(request_id):
     if req["status"] != "pending":
         return jsonify({"success": False, "error": f"Request is already {req['status']}."}), 409
 
-    body = request.get_json(force=True, silent=True) or {}
-    note = body.get("note", "").strip()
+    # Multipart form (FormData) — JSON fallback keeps API callers working.
+    if request.content_type and "multipart/form-data" in request.content_type:
+        reference_number = (request.form.get("reference_number") or "").strip()
+        note = (request.form.get("note") or "").strip()
+        receipt_file = request.files.get("receipt_image")
+    else:
+        body = request.get_json(force=True, silent=True) or {}
+        reference_number = (body.get("reference_number") or "").strip()
+        note = (body.get("note") or "").strip()
+        receipt_file = None
+
+    if not reference_number:
+        return jsonify({"success": False, "error": "GCash reference number is required."}), 400
+    if len(reference_number) > 50 or not re.match(r"^[A-Za-z0-9\- ]+$", reference_number):
+        return jsonify({"success": False, "error": "Invalid reference number format."}), 400
+
+    receipt_url = None
+    if receipt_file and receipt_file.filename:
+        from object_storage_client import upload_to_imgbb
+        upload = upload_to_imgbb(receipt_file)
+        if not upload.get("success"):
+            return jsonify({
+                "success": False,
+                "error": "Receipt upload failed: " + upload.get("error", "unknown error"),
+            }), 500
+        receipt_url = upload.get("url")
+    else:
+        return jsonify({"success": False, "error": "Receipt screenshot is required as proof of payment."}), 400
 
     updated = update_request(request_id, {
         "status": "approved",
-        "admin_note": note or None,
+        "admin_note": note or "✅ Successful — GCash payment sent.",
+        "reference_number": reference_number,
+        "receipt_image_url": receipt_url,
         "reviewed_by": admin_wallet.lower(),
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -161,8 +191,13 @@ def admin_approve(request_id):
     if not updated:
         return jsonify({"success": False, "error": "Failed to update request."}), 500
 
-    logger.info(f"✅ GCash cashout #{request_id} approved by {admin_wallet[:8]}…")
-    return jsonify({"success": True, "message": f"Request #{request_id} approved."})
+    logger.info(f"✅ GCash cashout #{request_id} approved by {admin_wallet[:8]}… ref={reference_number}")
+    return jsonify({
+        "success": True,
+        "message": f"Request #{request_id} approved. Ref #: {reference_number}",
+        "reference_number": reference_number,
+        "receipt_image_url": receipt_url,
+    })
 
 
 @gcash_bp.route("/admin/requests/<int:request_id>/reject", methods=["POST"])
