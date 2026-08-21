@@ -277,6 +277,46 @@ def _is_insufficient_gas_error(err: Exception) -> bool:
     )
 
 
+def _wait_for_receipt_patient(w3, tx_hash, timeout_sec: int = 60, poll_sec: float = 2.0):
+    """Poll for a tx receipt without raising on timeout.
+
+    Unlike ``w3.eth.wait_for_transaction_receipt`` this tolerates individual
+    RPC hiccups and returns ``None`` instead of raising ``TimeExhausted`` when
+    the receipt is not found within ``timeout_sec``.
+    """
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            receipt = w3.eth.get_transaction_receipt(tx_hash)
+            if receipt is not None:
+                return receipt
+        except Exception:
+            # RPC hiccup or tx not yet visible — keep polling.
+            pass
+        time.sleep(poll_sec)
+    return None
+
+
+def check_refund_tx_status(tx_hash: str) -> str:
+    """Return ``confirmed`` / ``reverted`` / ``pending`` for a broadcast refund tx.
+
+    Used by the refund retry scheduler so an order whose refund tx was already
+    broadcast (but unconfirmed when the order was parked) is never re-sent —
+    that would double-refund the user.
+    """
+    try:
+        w3 = Web3(Web3.HTTPProvider(CELO_RPC_URL))
+        if not w3.is_connected():
+            return "pending"
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        if receipt is None:
+            return "pending"
+        return "confirmed" if receipt.status == 1 else "reverted"
+    except Exception as e:
+        logger.warning(f"⚠️ check_refund_tx_status({tx_hash}) failed: {e}")
+        return "pending"
+
+
 def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
     """
     Send G$ refund from REFUND_KEY wallet to user.
@@ -393,10 +433,27 @@ def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
 
         signed = w3.eth.account.sign_transaction(tx, private_key=refund_account.key)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+        tx_hex = "0x" + tx_hash.hex() if not tx_hash.hex().startswith("0x") else tx_hash.hex()
+
+        # The tx is now broadcast. wait_for_transaction_receipt(timeout=60) can
+        # raise TimeExhausted while the tx is still pending — hard-failing here
+        # marks the order refund_failed even though the refund may confirm
+        # later (and a manual re-send would DOUBLE-refund). Poll patiently;
+        # if still unconfirmed, report submitted_unconfirmed WITH the tx hash
+        # so the retry path can check the on-chain receipt before re-sending.
+        receipt = _wait_for_receipt_patient(w3, tx_hash, timeout_sec=60)
+        if receipt is None:
+            logger.warning(
+                f"⏳ Refund tx broadcast but unconfirmed: order={order_id} tx={tx_hex}"
+            )
+            return {
+                "success": False,
+                "error": "Refund transaction was submitted but is still confirming on-chain.",
+                "error_type": "submitted_unconfirmed",
+                "tx_hash": tx_hex,
+            }
 
         if receipt.status == 1:
-            tx_hex = "0x" + tx_hash.hex() if not tx_hash.hex().startswith("0x") else tx_hash.hex()
             logger.info(f"✅ Refund sent: {amount_gd} G$ to {to_wallet} — tx: {tx_hex}")
             return {"success": True, "tx_hash": tx_hex}
         else:
