@@ -308,6 +308,32 @@ def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
         amount_dec = Decimal(str(amount_gd).replace(",", "").strip())
         amount_wei = int((amount_dec * (Decimal(10) ** GD_DECIMALS)).to_integral_value(rounding=ROUND_HALF_UP))
 
+        # Preflight G$ balance: without this, a refund wallet with no G$ sends a
+        # transfer that reverts on-chain (estimate_gas reverts with a non-gas
+        # message, so it falls back and continues) and the order hard-fails as
+        # refund_failed even after the admin refills CELO gas. Surface a
+        # distinct error_type so routes park it for auto-retry (like gas).
+        try:
+            gd_balance_wei = token_contract.functions.balanceOf(refund_account.address).call()
+            if gd_balance_wei < amount_wei:
+                shortfall_gd = ((amount_wei - gd_balance_wei) / (Decimal(10) ** GD_DECIMALS))
+                logger.error(
+                    f"❌ Refund wallet has insufficient G$ balance: order={order_id} "
+                    f"needed={amount_wei} available={gd_balance_wei}"
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        "Refund wallet needs a G$ top-up to send your refund "
+                        f"(short by {shortfall_gd:.2f} G$)."
+                    ),
+                    "error_type": "insufficient_balance",
+                }
+        except Exception as bal_err:
+            # The read is best-effort; if the RPC is flaky we continue and let
+            # the gas preflight / send path do the real work.
+            logger.warning(f"⚠️ Could not preflight refund wallet G$ balance: {bal_err}")
+
         # Preflight: does the refund wallet have enough CELO to pay gas for THIS
         # transfer? We estimate the real gas usage live (~51k for an ERC-20
         # transfer) rather than assuming a bloated fixed budget, so a modest gas
