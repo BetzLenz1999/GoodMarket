@@ -276,6 +276,7 @@ def admin_reject(request_id):
         return jsonify({
             "success": True,
             "message": f"Request #{request_id} rejected. G$ refunded: {refund_result['tx_hash'][:16]}…",
+            "tx_hash": refund_result["tx_hash"],
         })
     else:
         # Refund failed — park as refund_failed (kept any broadcast tx hash so a
