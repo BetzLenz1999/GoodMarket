@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <meta name="theme-color" content="#050510">
+    <meta name="theme-color" content="#f7f4ef">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
@@ -1981,6 +1981,297 @@
             .ubi-hero-orb { width: 196px; height: 196px; }
             .ubi-hero-amount { font-size: 1.8rem; }
         }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme override (2026-08)
+           Modern RewardJoy-style light UI: warm cream canvas, white cards,
+           soft orange accents that are easy on the eyes. Appended AFTER the
+           original dark theme so equal-specificity rules here win — no
+           original rule was edited. Inline dark styles in markup/JS were
+           migrated alongside; keep new markup on the CSS variables below.
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --bg: #f7f4ef;
+            --bg2: #faf7f2;
+            --card: #ffffff;
+            --card-border: #e9e2d6;
+            --card-soft: rgba(67,56,43,0.05);
+            --blue: #2563eb;
+            --blue-dim: rgba(37,99,235,0.1);
+            --blue-glow: rgba(37,99,235,0.25);
+            --accent: #f97316;
+            --accent-rgb: 249,115,22;
+            --accent-secondary: #0d9488;
+            --accent-secondary-rgb: 13,148,136;
+            --green: #16a34a;
+            --green-dim: rgba(22,163,74,0.1);
+            --gold: #fb923c;
+            --gold-rgb: 249,115,22;
+            --gold-deep: #ea580c;
+            --primary-button-text: #ffffff;
+            --red: #dc2626;
+            --text: #292524;
+            --text-dim: #78716c;
+            --text-muted: #a8a29e;
+        }
+
+        body { background: var(--bg); }
+        @media (min-width: 481px) {
+            body { border-left: 1px solid rgba(67,56,43,0.08); border-right: 1px solid rgba(67,56,43,0.08); }
+        }
+
+        /* ── Top bar ── */
+        .top-bar { background: rgba(250,247,242,0.88); }
+        .top-bar-title { color: var(--text); }
+        .top-bar-subtitle { color: var(--text-dim); }
+        .icon-btn {
+            background: #fff;
+            border: 1px solid var(--card-border);
+            color: var(--text-dim);
+            box-shadow: 0 1px 3px rgba(67,56,43,0.07);
+        }
+        .icon-btn:hover { background: #fdf9f3; }
+
+        .wallet-reminder-banner {
+            background: #fef3c7;
+            border-color: rgba(217,119,6,0.35);
+            color: #92400e;
+        }
+
+        /* ── Portfolio card: warm sunrise gradient (colored hero card) ── */
+        .balance-card {
+            background:
+                radial-gradient(120% 80% at 12% 10%, rgba(255,255,255,0.24) 0%, transparent 55%),
+                radial-gradient(110% 80% at 92% 92%, rgba(253,186,116,0.4) 0%, transparent 55%),
+                linear-gradient(135deg, #fb923c 0%, #f97316 55%, #ea580c 100%);
+            border-color: rgba(234,88,12,0.4);
+            box-shadow:
+                0 14px 34px rgba(234,88,12,0.24),
+                0 1px 0 rgba(255,255,255,0.28) inset;
+        }
+        .balance-card::after { background: radial-gradient(circle, rgba(255,237,213,0.5) 0%, transparent 70%); }
+        .pc-brand-sub { color: #ffedd5; }
+        .pc-field-label { color: rgba(255,255,255,0.78); }
+        .pc-brand-marks .mc-c1 { background: rgba(255,255,255,0.92); }
+        .pc-brand-marks .mc-c2 { background: rgba(255,237,213,0.75); mix-blend-mode: normal; }
+
+        /* ── Action rows ── */
+        .action-item {
+            background: var(--card);
+            border-color: var(--card-border);
+            box-shadow: 0 1px 2px rgba(67,56,43,0.05);
+        }
+        .action-item:hover { border-color: rgba(var(--accent-rgb),0.45); background: #fff7ed; }
+        .action-circle { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.22); }
+        .action-item:hover .action-circle { background: rgba(var(--accent-rgb),0.14); border-color: rgba(var(--accent-rgb),0.4); }
+        .action-circle.claim-circle {
+            background: radial-gradient(circle at 30% 25%, #ffffff 0%, #ffedd5 42%, #fdba74 100%);
+            border-color: rgba(var(--accent-rgb),0.5);
+        }
+        .claim-glyph { color: #c2410c; text-shadow: none; }
+        .action-item:hover .claim-glyph { color: #9a3412; }
+        .claim-badge { background: linear-gradient(135deg, #fdba74, #f97316); color: #fff; box-shadow: 0 3px 10px rgba(249,115,22,0.35); }
+        .action-label { color: #57534e; }
+
+        /* ── Claim button box ── */
+        .claim-button-box {
+            background: linear-gradient(135deg, rgba(251,191,36,0.16) 0%, rgba(var(--accent-rgb),0.12) 100%);
+            border-color: rgba(var(--accent-rgb),0.42);
+        }
+        .claim-button-box:hover {
+            background: linear-gradient(135deg, rgba(251,191,36,0.24) 0%, rgba(var(--accent-rgb),0.18) 100%);
+            box-shadow: 0 4px 18px rgba(var(--accent-rgb),0.2);
+        }
+        .claim-button-box.is-disabled { background: var(--card-soft); border-color: var(--card-border); }
+        .claim-button-box.is-claimed { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.32); }
+        .claim-button-box.is-claimed:hover { background: rgba(22,163,74,0.12); border-color: rgba(22,163,74,0.42); box-shadow: 0 4px 16px rgba(22,163,74,0.14); }
+        .claim-box-icon {
+            background: radial-gradient(circle at 30% 25%, #ffffff, #ffedd5 50%, #fdba74 100%);
+            color: #c2410c;
+            box-shadow: 0 0 10px rgba(var(--accent-rgb),0.22);
+        }
+        .claim-box-icon.claimed-icon {
+            background: radial-gradient(circle at 30% 25%, #f0fdf4, #bbf7d0 60%, #86efac 100%);
+            color: #15803d;
+            box-shadow: 0 0 10px rgba(22,163,74,0.2);
+        }
+        .claim-box-title { color: var(--text); }
+        .claim-box-amount { color: var(--text-dim); }
+        .claim-box-amount .amount-value { color: #15803d; }
+        .claim-box-arrow { color: var(--text-muted); }
+        .claim-button-box:hover .claim-box-arrow { color: var(--accent); }
+        .claim-box-timer { color: var(--text-muted); }
+
+        /* ── Tabs ── */
+        .tab-bar { border-bottom-color: var(--card-border); }
+        .tab { color: var(--text-muted); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        /* ── Token + transaction lists ── */
+        .token-item { border-bottom-color: rgba(67,56,43,0.08); }
+        .token-symbol, .token-amount { color: var(--text); }
+        .tx-item { border-bottom-color: rgba(67,56,43,0.08); }
+        .tx-dir { color: var(--text); }
+        .tx-icon-circle.sent             { background: rgba(220,38,38,0.1);  color: #dc2626; }
+        .tx-icon-circle.received         { background: rgba(22,163,74,0.1);  color: #16a34a; }
+        .tx-icon-circle.claim            { background: rgba(249,115,22,0.12); color: #ea580c; }
+        .tx-icon-circle.swap             { background: rgba(8,145,178,0.1);  color: #0891b2; }
+        .tx-icon-circle.savings_deposit  { background: rgba(217,119,6,0.12); color: #b45309; }
+        .tx-icon-circle.savings_withdraw { background: rgba(234,88,12,0.12); color: #c2410c; }
+        .tx-badge.claim            { background: rgba(249,115,22,0.14); color: #c2410c; }
+        .tx-badge.swap             { background: rgba(8,145,178,0.12);  color: #0e7490; }
+        .tx-badge.savings_deposit  { background: rgba(217,119,6,0.14);  color: #92400e; }
+        .tx-badge.savings_withdraw { background: rgba(234,88,12,0.14);  color: #9a3412; }
+        .tx-badge.xdc-net          { background: rgba(2,132,199,0.12);  color: #0369a1; }
+        .tx-badge.celo-net         { background: rgba(22,163,74,0.12);  color: #15803d; }
+        .tx-amount.claim            { color: #ea580c; }
+        .tx-amount.swap             { color: #0891b2; }
+        .tx-amount.savings_deposit  { color: #b45309; }
+        .tx-amount.savings_withdraw { color: #c2410c; }
+        .tx-hash-link { color: var(--blue); }
+
+        /* ── Modals ── */
+        .modal-overlay { background: rgba(41,37,36,0.45); }
+        .modal-sheet {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 -12px 40px rgba(67,56,43,0.18);
+        }
+        .modal-sheet .modal-sheet-footer { background: #ffffff; border-top-color: var(--card-border); }
+        .modal-handle { background: rgba(67,56,43,0.18); }
+        .modal-title { color: var(--text); }
+
+        /* ── Forms ── */
+        .form-input { background: #fbfaf8; border-color: var(--card-border); color: var(--text); }
+        .form-input:focus { border-color: rgba(var(--accent-rgb),0.55); }
+        .form-input::placeholder { color: var(--text-muted); }
+        .max-btn { background: rgba(var(--accent-rgb),0.1); border-color: rgba(var(--accent-rgb),0.32); color: #c2410c; }
+        .token-chip { background: #fff; border-color: var(--card-border); color: var(--text-dim); }
+        .token-chip.active { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.5); color: #c2410c; }
+        .address-box { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.3); }
+        .address-short { color: #c2410c; }
+
+        /* ── Buttons ── */
+        .btn-primary { border-color: rgba(234,88,12,0.4); box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.22); }
+        .btn-primary .spinner { border-color: rgba(255,255,255,0.35); border-top-color: #fff; }
+        .btn-secondary { background: #fff; border-color: var(--card-border); color: var(--text); }
+        .btn-secondary:hover { background: #faf7f2; border-color: rgba(var(--accent-rgb),0.4); color: var(--text); }
+        .btn-danger { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.25); color: #dc2626; }
+
+        /* ── Claim modal pieces ── */
+        .claim-network-card { background: #fbfaf8; border-color: var(--card-border); }
+        .claim-network-card.is-recommended {
+            background: linear-gradient(135deg, rgba(13,148,136,0.08), rgba(var(--accent-rgb),0.06));
+            border-color: rgba(13,148,136,0.35);
+            box-shadow: none;
+        }
+        .claim-network-icon { background: #fff; border: 1px solid var(--card-border); }
+        .claim-network-name { color: var(--text); }
+        .claim-network-status { background: var(--card-soft); color: var(--text-dim); }
+        .claim-network-status.available { background: rgba(22,163,74,0.12); color: #15803d; }
+        .claim-network-status.claimed { background: var(--card-soft); color: var(--text-muted); }
+        .claim-network-status.warning { background: rgba(217,119,6,0.14); color: #92400e; }
+        .ubi-pool-row { background: #fbfaf8; border-color: var(--card-border); }
+        .ubi-pool-value { color: #c2410c; }
+        .countdown-box { background: #fbfaf8; border: 1px solid var(--card-border); }
+        .countdown-display { background: linear-gradient(90deg, #ea580c, #0d9488); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+
+        /* ── Warnings / alerts ── */
+        .pk-warning { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.22); color: #b91c1c; }
+        .pk-box { background: #fbfaf8; border-color: var(--card-border); color: var(--text-dim); }
+        .alert-success { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.28); color: #15803d; }
+        .alert-error   { background: rgba(220,38,38,0.07); border-color: rgba(220,38,38,0.25); color: #b91c1c; }
+        .alert-info    { background: rgba(var(--accent-rgb),0.08); border-color: rgba(var(--accent-rgb),0.28); color: #c2410c; }
+
+        .spinner { border-color: rgba(var(--accent-rgb),0.2); border-top-color: var(--accent); }
+        .nav-feedback-box { background: #fff; border-color: var(--card-border); color: var(--text); box-shadow: 0 10px 30px rgba(67,56,43,0.18); }
+
+        /* ── Savings ── */
+        .savings-popup-header { background: #fbfaf8; border-bottom-color: var(--card-border); }
+        .savings-popup-title { color: var(--text); }
+        .savings-popup-copy { color: var(--text-dim); }
+        .savings-popup-fallback { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.3); color: #15803d; }
+        .savings-popup-skip { background: #fff; border-color: var(--card-border); color: var(--text-dim); }
+        .savings-popup-explainer { background: #fbfaf8; border-color: var(--card-border); color: var(--text-dim); }
+        .savings-popup-explainer strong { color: var(--text); }
+        .savings-popup-close { background: var(--card-soft); color: var(--text-dim); }
+        .savings-popup-iframe { background: #fff; }
+        .savings-card { background: linear-gradient(135deg, rgba(22,163,74,0.07), rgba(13,148,136,0.06)); border-color: rgba(22,163,74,0.25); }
+        .savings-label { color: #15803d; }
+        .savings-value { color: #15803d; }
+        .savings-btn { background: rgba(22,163,74,0.1); border-color: rgba(22,163,74,0.3); color: #15803d; }
+
+        /* ── Raffle ── */
+        .raffle-modal-overlay { background: rgba(41,37,36,0.45); }
+        .raffle-card { background: linear-gradient(135deg, #fffbeb, #fff7ed); border-color: rgba(217,119,6,0.3); box-shadow: 0 12px 30px rgba(67,56,43,0.12); }
+        .raffle-kicker { color: #b45309; }
+        .raffle-title { color: var(--text); }
+        .raffle-status-pill { background: rgba(22,163,74,0.1); border-color: rgba(22,163,74,0.3); color: #15803d; }
+        .raffle-copy { color: var(--text-dim); }
+        .raffle-stat { background: #fff; border-color: var(--card-border); }
+        .raffle-stat-label { color: var(--text-muted); }
+        .raffle-stat-value { color: var(--text); }
+        .raffle-btn.info { background: #fff; border-color: var(--card-border); color: var(--text-dim); }
+        .raffle-alert { background: #fff; border-color: var(--card-border); color: var(--text-dim); }
+        .raffle-alert.error   { color: #b91c1c; border-color: rgba(220,38,38,0.3);  background: rgba(220,38,38,0.06); }
+        .raffle-alert.success { color: #15803d; border-color: rgba(22,163,74,0.3);  background: rgba(22,163,74,0.07); }
+        .raffle-alert.info    { color: #1d4ed8; border-color: rgba(37,99,235,0.28); background: rgba(37,99,235,0.06); }
+        .raffle-how-to { background: #fff; border-color: var(--card-border); }
+        .raffle-how-to-title { color: var(--text); }
+        .raffle-how-to-list { color: var(--text-dim); }
+        .raffle-explainer { background: #eff6ff; border-color: rgba(37,99,235,0.25); }
+        .raffle-explainer-title { color: #1d4ed8; }
+        .raffle-explainer-copy, .raffle-explainer-list { color: var(--text-dim); }
+        .raffle-close-btn { background: var(--card-soft); color: var(--text-dim); }
+
+        /* ── UBI hero orb ── */
+        .ubi-hero-orb {
+            background: radial-gradient(circle at 50% 40%, rgba(var(--accent-rgb),0.16) 0%, rgba(var(--accent-rgb),0.09) 45%, transparent 75%);
+            border-color: rgba(var(--accent-rgb),0.35);
+        }
+        .ubi-hero-orb.is-claimed {
+            background: radial-gradient(circle at 50% 40%, rgba(22,163,74,0.14) 0%, rgba(22,163,74,0.07) 45%, transparent 78%);
+            border-color: rgba(22,163,74,0.35);
+        }
+        .ubi-hero-orb.is-disabled {
+            background: radial-gradient(circle at 50% 40%, rgba(168,162,158,0.16) 0%, rgba(168,162,158,0.07) 55%, transparent 80%);
+            border-color: rgba(168,162,158,0.5);
+        }
+        .ubi-hero-eyebrow { color: var(--text-dim); }
+        .ubi-hero-amount { color: var(--text); }
+        .ubi-hero-amount .unit, .ubi-hero-orb.is-claimed .ubi-hero-amount .unit { color: #15803d; }
+        .ubi-hero-sub { color: var(--text-dim); }
+        .ubi-hero-timer { color: var(--text-muted); }
+
+        /* ── Bottom navigation + sheet ── */
+        .wallet-bottom-nav {
+            background: rgba(255,255,255,0.96);
+            border-top-color: var(--card-border);
+            box-shadow: 0 -8px 24px rgba(67,56,43,0.08);
+        }
+        .bn-item { color: #8a8378; }
+        .bn-item:hover, .bn-item.active {
+            background: rgba(var(--accent-rgb),0.12);
+            color: #ea580c;
+            box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb),0.22);
+        }
+        .bn-sheet-overlay { background: rgba(41,37,36,0.4); }
+        .bn-sheet { background: #fff; border-top-color: var(--card-border); box-shadow: 0 -12px 40px rgba(67,56,43,0.15); }
+        .bn-sheet-handle { background: rgba(67,56,43,0.18); }
+        .bn-sheet-title { color: var(--text); }
+        .bn-sheet-item { background: #fff; border-color: var(--card-border); }
+        .bn-sheet-item:hover { border-color: rgba(var(--accent-rgb),0.4); background: #fff7ed; }
+        .bn-sheet-item .bn-sheet-circle { background: #faf7f2; border-color: var(--card-border); }
+        .bn-sheet-item .bn-sheet-name { color: var(--text-dim); }
+
+        /* ── Private key export card ── */
+        .private-key-export-card { background: #fef3c7; border-color: rgba(217,119,6,0.35); }
+        .private-key-export-card .warning-title { color: #92400e; }
+        .private-key-export-card .warning-copy { color: #78350f; }
+        .private-key-export-card .confirm-phrase { background: #fff; border-color: rgba(217,119,6,0.3); color: var(--text); }
+        .private-key-export-card .export-status.error { color: #b91c1c; }
+        .private-key-export-card .export-status.info { color: #1d4ed8; }
+
     </style>
 </head>
 <body>
@@ -2289,7 +2580,7 @@
         <div class="token-list">
             <div class="token-item">
                 <div class="token-icon" style="background:rgba(127,140,255,0.14);">
-                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#151f49"/><text x="22" y="28" text-anchor="middle" font-size="13" fill="#b9c4ff" font-weight="900" font-family="Inter,sans-serif">G$</text></svg>
+                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#eef0ff"/><text x="22" y="28" text-anchor="middle" font-size="13" fill="#5b64d8" font-weight="900" font-family="Inter,sans-serif">G$</text></svg>
                 </div>
                 <div class="token-meta">
                     <div class="token-symbol">G$</div>
@@ -2302,7 +2593,7 @@
             </div>
             <div class="token-item">
                 <div class="token-icon" style="background:rgba(53,168,105,0.12);">
-                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#0a2018"/><text x="22" y="28" text-anchor="middle" font-size="11" fill="#35a869" font-weight="900" font-family="Inter,sans-serif">CELO</text></svg>
+                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#e7f6ee"/><text x="22" y="28" text-anchor="middle" font-size="11" fill="#2f9e5f" font-weight="900" font-family="Inter,sans-serif">CELO</text></svg>
                 </div>
                 <div class="token-meta">
                     <div class="token-symbol">CELO</div>
@@ -2315,7 +2606,7 @@
             </div>
             <div class="token-item">
                 <div class="token-icon" style="background:rgba(37,99,235,0.12);">
-                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#0a1030"/><text x="22" y="28" text-anchor="middle" font-size="10" fill="#60a5fa" font-weight="900" font-family="Inter,sans-serif">cUSD</text></svg>
+                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#e9f1fe"/><text x="22" y="28" text-anchor="middle" font-size="10" fill="#2563eb" font-weight="900" font-family="Inter,sans-serif">cUSD</text></svg>
                 </div>
                 <div class="token-meta">
                     <div class="token-symbol">cUSD</div>
@@ -2328,7 +2619,7 @@
             </div>
             <div class="token-item">
                 <div class="token-icon" style="background:rgba(38,161,123,0.12);">
-                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#0a201a"/><text x="22" y="28" text-anchor="middle" font-size="10" fill="#26a17b" font-weight="900" font-family="Inter,sans-serif">USDT</text></svg>
+                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#e6f4ef"/><text x="22" y="28" text-anchor="middle" font-size="10" fill="#1f8a66" font-weight="900" font-family="Inter,sans-serif">USDT</text></svg>
                 </div>
                 <div class="token-meta">
                     <div class="token-symbol">USDT</div>
@@ -2346,7 +2637,7 @@
         <div class="token-list">
             <div class="token-item">
                 <div class="token-icon" style="background:rgba(127,140,255,0.14);">
-                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#151f49"/><text x="22" y="28" text-anchor="middle" font-size="12" fill="#b9c4ff" font-weight="900" font-family="Inter,sans-serif">G$</text></svg>
+                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#eef0ff"/><text x="22" y="28" text-anchor="middle" font-size="12" fill="#5b64d8" font-weight="900" font-family="Inter,sans-serif">G$</text></svg>
                 </div>
                 <div class="token-meta">
                     <div class="token-symbol">XDC G$</div>
@@ -2359,7 +2650,7 @@
             </div>
             <div class="token-item">
                 <div class="token-icon" style="background:rgba(22,158,214,0.12);">
-                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#071828"/><text x="22" y="28" text-anchor="middle" font-size="11" fill="#169ed6" font-weight="900" font-family="Inter,sans-serif">XDC</text></svg>
+                    <svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="#e6f4fb"/><text x="22" y="28" text-anchor="middle" font-size="11" fill="#1289bd" font-weight="900" font-family="Inter,sans-serif">XDC</text></svg>
                 </div>
                 <div class="token-meta">
                     <div class="token-symbol">XDC</div>
@@ -2421,7 +2712,7 @@
                 <span id="ubiClaimLabel">Checking…</span>
             </button>
 
-            <div id="celoBalanceWarning" role="status" aria-live="polite" style="display:none;margin-top:0.7rem;padding:0.6rem 0.85rem;background:rgba(250,204,21,0.12);border:1px solid rgba(250,204,21,0.35);border-radius:10px;color:#fde047;font-size:0.78rem;line-height:1.4;text-align:left;">
+            <div id="celoBalanceWarning" role="status" aria-live="polite" style="display:none;margin-top:0.7rem;padding:0.6rem 0.85rem;background:#fef3c7;border:1px solid rgba(217,119,6,0.4);border-radius:10px;color:#92400e;font-size:0.78rem;line-height:1.4;text-align:left;">
                 <strong>⚠️ Keep your CELO in this wallet.</strong>
                 Your CELO is used as gas for claims — transferring it to another wallet may cause errors on your next claim. We'll auto top-up small amounts as needed.
             </div>
@@ -2429,8 +2720,8 @@
             <div class="claim-status" id="ubiClaimStatus"></div>
 
             <!-- Shown when already-claimed but FV may have expired -->
-            <div id="ubiReVerifyHint" style="display:none;margin-top:0.6rem;padding:0.55rem 0.85rem;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:10px;text-align:center;">
-                <div style="font-size:0.78rem;color:#c4b5fd;margin-bottom:0.35rem;">Haven't claimed yet? Your Face Verification may have expired.</div>
+            <div id="ubiReVerifyHint" style="display:none;margin-top:0.6rem;padding:0.55rem 0.85rem;background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.22);border-radius:10px;text-align:center;">
+                <div style="font-size:0.78rem;color:#6d28d9;margin-bottom:0.35rem;">Haven't claimed yet? Your Face Verification may have expired.</div>
                 <button onclick="window._triggerReVerify()" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);border:none;color:#fff;font-size:0.78rem;font-weight:600;padding:0.35rem 0.9rem;border-radius:8px;cursor:pointer;">🪪 Re-verify Face ID</button>
             </div>
 
@@ -2446,10 +2737,10 @@
                 <div style="font-size:0.68rem;color:var(--text-muted);">⏰ Claimable daily</div>
             </div>
 
-            <div style="border-top:1px solid rgba(255,255,255,0.08);margin-top:1.1rem;padding-top:0.9rem;text-align:center;color:var(--text-muted);font-size:0.72rem;line-height:1.45;">
+            <div style="border-top:1px solid var(--card-border);margin-top:1.1rem;padding-top:0.9rem;text-align:center;color:var(--text-muted);font-size:0.72rem;line-height:1.45;">
                 XDC remains available as an advanced route for wallets that support XDC prompts.
-                <a href="/xdc-wallet" style="display:inline-flex;align-items:center;gap:0.4rem;color:#a78bfa;font-size:0.82rem;font-weight:600;text-decoration:none;margin-top:0.35rem;">
-                    <svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="rgba(124,58,237,0.25)"/><text x="7" y="10.5" text-anchor="middle" font-size="6.5" fill="#a78bfa" font-weight="900" font-family="Inter,sans-serif">XDC</text></svg>
+                <a href="/xdc-wallet" style="display:inline-flex;align-items:center;gap:0.4rem;color:#7c3aed;font-size:0.82rem;font-weight:600;text-decoration:none;margin-top:0.35rem;">
+                    <svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="rgba(124,58,237,0.25)"/><text x="7" y="10.5" text-anchor="middle" font-size="6.5" fill="#7c3aed" font-weight="900" font-family="Inter,sans-serif">XDC</text></svg>
                     Open XDC claim page →
                 </a>
             </div>
@@ -2470,7 +2761,7 @@
             <div style="margin-bottom:1rem">
                 <input type="password" id="lwUnlockPin" inputmode="numeric" maxlength="6"
                     placeholder="••••••" autocomplete="off"
-                    style="width:100%;padding:0.8rem 1rem;text-align:center;font-size:1.4rem;letter-spacing:0.5rem;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;outline:none"
+                    style="width:100%;padding:0.8rem 1rem;text-align:center;font-size:1.4rem;letter-spacing:0.5rem;border-radius:10px;border:1px solid var(--card-border);background:#fff;color:var(--text);outline:none"
                     onkeydown="if(event.key==='Enter')_lwUnlockSubmit()">
             </div>
             <div id="lwUnlockError" style="display:none;color:var(--red);font-size:0.8rem;margin-bottom:0.8rem;text-align:center"></div>
@@ -2634,30 +2925,30 @@
 
             <div style="margin-bottom:1.25rem;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">Wallet Address</div>
-                <div style="font-family:monospace;font-size:0.8rem;color:var(--text-dim);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.75rem;word-break:break-all;line-height:1.6;">{{ wallet }}</div>
+                <div style="font-family:monospace;font-size:0.8rem;color:var(--text-dim);background:#fbfaf8;border:1px solid var(--card-border);border-radius:10px;padding:0.75rem;word-break:break-all;line-height:1.6;">{{ wallet }}</div>
             </div>
 
             <div style="margin-bottom:1.25rem;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">Face Verification</div>
-                <div id="fvStatusCard" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.85rem 0.95rem;font-size:0.85rem;line-height:1.6;">
+                <div id="fvStatusCard" style="background:#fbfaf8;border:1px solid var(--card-border);border-radius:10px;padding:0.85rem 0.95rem;font-size:0.85rem;line-height:1.6;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.45rem;">
                         <span style="color:var(--text-dim);">Status</span>
-                        <span id="fvStatusPill" style="display:inline-flex;align-items:center;gap:0.35rem;padding:0.22rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;background:rgba(255,255,255,0.06);color:var(--text-dim);">
+                        <span id="fvStatusPill" style="display:inline-flex;align-items:center;gap:0.35rem;padding:0.22rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;background:var(--card-soft);color:var(--text-dim);">
                             <span id="fvStatusDot" style="width:0.5rem;height:0.5rem;border-radius:50%;background:#888;"></span>
                             <span id="fvStatusLabel">Loading…</span>
                         </span>
                     </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.35rem;">
                         <span style="color:var(--text-dim);">Last verified</span>
-                        <span id="fvStatusLastVerified" style="color:#fff;">—</span>
+                        <span id="fvStatusLastVerified" style="color:var(--text);">—</span>
                     </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.35rem;">
                         <span style="color:var(--text-dim);">Expires</span>
-                        <span id="fvStatusExpiresAt" style="color:#fff;">—</span>
+                        <span id="fvStatusExpiresAt" style="color:var(--text);">—</span>
                     </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
                         <span style="color:var(--text-dim);">Time remaining</span>
-                        <span id="fvStatusRemaining" style="color:#fff;">—</span>
+                        <span id="fvStatusRemaining" style="color:var(--text);">—</span>
                     </div>
                     <div id="fvStatusHint" style="margin-top:0.6rem;font-size:0.78rem;color:var(--text-dim);line-height:1.5;">
                         Expiry is read live from the GoodDollar Identity contract on Celo — whatever <code>authenticationPeriod()</code> is set on-chain (currently 180 days) applies automatically.
@@ -2670,14 +2961,14 @@
 
 
 
-            <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.07);">
+            <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">Login Method</div>
-                <div style="font-size:0.88rem;color:#fff;">{{ 'GoodMarket' if login_method == 'walletconnect' else (login_method | replace('_', ' ') | title) }}</div>
+                <div style="font-size:0.88rem;color:var(--text);">{{ 'GoodMarket' if login_method == 'walletconnect' else (login_method | replace('_', ' ') | title) }}</div>
             </div>
 
             <div style="margin-top:1rem;display:flex;gap:0.75rem;">
-                <a href="/overview" class="btn-secondary" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(255,255,255,0.06);color:var(--text-dim);font-size:0.9rem;font-weight:600;border:1px solid rgba(255,255,255,0.12);">Overview</a>
-                <a href="/logout" class="btn-secondary btn-danger" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(255,82,82,0.08);color:#ff7070;font-size:0.9rem;font-weight:600;border:1px solid rgba(255,82,82,0.2);">Logout</a>
+                <a href="/overview" class="btn-secondary" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:#fff;color:var(--text-dim);font-size:0.9rem;font-weight:600;border:1px solid var(--card-border);">Overview</a>
+                <a href="/logout" class="btn-secondary btn-danger" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(220,38,38,0.06);color:#dc2626;font-size:0.9rem;font-weight:600;border:1px solid rgba(220,38,38,0.22);">Logout</a>
             </div>
 
             <button class="btn-secondary" style="margin-top:0.5rem;" onclick="closeModal('settingsModal')">Close</button>
@@ -2693,18 +2984,18 @@
             <!-- Incoming Stream Status -->
             <div style="margin-bottom:1rem;">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">📥 Incoming Stream</div>
-                <div style="background:rgba(0,230,118,0.06);border:1px solid rgba(0,230,118,0.15);border-radius:12px;padding:0.85rem;">
+                <div style="background:rgba(22,163,74,0.06);border:1px solid rgba(22,163,74,0.18);border-radius:12px;padding:0.85rem;">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
                         <span style="color:var(--text-dim);font-size:0.85rem;">Status</span>
-                        <span id="incomingStreamBadge" style="padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;background:rgba(255,255,255,0.08);color:var(--text-dim);">No incoming stream</span>
+                        <span id="incomingStreamBadge" style="padding:0.2rem 0.6rem;border-radius:999px;font-size:0.75rem;font-weight:600;background:var(--card-soft);color:var(--text-dim);">No incoming stream</span>
                     </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
                         <span style="color:var(--text-dim);font-size:0.85rem;">Flow Rate</span>
-                        <span id="incomingStreamRate" style="color:#00e676;font-weight:700;font-size:0.95rem;">— G$/day</span>
+                        <span id="incomingStreamRate" style="color:#16a34a;font-weight:700;font-size:0.95rem;">— G$/day</span>
                     </div>
                     <div style="display:flex;align-items:center;justify-content:space-between;">
                         <span style="color:var(--text-dim);font-size:0.85rem;">From</span>
-                        <span id="incomingStreamFrom" style="color:#fff;font-family:monospace;font-size:0.8rem;">—</span>
+                        <span id="incomingStreamFrom" style="color:var(--text);font-family:monospace;font-size:0.8rem;">—</span>
                     </div>
                 </div>
             </div>
@@ -2716,7 +3007,7 @@
                 <div style="margin-bottom:0.85rem;">
                     <label style="display:block;font-size:0.78rem;color:var(--text-dim);margin-bottom:0.3rem;">Recipient Address</label>
                     <input type="text" id="streamReceiver" placeholder="0x..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-                           style="width:100%;padding:0.7rem 0.85rem;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#fff;font-size:0.88rem;font-family:monospace;outline:none;cursor:text;pointer-events:auto;-webkit-user-select:text;-moz-user-select:text;user-select:text;"
+                           style="width:100%;padding:0.7rem 0.85rem;border-radius:10px;border:1px solid var(--card-border);background:#fff;color:var(--text);font-size:0.88rem;font-family:monospace;outline:none;cursor:text;pointer-events:auto;-webkit-user-select:text;-moz-user-select:text;user-select:text;"
                            onpaste="setTimeout(validateStreamReceiver, 10)"
                            onblur="validateStreamReceiver()">
                     <div id="streamReceiverError" style="color:var(--red);font-size:0.72rem;margin-top:0.25rem;display:none;"></div>
@@ -2725,19 +3016,19 @@
                 <div style="display:grid;grid-template-columns:minmax(120px,0.42fr) 1fr;gap:0.85rem;margin-bottom:0.85rem;align-items:end;">
                     <div>
                         <label style="display:block;font-size:0.78rem;color:var(--text-dim);margin-bottom:0.3rem;font-weight:600;">Super Token</label>
-                        <div style="height:44px;display:flex;align-items:center;gap:0.55rem;padding:0 0.8rem;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#fff;font-size:0.9rem;font-weight:700;">
+                        <div style="height:44px;display:flex;align-items:center;gap:0.55rem;padding:0 0.8rem;border-radius:12px;border:1px solid var(--card-border);background:#fff;color:var(--text);font-size:0.9rem;font-weight:700;">
                             <span style="width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:rgba(0,230,118,0.14);border:1px solid rgba(0,230,118,0.45);font-size:0.75rem;">G$</span>
                             <span>G$</span>
                         </div>
                     </div>
                     <div>
                         <label id="streamAmountLabel" style="display:block;font-size:0.78rem;color:var(--text-dim);margin-bottom:0.3rem;font-weight:600;">Flow Rate</label>
-                        <div style="display:grid;grid-template-columns:1fr minmax(112px,0.36fr);align-items:stretch;border-radius:12px;border:1px solid rgba(6,182,212,0.35);background:rgba(255,255,255,0.05);overflow:hidden;">
+                        <div style="display:grid;grid-template-columns:1fr minmax(112px,0.36fr);align-items:stretch;border-radius:12px;border:1px solid rgba(8,145,178,0.35);background:#fff;overflow:hidden;">
                             <input type="number" id="streamAmount" placeholder="100" min="0" step="0.01"
-                                   style="width:100%;padding:0.72rem 0.85rem;border:none;border-right:1px solid rgba(255,255,255,0.12);background:transparent;color:#fff;font-size:0.95rem;outline:none;cursor:text;pointer-events:auto;-webkit-user-select:text;-moz-user-select:text;user-select:text;"
+                                   style="width:100%;padding:0.72rem 0.85rem;border:none;border-right:1px solid var(--card-border);background:transparent;color:var(--text);font-size:0.95rem;outline:none;cursor:text;pointer-events:auto;-webkit-user-select:text;-moz-user-select:text;user-select:text;"
                                    oninput="calculateStreamBuffer()">
                             <select id="streamPeriod" aria-label="Stream amount frequency"
-                                    style="width:100%;padding:0.72rem 0.6rem;border:none;background:#111827;color:#fff;font-size:0.86rem;font-weight:700;outline:none;cursor:pointer;"
+                                    style="width:100%;padding:0.72rem 0.6rem;border:none;background:#fff;color:var(--text);font-size:0.86rem;font-weight:700;outline:none;cursor:pointer;"
                                     onchange="handleStreamPeriodChange()">
                                 <option value="second">/ second</option>
                                 <option value="minute">/ minute</option>
@@ -2750,33 +3041,33 @@
                     <div id="streamPeriodHint" style="grid-column:1 / -1;color:var(--text-muted);font-size:0.72rem;margin-top:-0.45rem;line-height:1.35;">Enter the flow rate exactly like Superfluid: amount + / second, / minute, / day, / week, or / month.</div>
                 </div>
 
-                <div id="streamBufferInfo" style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.2);border-radius:12px;padding:0.85rem;margin-bottom:0.85rem;display:none;">
-                    <div style="font-size:0.78rem;font-weight:600;color:#06b6d4;margin-bottom:0.6rem;text-transform:uppercase;letter-spacing:0.05em;">📊 Buffer Calculation</div>
+                <div id="streamBufferInfo" style="background:rgba(8,145,178,0.06);border:1px solid rgba(8,145,178,0.22);border-radius:12px;padding:0.85rem;margin-bottom:0.85rem;display:none;">
+                    <div style="font-size:0.78rem;font-weight:600;color:#0891b2;margin-bottom:0.6rem;text-transform:uppercase;letter-spacing:0.05em;">📊 Buffer Calculation</div>
                     
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(67,56,43,0.08);">
                         <span style="color:var(--text-dim);font-size:0.82rem;">💰 Flow rate</span>
-                        <span id="streamMonthlyDisplay" style="color:#fff;font-weight:600;font-size:0.88rem;">— G$/month</span>
+                        <span id="streamMonthlyDisplay" style="color:var(--text);font-weight:600;font-size:0.88rem;">— G$/month</span>
                     </div>
                     
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(67,56,43,0.08);">
                         <span style="color:var(--text-dim);font-size:0.82rem;">⚡ Amount per second</span>
-                        <span id="streamFlowRateDisplay" style="color:#06b6d4;font-weight:600;font-size:0.85rem;">— G$/sec</span>
+                        <span id="streamFlowRateDisplay" style="color:#0891b2;font-weight:600;font-size:0.85rem;">— G$/sec</span>
                     </div>
                     
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(67,56,43,0.08);">
                         <span style="color:var(--text-dim);font-size:0.82rem;">🛡️ Required Buffer</span>
-                        <span id="streamBufferDisplay" style="color:#f59e0b;font-weight:700;font-size:0.88rem;">— G$</span>
+                        <span id="streamBufferDisplay" style="color:#b45309;font-weight:700;font-size:0.88rem;">— G$</span>
                     </div>
                     
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.5rem;background:rgba(255,255,255,0.03);border-radius:8px;margin-top:0.3rem;">
-                        <span style="color:#fff;font-size:0.85rem;font-weight:600;">∞ End date</span>
-                        <span style="color:#00e676;font-weight:800;font-size:1rem;">Never</span>
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.5rem;background:rgba(67,56,43,0.04);border-radius:8px;margin-top:0.3rem;">
+                        <span style="color:var(--text);font-size:0.85rem;font-weight:600;">∞ End date</span>
+                        <span style="color:#16a34a;font-weight:800;font-size:1rem;">Never</span>
                     </div>
                     
-                    <div id="streamBalanceSection" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid rgba(255,255,255,0.05);">
+                    <div id="streamBalanceSection" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid rgba(67,56,43,0.08);">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
                             <span style="color:var(--text-dim);font-size:0.8rem;">💵 Your Balance</span>
-                            <span id="streamUserBalance" style="color:#fff;font-weight:600;font-size:0.85rem;">— G$</span>
+                            <span id="streamUserBalance" style="color:var(--text);font-weight:600;font-size:0.85rem;">— G$</span>
                         </div>
                         <div style="display:flex;align-items:center;justify-content:space-between;">
                             <span style="color:var(--text-dim);font-size:0.8rem;">💵 Remaining After Stream</span>
@@ -2785,10 +3076,10 @@
                     </div>
                 </div>
 
-                <div id="streamBalanceWarning" style="background:rgba(255,82,82,0.1);border-left:3px solid rgba(255,82,82,0.9);border-radius:10px;padding:0.85rem;margin-bottom:0.85rem;display:none;">
-                    <div style="color:#ffb4b4;font-size:0.82rem;font-weight:700;margin-bottom:0.55rem;">⚠️ Stream risk warning</div>
-                    <div id="streamBalanceWarningText" style="color:#ffb4b4;font-size:0.78rem;line-height:1.45;margin-bottom:0.65rem;"></div>
-                    <label style="display:flex;align-items:center;gap:0.55rem;color:#fff;font-size:0.82rem;font-weight:600;cursor:pointer;">
+                <div id="streamBalanceWarning" style="background:rgba(220,38,38,0.06);border-left:3px solid rgba(220,38,38,0.7);border-radius:10px;padding:0.85rem;margin-bottom:0.85rem;display:none;">
+                    <div style="color:#b91c1c;font-size:0.82rem;font-weight:700;margin-bottom:0.55rem;">⚠️ Stream risk warning</div>
+                    <div id="streamBalanceWarningText" style="color:#b91c1c;font-size:0.78rem;line-height:1.45;margin-bottom:0.65rem;"></div>
+                    <label style="display:flex;align-items:center;gap:0.55rem;color:var(--text);font-size:0.82rem;font-weight:600;cursor:pointer;">
                         <input id="streamRiskAck" type="checkbox" onchange="calculateStreamBuffer()" style="width:16px;height:16px;accent-color:#06b6d4;">
                         Yes, I understand the risk.
                     </label>
@@ -2802,11 +3093,11 @@
                     ▶️ Start Stream
                 </button>
                 <button id="btnUpdateStream" onclick="handleUpdateStream()" 
-                        style="flex:1;padding:0.85rem;border-radius:14px;border:1px solid rgba(6,182,212,0.5);background:rgba(6,182,212,0.1);color:#06b6d4;font-weight:700;font-size:0.95rem;cursor:pointer;display:none;">
+                        style="flex:1;padding:0.85rem;border-radius:14px;border:1px solid rgba(8,145,178,0.4);background:rgba(8,145,178,0.08);color:#0e7490;font-weight:700;font-size:0.95rem;cursor:pointer;display:none;">
                     🔄 Update
                 </button>
                 <button id="btnStopStream" onclick="handleStopStream()" 
-                        style="padding:0.85rem;border-radius:14px;border:1px solid rgba(255,82,82,0.4);background:rgba(255,82,82,0.08);color:#ff7070;font-weight:700;font-size:0.9rem;cursor:pointer;display:none;">
+                        style="padding:0.85rem;border-radius:14px;border:1px solid rgba(220,38,38,0.3);background:rgba(220,38,38,0.06);color:#dc2626;font-weight:700;font-size:0.9rem;cursor:pointer;display:none;">
                     ⏹️ Stop
                 </button>
             </div>
@@ -2818,7 +3109,7 @@
             <div id="streamResult" style="margin-top:0.75rem;text-align:center;font-size:0.85rem;display:none;"></div>
 
             <!-- Stream History -->
-            <div style="margin-top:1rem;padding-top:0.85rem;border-top:1px solid rgba(255,255,255,0.07);">
+            <div style="margin-top:1rem;padding-top:0.85rem;border-top:1px solid var(--card-border);">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">📜 Stream History</div>
                 <div id="streamHistoryList" style="max-height:200px;overflow-y:auto;">
                     <div id="streamHistoryEmpty" style="text-align:center;color:var(--text-muted);font-size:0.8rem;padding:1rem;">
@@ -2827,7 +3118,7 @@
                 </div>
             </div>
 
-            <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid rgba(255,255,255,0.07);">
+            <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--card-border);">
                 <div style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">
                     💡 <strong>Note:</strong> Stream requires G$ balance + security buffer. Streams flow every second. CELO needed for gas fees.
                 </div>
@@ -4263,7 +4554,7 @@
         // Defaults
         let state = 'unverified';  // unverified | verified | warning | expired | renewal | error
         let color = '#888';
-        let bg = 'rgba(255,255,255,0.06)';
+        let bg = 'rgba(67,56,43,0.06)';
         let pillText = 'Unverified';
         let ctaText  = 'Verify Now';
         let showCta  = true;
@@ -4323,10 +4614,10 @@
             remEl.style.color = '#f97316';
         } else if (d && d.seconds_remaining) {
             remEl.textContent = fmtRemaining(d.seconds_remaining);
-            remEl.style.color = state === 'warning' ? '#f59e0b' : '#fff';
+            remEl.style.color = state === 'warning' ? '#d97706' : 'var(--text)';
         } else {
             remEl.textContent = '—';
-            remEl.style.color = '#fff';
+            remEl.style.color = 'var(--text)';
         }
 
         if (showCta) {
@@ -4342,7 +4633,7 @@
                 banner.style.display = '';
                 banner.style.background = 'rgba(239,68,68,0.10)';
                 banner.style.border = '1px solid rgba(239,68,68,0.35)';
-                banner.style.color = '#fca5a5';
+                banner.style.color = '#b91c1c';
                 bIcon.textContent = '⚠️';
                 bText.innerHTML = '<strong>Face Verification expired</strong>' +
                     (d && d.expires_at_iso ? ' on ' + fmtDateLocal(d.expires_at_iso) : '') +
@@ -4351,7 +4642,7 @@
                 banner.style.display = '';
                 banner.style.background = 'rgba(249,115,22,0.10)';
                 banner.style.border = '1px solid rgba(249,115,22,0.35)';
-                banner.style.color = '#fdba74';
+                banner.style.color = '#c2410c';
                 bIcon.textContent = '🔗';
                 bText.innerHTML = '<strong>Wallet verification needs renewal.</strong> ' +
                     'This can happen during normal re-verification and does not necessarily mean you did anything wrong. ' +
@@ -5061,7 +5352,7 @@
                         + (r.refund_tx_hash ? ' · <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">Refund tx ↗</a>' : '')
                         + '</div>';
                 }
-                return '<div style="padding:0.5rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8rem;">'
+                return '<div style="padding:0.5rem 0.6rem;border-bottom:1px solid rgba(67,56,43,0.08);font-size:0.8rem;">'
                     + '<div style="display:flex;justify-content:space-between;align-items:center;">'
                     + '<div><div style="font-weight:600">' + gd + ' G$ → ₱' + php + '</div>'
                     + '<div style="color:var(--text-dim);font-size:0.72rem">' + date + ' · ' + r.gcash_number + '</div></div>'
@@ -5267,7 +5558,7 @@
                     amountInput.dispatchEvent(new Event('input', { bubbles: true }));
                 }
                 if (result) {
-                    result.innerHTML = '<div style="color:#00e676;">✅ GoodMarket Agent prepared this G$ stream. Review the wallet prompt before signing.</div>';
+                    result.innerHTML = '<div style="color:#16a34a;">✅ GoodMarket Agent prepared this G$ stream. Review the wallet prompt before signing.</div>';
                     result.style.display = 'block';
                 }
                 if (typeof calculateStreamBuffer === 'function') await calculateStreamBuffer();
@@ -6058,14 +6349,14 @@
                         claims.celo.reason === 're_verification_needed'
                             ? 'Face Verification expired. Re-verify on Celo Identity first.'
                             : 'Face Verification on Celo Identity is required before claiming on any network.',
-                        '#a78bfa'
+                        '#7c3aed'
                     );
                 } else
                 if (hasUnsupported) {
                     label.textContent = 'Use MetaMask / WalletConnect';
                     icon.textContent = '⚠️';
                     btn.disabled = true;
-                    setStatus('You still have a claim on another network, but this wallet cannot safely prompt it.', '#fbbf24');
+                    setStatus('You still have a claim on another network, but this wallet cannot safely prompt it.', '#d97706');
                 } else if (!claims.celo || !claims.celo.can_claim) {
                     label.textContent = 'Already Claimed Today';
                     icon.textContent = '✅';
@@ -6090,7 +6381,7 @@
                     isReverify
                         ? 'Your Face Verification has expired. Re-verify to continue claiming G$.'
                         : 'Your wallet needs face verification before claiming G$',
-                    '#a78bfa'
+                    '#7c3aed'
                 );
                 window._celoCanClaim = false;
             } else if (d.success && d.can_claim) {
@@ -6133,7 +6424,7 @@
             icon.textContent = '🪪';
             label.textContent = 'Re-verify Face ID to Claim';
             btn.style.background = 'linear-gradient(135deg,#7c3aed,#6d28d9)';
-            setStatus('Tap the button above to start face re-verification.', '#a78bfa');
+            setStatus('Tap the button above to start face re-verification.', '#7c3aed');
             const rv = document.getElementById('ubiReVerifyHint');
             if (rv) rv.style.display = 'none';
         };
@@ -6189,7 +6480,7 @@
         function pollReceipt(txHash, attempts) {
             if (attempts <= 0) {
                 btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
-                setStatus('Timed out. Check explorer for: ' + txHash.slice(0,12) + '…', '#fbbf24');
+                setStatus('Timed out. Check explorer for: ' + txHash.slice(0,12) + '…', '#d97706');
                 return;
             }
             setTimeout(function() {
@@ -6301,18 +6592,18 @@
             if (existing) existing.remove();
             const card = document.createElement('div');
             card.id = 'fvTrustWalletBlocker';
-            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#fde68a;font-size:0.86rem;line-height:1.5;text-align:left;';
+            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#92400e;font-size:0.86rem;line-height:1.5;text-align:left;';
             card.innerHTML =
-                '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.35rem;">⚠️ Trust Wallet detected</div>' +
+                '<div style="font-weight:700;color:#b45309;margin-bottom:0.35rem;">⚠️ Trust Wallet detected</div>' +
                 '<div style="margin-bottom:0.65rem;">Trust Wallet\'s in-app browser does not reliably deliver Face ID signatures back to this page. To verify reliably, please log out and reconnect with <strong>WalletConnect</strong> — Trust will then handle the signature inside its main app instead of the dApp browser tab.</div>' +
                 '<div style="display:flex;flex-direction:column;gap:0.45rem;">' +
                   '<a href="/logout" style="display:block;text-align:center;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;text-decoration:none;font-weight:600;padding:0.55rem 1rem;border-radius:10px;font-size:0.9rem;">🔐 Log out & reconnect via WalletConnect</a>' +
-                  '<button type="button" id="fvTrustForceTryBtn" style="background:transparent;border:1px solid rgba(251,191,36,0.5);color:#fde68a;font-size:0.8rem;font-weight:500;padding:0.45rem 0.9rem;border-radius:10px;cursor:pointer;">Try in-app sign anyway (may hang)</button>' +
+                  '<button type="button" id="fvTrustForceTryBtn" style="background:transparent;border:1px solid rgba(217,119,6,0.45);color:#92400e;font-size:0.8rem;font-weight:500;padding:0.45rem 0.9rem;border-radius:10px;cursor:pointer;">Try in-app sign anyway (may hang)</button>' +
                 '</div>';
             // Set the status text BEFORE appending the card. setStatus()
             // writes to status.innerHTML which would otherwise wipe the card
             // we just appended (status === wrap, both point at #ubiClaimStatus).
-            setStatus('Trust Wallet in-app signing is unreliable — please switch to WalletConnect.', '#fbbf24');
+            setStatus('Trust Wallet in-app signing is unreliable — please switch to WalletConnect.', '#d97706');
             wrap.appendChild(card);
             const forceBtn = card.querySelector('#fvTrustForceTryBtn');
             if (forceBtn) {
@@ -6344,7 +6635,7 @@
             if (existing) existing.remove();
             const card = document.createElement('div');
             card.id = 'fvMiniPayHandoff';
-            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#fde68a;font-size:0.86rem;line-height:1.5;text-align:left;';
+            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#92400e;font-size:0.86rem;line-height:1.5;text-align:left;';
             // Truncate link for display so the card stays tidy on mobile.
             const shortLink = link.length > 64 ? link.slice(0, 48) + '…' + link.slice(-12) : link;
             // Note: we intentionally do NOT render an "Open in Chrome"
@@ -6356,15 +6647,15 @@
             // for the user to manually paste the link into their phone's
             // native browser, so the UI funnels everyone through Copy.
             card.innerHTML =
-                '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.35rem;">⚠️ MiniPay detected</div>' +
+                '<div style="font-weight:700;color:#b45309;margin-bottom:0.35rem;">⚠️ MiniPay detected</div>' +
                 '<div style="margin-bottom:0.65rem;">Face Verification often fails inside MiniPay\'s in-app browser (the face scan sometimes errors out on Opera\'s restricted WebView), so for the most reliable experience we recommend finishing it outside MiniPay. Tap <strong>Copy</strong> below, then <strong>open Chrome (or your preferred browser) outside MiniPay and paste the link there</strong> to complete verification. Your signature is already embedded in the link — you will <em>not</em> need to sign or reconnect. After verifying, return to MiniPay and reopen GoodMarket to claim your G$.</div>' +
                 '<div style="display:flex;flex-direction:column;gap:0.45rem;">' +
-                  '<div style="display:flex;gap:0.4rem;align-items:center;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.45rem 0.6rem;font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.72rem;color:#fde68a;overflow:hidden;">' +
+                  '<div style="display:flex;gap:0.4rem;align-items:center;background:rgba(217,119,6,0.07);border:1px solid rgba(217,119,6,0.28);border-radius:10px;padding:0.45rem 0.6rem;font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.72rem;color:#92400e;overflow:hidden;">' +
                     '<span id="fvMiniPayLinkPreview" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + shortLink + '</span>' +
                     '<button type="button" id="fvMiniPayCopyBtn" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);border:1px solid rgba(124,58,237,0.7);color:#fff;font-size:0.78rem;font-weight:700;padding:0.4rem 0.8rem;border-radius:8px;cursor:pointer;white-space:nowrap;">📋 Copy link</button>' +
                   '</div>' +
-                  '<div style="font-size:0.78rem;color:#fde68a;line-height:1.45;background:rgba(0,0,0,0.18);border-radius:8px;padding:0.5rem 0.7rem;">' +
-                    '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.25rem;">Next steps</div>' +
+                  '<div style="font-size:0.78rem;color:#92400e;line-height:1.45;background:rgba(217,119,6,0.06);border-radius:8px;padding:0.5rem 0.7rem;">' +
+                    '<div style="font-weight:700;color:#b45309;margin-bottom:0.25rem;">Next steps</div>' +
                     '<ol style="margin:0;padding-left:1.1rem;">' +
                       '<li>Tap <strong>Copy link</strong> above.</li>' +
                       '<li>Leave MiniPay and open <strong>Chrome</strong> (or Safari / any browser outside MiniPay).</li>' +
@@ -6372,14 +6663,14 @@
                       '<li>Return to MiniPay, reopen GoodMarket, and claim your G$.</li>' +
                     '</ol>' +
                   '</div>' +
-                  '<button type="button" id="fvMiniPayForceTryBtn" style="background:transparent;border:1px solid rgba(251,191,36,0.5);color:#fde68a;font-size:0.78rem;font-weight:500;padding:0.4rem 0.9rem;border-radius:10px;cursor:pointer;">Try inside MiniPay anyway</button>' +
+                  '<button type="button" id="fvMiniPayForceTryBtn" style="background:transparent;border:1px solid rgba(217,119,6,0.45);color:#92400e;font-size:0.78rem;font-weight:500;padding:0.4rem 0.9rem;border-radius:10px;cursor:pointer;">Try inside MiniPay anyway</button>' +
                 '</div>' +
-                '<div id="fvMiniPayFeedback" style="margin-top:0.55rem;font-size:0.8rem;color:#fde68a;min-height:1em;" aria-live="polite"></div>';
+                '<div id="fvMiniPayFeedback" style="margin-top:0.55rem;font-size:0.8rem;color:#92400e;min-height:1em;" aria-live="polite"></div>';
             // Write the outer status BEFORE appending the card — setStatus()
             // replaces status.innerHTML, so any later call while the card is
             // a child of #ubiClaimStatus would destroy it. Per-copy feedback
             // goes into #fvMiniPayFeedback (inside the card) instead.
-            setStatus('Copy the link below and open it in Chrome (outside MiniPay) to finish Face Verification.', '#fbbf24');
+            setStatus('Copy the link below and open it in Chrome (outside MiniPay) to finish Face Verification.', '#d97706');
             wrap.appendChild(card);
 
             const copyBtn = card.querySelector('#fvMiniPayCopyBtn');
@@ -6389,7 +6680,7 @@
             function _setMiniPayFeedback(text, color) {
                 if (!feedback) return;
                 feedback.textContent = text || '';
-                feedback.style.color = color || '#fde68a';
+                feedback.style.color = color || '#92400e';
             }
 
             function _fallbackCopy(text) {
@@ -6420,7 +6711,7 @@
                         copyBtn.textContent = '✅ Copied';
                         // Feedback goes inside the card (setStatus would
                         // wipe the card's innerHTML — see note above).
-                        _setMiniPayFeedback('Link copied — now leave MiniPay, open Chrome (or your preferred browser), and paste the link there to finish Face Verification.', '#86efac');
+                        _setMiniPayFeedback('Link copied — now leave MiniPay, open Chrome (or your preferred browser), and paste the link there to finish Face Verification.', '#15803d');
                         setTimeout(() => { copyBtn.textContent = '📋 Copy link'; }, 2500);
                     } else {
                         // Last-resort: expose the raw link inline so the user
@@ -6430,7 +6721,7 @@
                             preview.style.wordBreak = 'break-all';
                             preview.textContent = link;
                         }
-                        _setMiniPayFeedback('Could not copy automatically — long-press the link above to copy it manually.', '#fbbf24');
+                        _setMiniPayFeedback('Could not copy automatically — long-press the link above to copy it manually.', '#d97706');
                     }
                 });
             }
@@ -6445,7 +6736,7 @@
 
         function startFV() {
             if (!window._fvGenerateLink) {
-                setStatus('Wallet library loading — please wait a moment and try again.', '#fbbf24');
+                setStatus('Wallet library loading — please wait a moment and try again.', '#d97706');
                 return;
             }
 
@@ -6470,7 +6761,7 @@
                 forcedFromTrust
                     ? 'Trying Trust Wallet in-app signing… if it hangs, log out and reconnect with WalletConnect.'
                     : 'Approve the Celo network switch (if prompted) and the signature request in your wallet.',
-                forcedFromTrust ? '#fbbf24' : '#a78bfa'
+                forcedFromTrust ? '#d97706' : '#7c3aed'
             );
 
             // Some mobile dApp browsers (notably Trust Wallet builds) can
@@ -6493,11 +6784,11 @@
                 if (_fvSettled) return;
                 const wrap = document.getElementById('ubiClaimStatus');
                 if (_isTrustCtx) {
-                    setStatus('Trust Wallet is not recommended for Face Verification — please follow the guidance below.', '#fbbf24');
+                    setStatus('Trust Wallet is not recommended for Face Verification — please follow the guidance below.', '#d97706');
                     if (!wrap || document.getElementById('fvTrustStuckNotice')) return;
                     const notice = document.createElement('div');
                     notice.id = 'fvTrustStuckNotice';
-                    notice.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#fde68a;font-size:0.86rem;line-height:1.5;text-align:left;';
+                    notice.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#92400e;font-size:0.86rem;line-height:1.5;text-align:left;';
                     notice.innerHTML =
                         '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.45rem;">⚠️ Trust Wallet is not recommended for Face Verification</div>' +
                         '<div style="margin-bottom:0.6rem;">Trust Wallet\'s in-app browser can sign you in and let you claim daily G$, but its Face Verification flow is unreliable — the wallet often signs the request but never delivers the signature back to this page, leaving you stuck on <em>"Preparing verification…"</em>.</div>' +
@@ -6507,13 +6798,13 @@
                     wrap.appendChild(notice);
                     return;
                 }
-                setStatus('Still waiting on your wallet… If you already approved and nothing happened, your wallet may not be delivering the signature back to this page.', '#fbbf24');
+                setStatus('Still waiting on your wallet… If you already approved and nothing happened, your wallet may not be delivering the signature back to this page.', '#d97706');
                 if (!wrap || document.getElementById('fvHangEscapeHatch')) return;
                 const esc = document.createElement('div');
                 esc.id = 'fvHangEscapeHatch';
                 esc.style.cssText = 'margin-top:0.7rem;padding:0.75rem 1rem;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.4);border-radius:10px;text-align:center;';
                 esc.innerHTML =
-                    '<div style="font-size:0.82rem;color:#c4b5fd;margin-bottom:0.45rem;">Stuck? Reconnect via WalletConnect for a more reliable signing flow.</div>' +
+                    '<div style="font-size:0.82rem;color:#6d28d9;margin-bottom:0.45rem;">Stuck? Reconnect via WalletConnect for a more reliable signing flow.</div>' +
                     '<a href="/logout" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;text-decoration:none;font-weight:600;padding:0.5rem 1rem;border-radius:8px;font-size:0.85rem;">🔐 Log out & switch to WalletConnect</a>';
                 wrap.appendChild(esc);
             }, _isTrustCtx ? 12000 : 25000);
@@ -7181,7 +7472,7 @@
                 }
             }
             if (!provider) {
-                setStatus('⚠️ No wallet detected. Please open this page in MetaMask, Trust Wallet, MiniPay, or reconnect using WalletConnect to sign transactions.', '#fbbf24');
+                setStatus('⚠️ No wallet detected. Please open this page in MetaMask, Trust Wallet, MiniPay, or reconnect using WalletConnect to sign transactions.', '#d97706');
                 return;
             }
 
@@ -7429,7 +7720,7 @@
                         console.warn('[claim] MiniPay direct claim failed (insufficient gas). Running faucet + swap flow...');
 
                         // Step 1: Show message about insufficient gas and starting CELO faucet
-                        setStatus('⚠️ Insufficient stablecoin for gas. We\'re topping up your CELO from GoodDollar...', '#facc15');
+                        setStatus('⚠️ Insufficient stablecoin for gas. We\'re topping up your CELO from GoodDollar...', '#d97706');
 
                         if (window.MPGasTopUp && window.MPGasTopUp.ensureToppedUp) {
                             try {
@@ -7474,7 +7765,7 @@
                             throw sendErr;
                         }
                     } else {
-                        setStatus('Gas became insufficient at send time. Re-running faucet fallback once…', '#facc15');
+                        setStatus('Gas became insufficient at send time. Re-running faucet fallback once…', '#d97706');
                         await ensureGasReadyBeforeClaim();
                         txHash = await sendCeloClaim();
                     }
@@ -7587,15 +7878,15 @@
             const caps = getClaimWalletCapabilities();
             const claims = (claimAvailability && claimAvailability.claims) || {};
             if (network === 'fuse' && claims.fuse && claims.fuse.is_available === false) {
-                setStatus(claims.fuse.error || 'Fuse claim is temporarily not available.', '#fbbf24');
+                setStatus(claims.fuse.error || 'Fuse claim is temporarily not available.', '#d97706');
                 return;
             }
             if (network === 'fuse' && !caps.supportsFuse) {
-                setStatus('Fuse claiming needs MetaMask or a compatible WalletConnect wallet.', '#fbbf24');
+                setStatus('Fuse claiming needs MetaMask or a compatible WalletConnect wallet.', '#d97706');
                 return;
             }
             if (network === 'xdc' && !caps.supportsXdc) {
-                setStatus('XDC claiming needs MetaMask or a compatible WalletConnect wallet.', '#fbbf24');
+                setStatus('XDC claiming needs MetaMask or a compatible WalletConnect wallet.', '#d97706');
                 return;
             }
 
@@ -7623,7 +7914,7 @@
                 logGoodMarketClaim(txHash, network, 'submitted');
                 const explorer = network === 'fuse' ? 'https://explorer.fuse.io/tx/' : 'https://xdcscan.com/tx/';
                 setStatus(
-                    `✅ ${network.toUpperCase()} claim submitted: <a href="${explorer}${txHash}" target="_blank" rel="noopener" style="color:#86efac;">${txHash.slice(0, 10)}...${txHash.slice(-6)}</a>`,
+                    `✅ ${network.toUpperCase()} claim submitted: <a href="${explorer}${txHash}" target="_blank" rel="noopener" style="color:#15803d;">${txHash.slice(0, 10)}...${txHash.slice(-6)}</a>`,
                     'var(--green)'
                 );
                 try { window.showClaimCelebration && window.showClaimCelebration({ networks: [network] }); } catch (_) {}
@@ -7761,7 +8052,7 @@
             const p = new URLSearchParams(window.location.search);
             if (p.get('fv_pending') === '1') {
                 openModal('claimModal');
-                setStatus('✅ Face verification submitted! Re-checking your eligibility…', '#facc15');
+                setStatus('✅ Face verification submitted! Re-checking your eligibility…', '#d97706');
                 history.replaceState(null, '', window.location.pathname);
             } else if (p.get('fv_failed') === '1') {
                 openModal('claimModal');
@@ -8198,32 +8489,32 @@
             
             // For active streams, show real-time streamed amount
             let streamedAmount = '';
-            let statusColor = '#ff7070'; // stopped color default
+            let statusColor = '#dc2626'; // stopped color default
             let statusText = 'STOPPED';
             
             if (isActuallyActive && item.rate > 0) {
                 const streamed = calculateStreamedAmount(item.rate, item.startTime || item.timestamp, true);
-                streamedAmount = `<div style="font-size:0.75rem;color:#00e676;margin-top:0.2rem;">⏱️ Streamed: ${streamed.toFixed(4)} G$</div>`;
-                statusColor = '#00e676';
+                streamedAmount = `<div style="font-size:0.75rem;color:#16a34a;margin-top:0.2rem;">⏱️ Streamed: ${streamed.toFixed(4)} G$</div>`;
+                statusColor = '#16a34a';
                 statusText = 'ACTIVE';
             } else if (item.totalStreamed) {
                 streamedAmount = `<div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.2rem;">⏱️ Total: ${item.totalStreamed.toFixed(4)} G$</div>`;
-                statusColor = '#ff7070';
+                statusColor = '#dc2626';
                 statusText = 'STOPPED';
             }
             
             const actionBtns = isActuallyActive ? `
-                <button onclick="loadFromHistory(${idx})" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(6,182,212,0.4);background:rgba(6,182,212,0.1);color:#06b6d4;font-size:0.7rem;cursor:pointer;margin-right:0.25rem;">Load</button>
-                <button onclick="handleStopFromHistory('${item.receiver}')" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(255,82,82,0.4);background:rgba(255,82,82,0.08);color:#ff7070;font-size:0.7rem;cursor:pointer;">Stop</button>
+                <button onclick="loadFromHistory(${idx})" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(8,145,178,0.35);background:rgba(8,145,178,0.08);color:#0e7490;font-size:0.7rem;cursor:pointer;margin-right:0.25rem;">Load</button>
+                <button onclick="handleStopFromHistory('${item.receiver}')" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(220,38,38,0.3);background:rgba(220,38,38,0.06);color:#dc2626;font-size:0.7rem;cursor:pointer;">Stop</button>
             ` : '';
             
             return `
-                <div style="background:rgba(255,255,255,0.03);border:1px solid ${isActuallyActive ? 'rgba(0,230,118,0.2)' : 'rgba(255,255,255,0.06)'};border-radius:8px;padding:0.6rem;margin-bottom:0.5rem;">
+                <div style="background:rgba(67,56,43,0.03);border:1px solid ${isActuallyActive ? 'rgba(22,163,74,0.25)' : 'rgba(67,56,43,0.09)'};border-radius:8px;padding:0.6rem;margin-bottom:0.5rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
                         <span style="font-size:0.75rem;color:${statusColor};font-weight:600;text-transform:uppercase;">● ${statusText}</span>
                         <span style="font-size:0.7rem;color:var(--text-muted);">${date}</span>
                     </div>
-                    <div style="font-size:0.8rem;color:#fff;margin-bottom:0.3rem;">
+                    <div style="font-size:0.8rem;color:var(--text);margin-bottom:0.3rem;">
                         📤 To: <span style="font-family:monospace;">${shortReceiver}</span>
                     </div>
                     <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.3rem;">
@@ -8287,7 +8578,7 @@
         const value = input.value.trim();
         
         if (!value) {
-            input.style.borderColor = 'rgba(255,255,255,0.12)';
+            input.style.borderColor = 'var(--card-border)';
             if (error) error.style.display = 'none';
             return false;
         }
@@ -8399,7 +8690,7 @@
                 const remaining = userBalance - data.required_buffer;
                 if (remainingEl) {
                     remainingEl.textContent = `${remaining.toFixed(2)} G$`;
-                    remainingEl.style.color = remaining >= 0 ? '#00e676' : '#ff7070';
+                    remainingEl.style.color = remaining >= 0 ? '#16a34a' : '#dc2626';
                 }
                 
                 // Check balance and show warning
@@ -8441,15 +8732,15 @@
                 const dailyRate = (data.net_flow_rate / 1e18 * 86400).toFixed(4);
                 if (badge) {
                     badge.textContent = 'Active';
-                    badge.style.background = 'rgba(0,230,118,0.15)';
-                    badge.style.color = '#00e676';
+                    badge.style.background = 'rgba(22,163,74,0.12)';
+                    badge.style.color = '#15803d';
                 }
                 if (rate) rate.textContent = `${dailyRate} G$/day`;
                 if (from) from.textContent = 'Someone';
             } else {
                 if (badge) {
                     badge.textContent = 'No incoming stream';
-                    badge.style.background = 'rgba(255,255,255,0.08)';
+                    badge.style.background = 'rgba(67,56,43,0.07)';
                     badge.style.color = 'var(--text-dim)';
                 }
                 if (rate) rate.textContent = '— G$/day';
@@ -8546,20 +8837,20 @@
         // Validate inputs
         if (!receiver || !/^0x[a-fA-F0-9]{40}$/.test(receiver)) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#ff7070;">❌ Please enter a valid wallet address</div>';
+            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid wallet address</div>';
             result.style.display = 'block';
             return;
         }
         
         if (!amount || amount <= 0) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#ff7070;">❌ Please enter a valid stream amount</div>';
+            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid stream amount</div>';
             result.style.display = 'block';
             return;
         }
         if (document.getElementById('streamBalanceWarning')?.style.display !== 'none' && !document.getElementById('streamRiskAck')?.checked) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#ff7070;">❌ Please confirm the stream risk warning first.</div>';
+            result.innerHTML = '<div style="color:#dc2626;">❌ Please confirm the stream risk warning first.</div>';
             result.style.display = 'block';
             return;
         }
@@ -8625,7 +8916,7 @@
             }
             
             result.innerHTML = `
-                <div style="color:#00e676;margin-bottom:0.5rem;">✅ Stream created!</div>
+                <div style="color:#16a34a;margin-bottom:0.5rem;">✅ Stream created!</div>
                 <div style="color:var(--text-dim);font-size:0.75rem;">TX: ${txHash.slice(0, 10)}...</div>
             `;
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', {
@@ -8643,7 +8934,7 @@
             
         } catch (err) {
             const errorMsg = err.message || 'Transaction failed';
-            result.innerHTML = `<div style="color:#ff7070;">❌ ${errorMsg}</div>`;
+            result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', {
                 detail: {
@@ -8664,20 +8955,20 @@
         // Validate inputs
         if (!receiver || !/^0x[a-fA-F0-9]{40}$/.test(receiver)) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#ff7070;">❌ Please enter a valid wallet address</div>';
+            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid wallet address</div>';
             result.style.display = 'block';
             return;
         }
         
         if (amount < 0) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#ff7070;">❌ Please enter a valid amount</div>';
+            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid amount</div>';
             result.style.display = 'block';
             return;
         }
         if (document.getElementById('streamBalanceWarning')?.style.display !== 'none' && !document.getElementById('streamRiskAck')?.checked) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#ff7070;">❌ Please confirm the stream risk warning first.</div>';
+            result.innerHTML = '<div style="color:#dc2626;">❌ Please confirm the stream risk warning first.</div>';
             result.style.display = 'block';
             return;
         }
@@ -8723,7 +9014,7 @@
             });
             
             result.innerHTML = `
-                <div style="color:#00e676;margin-bottom:0.5rem;">✅ Stream updated!</div>
+                <div style="color:#16a34a;margin-bottom:0.5rem;">✅ Stream updated!</div>
                 <div style="color:var(--text-dim);font-size:0.75rem;">TX: ${txHash.slice(0, 10)}...</div>
             `;
             result.style.display = 'block';
@@ -8734,7 +9025,7 @@
             
         } catch (err) {
             const errorMsg = err.message || 'Transaction failed';
-            result.innerHTML = `<div style="color:#ff7070;">❌ ${errorMsg}</div>`;
+            result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
         } finally {
             loading.style.display = 'none';
@@ -8823,7 +9114,7 @@
             }
             
             result.innerHTML = `
-                <div style="color:#00e676;margin-bottom:0.5rem;">✅ Stream stopped!</div>
+                <div style="color:#16a34a;margin-bottom:0.5rem;">✅ Stream stopped!</div>
                 <div style="color:var(--text-dim);font-size:0.75rem;">Buffer returned. TX: ${txHash.slice(0, 10)}...</div>
             `;
             result.style.display = 'block';
@@ -8834,7 +9125,7 @@
             
         } catch (err) {
             const errorMsg = err.message || 'Transaction failed';
-            result.innerHTML = `<div style="color:#ff7070;">❌ ${errorMsg}</div>`;
+            result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
         } finally {
             loading.style.display = 'none';
