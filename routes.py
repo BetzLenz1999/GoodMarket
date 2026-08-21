@@ -8269,10 +8269,20 @@ def get_daily_voucher():
 @routes.route("/api/voucher/claim", methods=["POST"])
 @auth_required
 def claim_daily_voucher():
-    """Mark today's voucher as claimed. First user to call this wins."""
+    """Take today's voucher slot. First user to call this wins.
+
+    GoodMarket users only: the voucher is reserved for accounts created in
+    the GoodMarket app (login_method == "local"). WalletConnect / injected
+    (MetaMask, MiniPay) / Privy logins are rejected before any claim happens.
+    """
     try:
-        from datetime import datetime, timezone
         wallet = session.get("wallet")
+        if (session.get("login_method") or "").lower() != "local":
+            return jsonify({
+                "success": False,
+                "error": "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.",
+                "not_eligible": True,
+            }), 403
         today = _get_today_pht()
         supabase = get_supabase_client()
         if not supabase:
@@ -8295,19 +8305,11 @@ def claim_daily_voucher():
         if row.get("is_claimed"):
             return jsonify({"success": False, "error": "Voucher already claimed!", "already_claimed": True}), 409
 
-        safe_supabase_operation(
-            lambda: supabase.table("daily_voucher")
-                .update({
-                    "is_claimed": True,
-                    "claimed_by": wallet,
-                    "claimed_at": datetime.now(timezone.utc).isoformat()
-                })
-                .eq("id", row["id"])
-                .eq("is_claimed", False)
-                .execute(),
-            operation_name="mark voucher claimed"
-        )
-
+        # Do NOT mark the voucher claimed here: the claim endpoint only takes
+        # the voucher "slot", and /api/voucher/confirm marks it claimed AFTER
+        # the on-chain withdraw succeeds. A user whose attempt fails (wallet
+        # rejected, tx reverted, modal closed) must not consume the voucher —
+        # the banner stays available for that user and everyone else.
         return jsonify({"success": True, "voucher_link": row["voucher_link"]})
     except Exception as e:
         logger.error(f"claim_daily_voucher error: {e}")
@@ -8344,6 +8346,21 @@ def confirm_voucher_claim():
                 })
                 .execute(),
             operation_name="insert voucher claim log"
+        )
+
+        # Only NOW that the on-chain withdraw is confirmed does the voucher
+        # become claimed (CAS on is_claimed = False guards concurrent claims).
+        safe_supabase_operation(
+            lambda: supabase.table("daily_voucher")
+                .update({
+                    "is_claimed": True,
+                    "claimed_by": wallet,
+                    "claimed_at": datetime.now(timezone.utc).isoformat()
+                })
+                .eq("voucher_date", voucher_date)
+                .eq("is_claimed", False)
+                .execute(),
+            operation_name="mark voucher claimed"
         )
         return jsonify({"success": True})
     except Exception as e:
