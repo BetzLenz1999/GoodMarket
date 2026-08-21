@@ -202,6 +202,52 @@
         .gm-loader-dots span:nth-child(2) { animation-delay: 0.16s; }
         .gm-loader-dots span:nth-child(3) { animation-delay: 0.32s; }
 
+        /* Admin-uploaded developer profiles replace the static welcome text
+           when the admin dashboard has at least one active profile. */
+        .gm-loader-profiles {
+            display: none;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1.1rem;
+            margin-top: 0.25rem;
+        }
+
+        .gm-loader-profiles.is-visible {
+            display: flex;
+        }
+
+        .gm-loader-profile {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            max-width: 150px;
+        }
+
+        .gm-loader-profile img {
+            width: 76px;
+            height: 76px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid rgba(96, 165, 250, 0.75);
+            box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+        }
+
+        .gm-loader-profile-name {
+            margin-top: 0.6rem;
+            font-weight: 800;
+            color: #dbeafe;
+            font-size: 0.95rem;
+            letter-spacing: 0.01em;
+        }
+
+        .gm-loader-profile-position {
+            margin-top: 0.25rem;
+            color: rgba(219, 234, 254, 0.72);
+            font-size: 0.78rem;
+            font-weight: 600;
+            line-height: 1.3;
+        }
+
         @keyframes gmLoaderSpin {
             to { transform: rotate(360deg); }
         }
@@ -1833,12 +1879,15 @@
     </script>
 </head>
 <body>
-    <!-- Entrance loading screen: hidden once the homepage is ready. -->
-    <div id="gmWelcomeLoader" class="gm-welcome-loader" role="status" aria-live="polite" aria-label="Welcome to GoodMarket loading">
+    <!-- Entrance loading screen: hidden once the homepage is ready. When the
+         admin dashboard has developer profiles, they replace the static
+         welcome text (see the gmWelcomeLoader script below). -->
+    <div id="gmWelcomeLoader" class="gm-welcome-loader" role="status" aria-live="polite" aria-label="GoodMarket loading">
         <div class="gm-loader-card">
             <div class="gm-loader-orb" aria-hidden="true"></div>
             <h1 class="gm-loader-title">Welcome to GoodMarket</h1>
             <p class="gm-loader-subtitle">Developed by MOB Labs Team - Contributor: Betz, Omar &amp; Moh - Gooddollar Academy Author: Pablo</p>
+            <div id="gmLoaderProfiles" class="gm-loader-profiles"></div>
             <div class="gm-loader-dots" aria-hidden="true"><span></span><span></span><span></span></div>
         </div>
     </div>
@@ -2340,7 +2389,7 @@
                 <button id="localWalletBtn" class="wallet-option-card primary" type="button" onclick="showLocalWalletPanel('create')">
                     <div class="option-icon">🆓</div>
                     <div class="option-text">
-                        <div class="option-title">Create a Free Account</div>
+                        <div class="option-title">Create GoodMarket Wallet</div>
                         <p class="option-desc">Email + PIN — no wallet app needed. Your wallet is created instantly, free.</p>
                     </div>
                     <span class="option-arrow">→</span>
@@ -5030,6 +5079,56 @@
         (function () {
             const loader = document.getElementById('gmWelcomeLoader');
             if (!loader) return;
+
+            // Show the developer profiles uploaded via the admin dashboard in
+            // place of the static welcome text. Falls back to the static
+            // content when no profile exists or the fetch fails.
+            function renderLoaderProfiles(profiles) {
+                const container = document.getElementById('gmLoaderProfiles');
+                if (!container || !profiles || !profiles.length) return;
+
+                profiles.forEach(function (profile) {
+                    if (!profile || !profile.image_url || !profile.name) return;
+
+                    const card = document.createElement('div');
+                    card.className = 'gm-loader-profile';
+
+                    const img = document.createElement('img');
+                    img.src = profile.image_url;
+                    img.alt = profile.name;
+                    img.loading = 'eager';
+                    card.appendChild(img);
+
+                    const name = document.createElement('div');
+                    name.className = 'gm-loader-profile-name';
+                    name.textContent = profile.name;
+                    card.appendChild(name);
+
+                    if (profile.position) {
+                        const position = document.createElement('div');
+                        position.className = 'gm-loader-profile-position';
+                        position.textContent = profile.position;
+                        card.appendChild(position);
+                    }
+
+                    container.appendChild(card);
+                });
+
+                if (!container.children.length) return;
+
+                const staticParts = loader.querySelectorAll('.gm-loader-orb, .gm-loader-title, .gm-loader-subtitle');
+                staticParts.forEach(function (el) { el.style.display = 'none'; });
+                container.classList.add('is-visible');
+            }
+
+            fetch('/api/developer-profile')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data && data.success && Array.isArray(data.profiles)) {
+                        renderLoaderProfiles(data.profiles);
+                    }
+                })
+                .catch(function () { /* static welcome text stays */ });
 
             const MIN_VISIBLE_MS = 12000;
             const MAX_VISIBLE_MS = 15000;
