@@ -4365,7 +4365,7 @@ def get_my_referral_code():
     """
     try:
         wallet = session.get('wallet')
-        from referral_program.referral_service import referral_service, BASE_URL
+        from referral_program.referral_service import referral_service, build_referral_link
 
         # Fast path: check user_data directly
         supabase = supabase_logger.client if supabase_logger and supabase_logger.enabled else None
@@ -4380,7 +4380,7 @@ def get_my_referral_code():
                 return jsonify({
                     "success": True,
                     "referral_code": code,
-                    "referral_link": f"{BASE_URL}/?ref={code}",
+                    "referral_link": build_referral_link(code),
                     "source": "user_data"
                 })
 
