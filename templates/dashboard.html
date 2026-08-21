@@ -3876,6 +3876,13 @@
         /* ===== REFERRAL PROGRAM ===== */
         let referralLoaded = false;
 
+        // Match the referral link to the domain the visitor is actually on
+        // (e.g. goodmarket.live vs the Vercel domain).
+        function referralLinkOnCurrentOrigin(link) {
+            const m = (link || '').match(/^(https?:)?\/\/[^/]+/);
+            return m ? link.replace(m[0], window.location.origin) : (link || '');
+        }
+
         async function loadReferralSection() {
             referralLoaded = true;
             document.getElementById('referralLoading').style.display = 'block';
@@ -3904,7 +3911,7 @@
                     return;
                 }
 
-                document.getElementById('referralLinkInput').value = data.referral_link || '';
+                document.getElementById('referralLinkInput').value = referralLinkOnCurrentOrigin(data.referral_link);
                 document.getElementById('referralLinkBox').style.display = 'block';
 
                 document.getElementById('refStatTotal').textContent = data.total_referrals || 0;
