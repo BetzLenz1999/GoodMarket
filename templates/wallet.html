@@ -1052,6 +1052,12 @@
             backdrop-filter: blur(4px);
         }
         .modal-overlay.open { display: flex; }
+        /* The PIN unlock prompt is a blocking, app-level modal: every
+           .modal-overlay shares z-index 200 and later DOM siblings (send,
+           receive, gcash, settings, stream) paint on top of it, so without
+           this the unlock sheet opens INVISIBLE behind the triggering modal
+           and the awaiting flow hangs with no visible feedback. */
+        #lwUnlockModal { z-index: 400; }
         .modal-sheet {
             background: #0d1424;
             border: 1px solid rgba(255,255,255,0.1);
@@ -4992,6 +4998,21 @@
         } catch (_) { el.textContent = '—'; }
     }
 
+    // Same poll-until-mined pattern as minipay-gas-topup.js _waitForReceipt.
+    async function _gcashWaitForReceipt(provider, txHash, attempts) {
+        for (let i = 0; i < attempts; i++) {
+            try {
+                const r = await provider.request({
+                    method: 'eth_getTransactionReceipt',
+                    params: [txHash]
+                });
+                if (r) return r;
+            } catch (_) { /* retry */ }
+            await new Promise(res => setTimeout(res, 2500));
+        }
+        return null;
+    }
+
     function _gcashUpdatePhp() {
         const raw = document.getElementById('gcashAmount').value.trim().replace(/,/g, '');
         const preview = document.getElementById('gcashPhpPreview');
@@ -5051,13 +5072,20 @@
         clearAlert('gcashAlert');
         const btn = document.getElementById('gcashSubmitBtn');
 
-        // Local wallets: prompt for PIN if locked
+        // Local wallets: prompt for PIN if locked. A cancelled unlock aborts
+        // quietly — the modal already surfaces its own errors — but anything
+        // else (e.g. the helper failing to run) must be shown, not swallowed,
+        // or the button looks dead.
         const isLocalLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
         if (isLocalLogin && !GMLocalWallet.isUnlocked()) {
-            await _lwUnlockIfNeeded().catch(function(e) {
-                if (e.message !== 'Unlock cancelled.') clearAlert('gcashAlert');
-                return Promise.reject(e);
-            });
+            try {
+                await _lwUnlockIfNeeded();
+            } catch (e) {
+                if (e && e.message && e.message !== 'Unlock cancelled.') {
+                    showAlert('gcashAlert', 'alert-error', '❌ ' + e.message);
+                }
+                return;
+            }
         }
 
         // Read + validate form
@@ -5136,8 +5164,28 @@
                 params: [txParams]
             });
 
+            // The backend verifies the transfer on-chain — a freshly-broadcast
+            // tx isn't mined yet, so wait for the receipt here first or the
+            // request fails with "transaction not found" even though the G$
+            // was already sent.
+            btn.innerHTML = '<span class="spinner"></span> Confirming on-chain…';
+            showAlert('gcashAlert', 'alert-info', '<span class="spinner"></span> Transaction sent! Waiting for on-chain confirmation…');
+
+            const receipt = await _gcashWaitForReceipt(provider, txHash, 36); // ~90s
+            if (!receipt) {
+                showAlert('gcashAlert', 'alert-error',
+                    '⏳ Your G$ was sent (<a href="https://celoscan.io/tx/' + txHash + '" target="_blank" style="color:#007DFE">view tx</a>) '
+                    + 'but confirmation is taking too long. <strong>Do not submit again yet</strong> — '
+                    + 'wait a few minutes, then contact support with your tx hash so we can complete your cashout request.');
+                return;
+            }
+            if (receipt.status === '0x0' || receipt.status === 0) {
+                showAlert('gcashAlert', 'alert-error', '❌ The transfer failed on-chain. No cashout was recorded. Please try again.');
+                return;
+            }
+
             btn.innerHTML = '<span class="spinner"></span> Submitting request…';
-            showAlert('gcashAlert', 'alert-info', '<span class="spinner"></span> Transaction sent! Submitting cashout request…');
+            showAlert('gcashAlert', 'alert-info', '<span class="spinner"></span> Transaction confirmed! Submitting cashout request…');
 
             // Submit to backend
             const submitRes = await fetch('/api/gcash/cashout-request', {
@@ -7659,6 +7707,13 @@
             document.getElementById('lwUnlockModal').classList.remove('open');
             if (window._lwUnlockReject) { window._lwUnlockReject(new Error('Unlock cancelled.')); window._lwUnlockResolve = null; window._lwUnlockReject = null; }
         };
+
+        // doSend / submitGcashCashout / the raffle signer live OUTSIDE this
+        // IIFE — without these globals their locked-wallet unlock prompt
+        // silently no-ops and the triggering button appears dead for local
+        // logins.
+        window._lwIsNeeded = _lwIsNeeded;
+        window._lwUnlockIfNeeded = _lwUnlockIfNeeded;
 
         window.doUbiClaim = async function() {
             if (btn.disabled) return;
