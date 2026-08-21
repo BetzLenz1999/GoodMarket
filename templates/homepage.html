@@ -2461,7 +2461,7 @@
                     <button id="lwSubmitBtn" class="connect-btn" type="button" onclick="submitLocalWallet()">Create my free wallet</button>
                     <p class="wc-panel-note" style="margin-top:0.7rem;text-align:center;" id="lwToggleNote">
                         Already have an account?
-                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode('unlock')">Unlock with email + PIN</button>
+                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode('unlock')">Log in with email + PIN</button>
                     </p>
                 </div>
 
@@ -2865,10 +2865,10 @@
             document.getElementById('lwModeNote').textContent = isUnlock
                 ? 'Enter the email and PIN for your GoodMarket account. Works on any device — we fetch your encrypted wallet and your PIN unlocks it here in the browser.'
                 : 'Make a free GoodMarket account & wallet — secured by your email and a 6-digit PIN. No app install, no fees.';
-            document.getElementById('lwSubmitBtn').textContent = isUnlock ? 'Unlock my account' : 'Create my free wallet';
+            document.getElementById('lwSubmitBtn').textContent = isUnlock ? 'Log in to my account' : 'Create my free wallet';
             document.getElementById('lwToggleNote').innerHTML = isUnlock
                 ? 'New here? <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode(\'create\')">Create a free account</button>'
-                : 'Already have an account? <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode(\'unlock\')">Unlock with email + PIN</button>';
+                : 'Already have an account? <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode(\'unlock\')">Log in with email + PIN</button>';
         }
 
         function lwStatus(message, type) {
@@ -3010,7 +3010,7 @@
             address = ksData.address;
             message = ksData.message;
 
-            lwStatus('⏳ Unlocking with your PIN…', 'info');
+            lwStatus('⏳ Logging you in with your PIN…', 'info');
             await GMLocalWallet.unlockWithKeystore(keystore, pin);
             GMLocalWallet.saveLocalKeystore(String(email).trim().toLowerCase(), address, keystore);
             const signature = await GMLocalWallet.loginSignature(message);
