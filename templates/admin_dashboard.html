@@ -3147,6 +3147,10 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                             + '<div style="font-size:0.72rem;color:rgba(241,245,249,0.6);">' + (r.admin_note || '')
                             + (r.refund_tx_hash ? ' <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">tx ↗</a>' : '')
                             + '</div>';
+                    } else if (r.status === 'rejected' || r.status === 'refunded') {
+                        actions = '<div style="font-size:0.72rem;color:rgba(241,245,249,0.6);">' + (r.admin_note || '')
+                            + (r.refund_tx_hash ? ' <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">Refund tx ↗</a>' : '')
+                            + '</div>';
                     } else {
                         actions = '<span style="color:rgba(241,245,249,0.4);font-size:0.75rem;">' + (r.admin_note || r.status) + '</span>';
                     }
@@ -3242,7 +3246,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 });
                 const data = await res.json();
                 if (data.success) {
-                    alert('✅ ' + data.message);
+                    alert('✅ ' + data.message + (data.tx_hash ? '\nhttps://celoscan.io/tx/' + data.tx_hash : ''));
                     loadGcashRequests();
                 } else {
                     alert('❌ ' + (data.error || 'Failed to reject'));
@@ -3261,7 +3265,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 });
                 const data = await res.json();
                 if (data.success) {
-                    alert('✅ ' + data.message);
+                    alert('✅ ' + data.message + (data.tx_hash ? '\nhttps://celoscan.io/tx/' + data.tx_hash : ''));
                 } else {
                     alert('❌ ' + (data.error || 'Refund retry failed'));
                 }
