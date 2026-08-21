@@ -34,8 +34,11 @@ _scheduler_lock = threading.Lock()
 
 def _fetch_refundable(limit: int):
     """Return requests that need a refund: status='pending' older than 24h, or
-    status='refund_failed' whose last attempt is old enough to retry (the refund
-    wallet may have been topped up since)."""
+    status='refund_failed'/'refunding' whose last attempt is old enough to
+    retry (the refund wallet may have been topped up since). 'refunding' rows
+    are stranded CAS claims (a worker died mid-refund before send_refund
+    learned to never raise) — the retry cutoff is far longer than the in-flight
+    refund's worst case (~60s receipt poll), so re-claiming them is safe."""
     from supabase_client import get_supabase_admin_client
     sb = get_supabase_admin_client()
     now = datetime.now(timezone.utc)
@@ -46,7 +49,8 @@ def _fetch_refundable(limit: int):
         .select("*")
         .or_(
             f"and(status.eq.pending,created_at.lt.{pending_cutoff}),"
-            f"and(status.eq.refund_failed,updated_at.lt.{retry_cutoff})"
+            f"and(status.eq.refund_failed,updated_at.lt.{retry_cutoff}),"
+            f"and(status.eq.refunding,updated_at.lt.{retry_cutoff})"
         )
         .order("created_at")
         .limit(limit)
@@ -68,6 +72,9 @@ def _process_one(req: dict):
     if req["status"] == "refund_failed":
         note = "Refund succeeded on automatic retry."
         logger.info(f"🔁 GCash auto-refund: retrying failed refund #{request_id} ({req['amount_gd']} G$ to {req['wallet_address'][:8]}…)")
+    elif req["status"] == "refunding":
+        note = "Refund recovered from a stalled attempt."
+        logger.info(f"🔁 GCash auto-refund: re-claiming stalled refund #{request_id} ({req['amount_gd']} G$ to {req['wallet_address'][:8]}…)")
     else:
         note = "Auto-refunded: not reviewed within 24 hours"
         logger.info(f"⏰ GCash auto-refund: request #{request_id} expired (24h), refunding {req['amount_gd']} G$ to {req['wallet_address'][:8]}…")
