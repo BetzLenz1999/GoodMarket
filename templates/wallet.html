@@ -1057,7 +1057,9 @@
            receive, gcash, settings, stream) paint on top of it, so without
            this the unlock sheet opens INVISIBLE behind the triggering modal
            and the awaiting flow hangs with no visible feedback. */
-        #lwUnlockModal { z-index: 400; }
+        /* Voucher result modal uses an inline z-index: 99999 — the unlock
+           modal must out-stack it too, or the PIN prompt opens invisibly. */
+        #lwUnlockModal { z-index: 100000; }
         .modal-sheet {
             background: #0d1424;
             border: 1px solid rgba(255,255,255,0.1);
@@ -2332,7 +2334,7 @@
                 </div>
 
                 <p style="font-size:0.85rem;color:rgba(0,0,0,0.72);line-height:1.55;margin-bottom:1rem;">
-                    Hi! Please click below to claim the payment link voucher. This voucher is for everyone — once someone claims it, it will no longer be available.
+                    Hi! Please click below to claim the payment link voucher. This voucher is exclusive for GoodMarket users — once someone claims it, it will no longer be available.
                     Come back next time for a new voucher! 🎁
                 </p>
 
@@ -9238,6 +9240,13 @@
             }
 
             async function _voucherClaimProvider(promptLogin) {
+                // GoodMarket local accounts sign with the PIN-decrypted in-app
+                // wallet, never with an injected MetaMask/extension (a
+                // different account). Never fall through to injected for them.
+                if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
+                    if (typeof GMLocalWallet !== 'undefined') return GMLocalWallet.getProvider();
+                    return null;
+                }
                 if (typeof _awaitEthProvider === 'function') {
                     var walletProvider = await _awaitEthProvider(promptLogin ? 10000 : 800);
                     if (walletProvider) return walletProvider;
@@ -9412,8 +9421,22 @@
                         var providerRead = new ethers.JsonRpcProvider(VCELO_RPC);
                         otpCheck = new ethers.Contract(VOTP_ADDRESS, VOTP_ABI, providerRead);
                     } else {
-                        btn.innerHTML = spinner + ' Connecting wallet...';
-                        var ep = await _voucherClaimProvider(true);
+                        btn.innerHTML = spinner + ' Preparing wallet...';
+                        var ep;
+                        // Local (GoodMarket-created) accounts MUST sign with
+                        // the PIN-decrypted in-app wallet — never with an
+                        // injected extension. Unlock first via the PIN modal.
+                        if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
+                            if (typeof GMLocalWallet === 'undefined') {
+                                throw new Error('Local wallet module did not load. Please refresh the page.');
+                            }
+                            if (typeof _lwUnlockIfNeeded === 'function') {
+                                await _lwUnlockIfNeeded();
+                            }
+                            ep = GMLocalWallet.getProvider();
+                        } else {
+                            ep = await _voucherClaimProvider(true);
+                        }
                         if (!ep) throw new Error('No Web3 wallet detected. Open this Wallet page in MiniPay, connect with Privy, or sign in again with WalletConnect.');
                         await ep.request({ method: 'eth_requestAccounts' });
 
@@ -9486,7 +9509,9 @@
                     btn.disabled = true;
                     btn.textContent = '✅ Claimed!';
 
-                    // Save tx_hash + amount to server so it appears in transaction history
+                    // Only now that the on-chain withdraw succeeded do we
+                    // confirm the claim server-side (which marks the voucher
+                    // as claimed) and finally hide the banner.
                     try {
                         await fetch('/api/voucher/confirm', {
                             method: 'POST',
@@ -9496,6 +9521,7 @@
                                 gd_amount: parseFloat(humanAmt),
                             })
                         });
+                        document.getElementById('dailyVoucherBanner').style.display = 'none';
                         if (typeof txHistoryLoaded !== 'undefined') txHistoryLoaded = false; // force reload of transaction history
                     } catch (_) { /* non-critical, ignore */ }
 
@@ -9676,6 +9702,20 @@
                     btn.disabled = true;
                     btn.textContent = '✅ Claimed!';
 
+                    // Confirm the claim server-side (marks the voucher as
+                    // claimed) and finally hide the banner.
+                    try {
+                        await fetch('/api/voucher/confirm', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                tx_hash: txHash,
+                                gd_amount: parseFloat(humanAmt),
+                            })
+                        });
+                        document.getElementById('dailyVoucherBanner').style.display = 'none';
+                    } catch (_) { /* non-critical, ignore */ }
+
                 } catch(err) {
                     console.error('WC claim error:', err);
                     var friendly = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err?.message || 'Unknown error');
@@ -9687,6 +9727,16 @@
 
             async function claimDailyVoucher() {
                 var btn = document.getElementById('claimVoucherBtn');
+
+                // GoodMarket users only: the voucher is reserved for accounts
+                // created in the GoodMarket app (local in-app wallet). Fail fast
+                // for MetaMask / MiniPay / WalletConnect / Privy logins — the
+                // server enforces the same gate, this just saves a round-trip.
+                if ((LOGIN_METHOD || '').toLowerCase() !== 'local') {
+                    voucherShowSimple('🚫', 'Not Eligible', "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.");
+                    return;
+                }
+
                 if (btn) { btn.disabled = true; btn.textContent = '⏳ Claiming...'; }
 
                 try {
@@ -9694,7 +9744,9 @@
                     var data = await res.json();
 
                     if (data.success) {
-                        document.getElementById('dailyVoucherBanner').style.display = 'none';
+                        // The banner stays visible until the on-chain claim
+                        // actually succeeds (confirm POST marks the voucher).
+                        // A failed attempt must not consume the voucher.
                         _voucherLink = data.voucher_link;
 
                         // Try to extract private key from URL hash
@@ -9729,6 +9781,8 @@
                             voucherShowSimple('🎉', 'Voucher Claimed!', 'Your voucher link: ' + data.voucher_link);
                         }
 
+                    } else if (data.not_eligible) {
+                        voucherShowSimple('🚫', 'Not Eligible', data.error || "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.");
                     } else if (data.already_claimed) {
                         voucherShowSimple('😔', 'Already Claimed!', 'Someone else already claimed this voucher. Come back next time for a new one!');
                         document.getElementById('dailyVoucherBanner').style.display = 'none';
