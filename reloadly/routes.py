@@ -54,31 +54,45 @@ def _process_refund_failure(order_id: str, wallet: str, gd_amount, failure_err: 
 
     # Refund failed. Missing CELO gas OR missing G$ balance parks the same way
     # — the retry succeeds automatically once the admin tops up the wallet.
-    is_retryable = refund_result.get("error_type") in ("insufficient_gas", "insufficient_balance")
+    # submitted_unconfirmed = refund tx WAS broadcast but hadn't confirmed yet;
+    # keep the tx hash so the retry checks its on-chain receipt before
+    # re-sending (re-sending would double-refund).
+    is_retryable = refund_result.get("error_type") in (
+        "insufficient_gas", "insufficient_balance", "submitted_unconfirmed")
     if is_retryable:
         # Park for automatic retry once the admin refills gas / tops up G$.
         update_order_record(order_id, {
             "status": "pending_refund",
             "failure_reason": sanitize_error(failure_err),
-            "refund_tx_hash": None,
+            "refund_tx_hash": refund_result.get("tx_hash"),
             "refund_error": refund_result.get("error"),
         })
-        logger.warning(f"⏳ Refund parked (insufficient gas/balance) for order {order_id}; will auto-retry.")
+        logger.warning(f"⏳ Refund parked (insufficient gas/balance or unconfirmed tx) for order {order_id}; will auto-retry.")
         return refund_result, {
             "success": False, "found": True, "status": "pending_refund",
             "error": _PENDING_REFUND_MSG, "order_id": order_id,
             "refunded": False, "pending_refund": True,
         }, 200
 
-    # Hard refund failure (not gas) — keep the original "contact support" message.
+    # Hard refund failure (not gas) — keep the "contact support" message, but
+    # include the sanitized refund reason so support can diagnose it (it is
+    # also stored on the row as refund_error).
     update_order_record(order_id, {
         "status": "refund_failed",
         "failure_reason": sanitize_error(failure_err),
         "refund_tx_hash": None,
         "refund_error": refund_result.get("error"),
     })
-    msg = (f"Reloadly fulfillment failed. Refund also failed — please contact "
+    reason = refund_result.get("error") or "unknown error"
+    reason = str(reason)
+    # Never leak RPC URLs or HTTP internals into the user-facing message.
+    if "http" in reason.lower() or "for url:" in reason.lower():
+        reason = "blockchain RPC error"
+    if len(reason) > 120:
+        reason = reason[:117] + "..."
+    msg = (f"Reloadly fulfillment failed. Refund also failed ({reason}) — please contact "
            f"support. Order: {order_id}")
+    logger.error(f"❌ Hard refund failure for order {order_id}: {refund_result}")
     return refund_result, {
         "success": False, "found": True, "status": "refund_failed",
         "error": msg, "order_id": order_id,
