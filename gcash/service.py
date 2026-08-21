@@ -7,6 +7,7 @@ Handles request creation, validation, on-chain verification, refund sending
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -26,6 +27,12 @@ AUTO_REFUND_HOURS = 24                    # auto-refund if not reviewed within 2
 _REFUND_GAS_FALLBACK = 80_000
 _REFUND_GAS_CAP = 150_000
 _REFUND_GAS_MARGIN = 1.2
+
+# A freshly-broadcast tx isn't mined/indexed yet when the user submits — poll
+# briefly before declaring it "not found" (the frontend already waits for the
+# receipt, this is the safety net for RPC indexing lag).
+_RECEIPT_LOOKUP_ATTEMPTS = int(os.getenv("GCASH_RECEIPT_LOOKUP_ATTEMPTS", "8"))
+_RECEIPT_LOOKUP_INTERVAL_SEC = float(os.getenv("GCASH_RECEIPT_LOOKUP_INTERVAL_SEC", "2.5"))
 
 GCASH_NUMBER_RE = re.compile(r"^09\d{9}$")  # 11 digits starting with 09
 GCASH_NAME_RE = re.compile(r"^[A-Za-z\s.\-']{2,100}$")
@@ -127,10 +134,15 @@ def verify_payment_tx(tx_hash: str, expected_from: str, expected_amount_gd: Deci
         return False, "GCash address not configured."
 
     w3 = _get_w3()
-    try:
-        receipt = w3.eth.get_transaction_receipt(tx_hash)
-    except Exception:
-        return False, "Transaction not found on-chain. Please wait for confirmation."
+    receipt = None
+    for _ in range(_RECEIPT_LOOKUP_ATTEMPTS):
+        try:
+            receipt = w3.eth.get_transaction_receipt(tx_hash)
+            break
+        except Exception:
+            time.sleep(_RECEIPT_LOOKUP_INTERVAL_SEC)
+    if receipt is None:
+        return False, "Transaction is still confirming on-chain. Please try again in a minute — do not send a new transfer."
 
     if not receipt or receipt.status != 1:
         return False, "Transaction failed on-chain."
