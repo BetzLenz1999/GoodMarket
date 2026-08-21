@@ -191,7 +191,10 @@ def confirm_action(action_id: str, wallet: str | None) -> dict[str, Any]:
     action["status"] = "confirmed"
     action["confirmed_at"] = datetime.now(timezone.utc).isoformat()
 
-    signing_mode = "walletconnect" if (action.get("login_method") or "").lower() == "walletconnect" else "wallet"
+    login_method = (action.get("login_method") or "").lower()
+    # "local" = in-app self-custodial wallet — the frontend must unlock it with
+    # the user's PIN and sign via GMLocalWallet, never an injected provider.
+    signing_mode = {"local": "local", "walletconnect": "walletconnect"}.get(login_method, "wallet")
     return {
         "success": True,
         "status": "signature_required",
@@ -208,7 +211,10 @@ def _parse_with_openai(message: str) -> dict[str, Any] | None:
 
     prompt = (
         "You classify GoodMarket wallet chat commands. Return only schema-valid JSON. "
-        "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, or USDT. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
+        "Messages may be in English, Tagalog, or Taglish — classify by keywords, not grammar "
+        "(e.g. 'Magpadala ako ng 100 G$ kay @user' = send_gd, 'Padalhan si @user ng 50 G$' = send_gd, "
+        "'Mag-stream ng 5 G$ kada araw kay @user' = stream_gd with flow_rate_per_day). "
+        "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, or USDT. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily/kada araw/bawat araw, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
         "For lookup_transaction (read-only, no signature), set lookup_feature to one of learn_earn, reloadly, referral, twitter, trustpilot when the user names a feature, otherwise empty string. lookup_transaction is for questions about a transaction hash / tx id / 'where is my tx'. "
         "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, transaction_history, lookup_transaction, help, unknown.\n\n"
         f"User message: {message}"
@@ -306,7 +312,7 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
             confidence=0.82,
         )
         return intent
-    if "stream" in lower or "streaming" in lower:
+    if "stream" in lower:
         address = _first_address(message)
         amount = _first_amount(message)
         intent.update(
@@ -321,7 +327,9 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
             confidence=0.82,
         )
         return intent
-    if any(word in lower for word in ["send", "transfer", "padala", "ipadala"]):
+    # Keyword-based: any phrasing works as long as a send keyword appears
+    # ("send", "transfer", "magpadala"/"ipadala"/"padala", "padalhan", …).
+    if any(word in lower for word in ["send", "transfer", "padala", "padalhan"]):
         address = _first_address(message)
         amount = _first_amount(message)
         intent.update(
@@ -570,6 +578,7 @@ def _stream_gd_help_reply() -> str:
         "How to stream G$ inside GoodMarket Agent:\n"
         "1. Connect and verify your GoodMarket wallet first.\n"
         "2. Type a command like: stream 5 G$ per day to @username or stream 5 G$ per day to 0xWalletAddress.\n"
+        "   Tagalog works too: Mag-stream ako ng 5 G$ kada araw kay @username.\n"
         "3. The agent prepares a review card showing the receiver and daily G$ flow rate. No stream starts yet.\n"
         "4. Check every detail, then tap Confirm action.\n"
         "5. Sign the wallet transaction to start the G$ stream.\n"
@@ -581,9 +590,11 @@ def _send_tokens_help_reply() -> str:
     return (
         "How to send tokens with GoodMarket Agent:\n"
         "1. Type a command like: send 10 G$ to @username or send 10 G$ to 0xWalletAddress.\n"
+        "   Tagalog works too: Magpadala ako ng 10 G$ kay @username or kay 0xWalletAddress.\n"
         "2. You can also use cUSD or USDT, for example: send 1 cUSD to @username.\n"
         "3. The agent prepares a review card only. No token moves yet.\n"
         "4. Tap Confirm action, then sign in your wallet to actually send.\n"
+        "Any phrasing works — the agent only looks for keywords (send/magpadala/padalhan + amount + recipient).\n"
         "Make sure the amount, token, and recipient are correct before confirming."
     )
 
@@ -598,6 +609,7 @@ def _welcome_help_reply() -> str:
         "• stream 5 G$ per day to @bebet or 0x wallet\n"
         "• load 09653870395 20\n"
         "• my transaction hash / my Learn & Earn tx hash / my Reloadly tx\n"
+        "Pwede ring Tagalog: 'Magpadala ako ng 100 G$ kay @bebet' o 'Mag-stream ng 5 G$ kada araw kay @bebet'.\n"
         "For send and stream, username and wallet address are both supported. "
         "Value-moving actions stay in chat for review first, then require your confirmation and wallet signature."
     )
@@ -686,12 +698,29 @@ def _normalise_username(value: str) -> str | None:
     return candidate if re.fullmatch(r"[a-z0-9_]{3,24}", candidate) else None
 
 
+# Words that may follow a recipient prefix but are never a username — time
+# units, filler words, and self-references in both English and Tagalog.
+_RECIPIENT_STOP_WORDS = {
+    "wallet", "address", "goodmarket",
+    "araw", "buwan", "linggo", "taon",
+    "day", "days", "daily", "week", "weekly", "month", "monthly", "year", "per",
+    "akin", "aking", "kanya", "kanila", "sarili", "myself", "self",
+}
+
+
 def _send_recipient_candidate(text: str) -> str | None:
-    match = re.search(r"\b(?:to|kay|ni|user(?:name)?|@)\s*@?([A-Za-z0-9_]{3,24})\b", text, re.IGNORECASE)
+    # Recipient may be introduced by to/kay/ni/si/sa/para kay/para sa/@ or
+    # appear as a bare @mention anywhere in the message.
+    match = re.search(
+        r"\b(?:para\s+(?:kay|sa)|to|kay|ni|si|sa|user(?:name)?)\b\s*@?([A-Za-z0-9_]{3,24})\b"
+        r"|@([A-Za-z0-9_]{3,24})\b",
+        text,
+        re.IGNORECASE,
+    )
     if not match:
         return None
-    candidate = match.group(1)
-    if candidate.lower() in {"wallet", "address", "goodmarket"}:
+    candidate = match.group(1) or match.group(2) or ""
+    if candidate.lower() in _RECIPIENT_STOP_WORDS:
         return None
     return candidate
 
@@ -737,7 +766,13 @@ def _valid_phone(value: str) -> bool:
 
 def _stream_daily_amount(text: str) -> str | None:
     """Return the requested G$/day amount when a stream command includes one."""
-    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:g\$|gd|gooddollar)?\s*(?:/|per\s+)?(?:day|daily|d)", text, re.IGNORECASE)
+    match = re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:g\$|gd|gooddollar)?\s*"
+        r"(?:/|per\s+|kada\s+|bawat\s+|sa\s+isang\s+)?"
+        r"(?:day|daily|araw(?:-araw)?|d)\b",
+        text,
+        re.IGNORECASE,
+    )
     if match:
         return match.group(1)
     return _first_amount(text)
