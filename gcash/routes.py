@@ -15,6 +15,7 @@ from .service import (
     get_user_requests, get_all_requests, get_request_by_id,
     update_request, send_refund, claim_request_for_refund,
     is_gcash_enabled, get_gcash_address, MIN_CASHOUT_GD, GD_PER_PESO,
+    auto_refund_failed_cashout, process_claimed_refund,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,8 +88,47 @@ def submit_cashout():
         }), 409
 
     # Verify the on-chain tx
-    ok, verify_err = verify_payment_tx(tx_hash, wallet, amt_gd)
+    ok, verify_err, received = verify_payment_tx(tx_hash, wallet, amt_gd)
     if not ok:
+        if received:
+            # The G$ DID reach the cashout address but the request failed
+            # verification (e.g. amount mismatch) — never leave the user stuck:
+            # record it and refund the exact amount received automatically.
+            logger.warning(
+                f"⚠️ GCash cashout verify failed after funds arrived ({verify_err}) "
+                f"— auto-refunding {received['amount_gd']} G$ to {wallet[:8]}…"
+            )
+            ar = auto_refund_failed_cashout(
+                wallet, gcash_number.strip(), gcash_name.strip(),
+                tx_hash, received["amount_gd"], verify_err,
+            )
+            if ar.get("already_recorded"):
+                return jsonify({"success": False, "error": ar["error"]}), 409
+            if ar.get("refunded"):
+                refund_tx = ar.get("refund_tx_hash", "")
+                return jsonify({
+                    "success": False,
+                    "refunded": True,
+                    "refund_tx_hash": refund_tx,
+                    "error": (
+                        f"⚠️ Your {received['amount_gd']:,.2f} G$ reached the cashout address, but the cashout "
+                        f"could not be processed ({verify_err}). The full amount was automatically refunded "
+                        f"to your wallet — <a href=\"https://celoscan.io/tx/{refund_tx}\" target=\"_blank\" "
+                        f"style=\"color:#38bdf8;\">view refund tx ↗</a>. You can submit a new cashout request."
+                    ),
+                }), 400
+            ref = f" (reference: request #{ar['request_id']})" if ar.get("request_id") else ""
+            return jsonify({
+                "success": False,
+                "refunded": False,
+                "error": (
+                    f"⚠️ Your {received['amount_gd']:,.2f} G$ reached the cashout address, but the cashout "
+                    f"could not be processed ({verify_err}) and the automatic refund could not be sent yet "
+                    f"({ar.get('error', 'unknown')}). Your G$ is safe — it will be refunded automatically "
+                    f"once the refund wallet is topped up{ref}. Please contact support if you are not "
+                    f"refunded within 24 hours."
+                ),
+            }), 500
         return jsonify({"success": False, "error": verify_err}), 400
 
     # Save
@@ -238,16 +278,55 @@ def admin_reject(request_id):
             "message": f"Request #{request_id} rejected. G$ refunded: {refund_result['tx_hash'][:16]}…",
         })
     else:
-        # Refund failed — park as refund_failed
-        update_request(request_id, {
+        # Refund failed — park as refund_failed (kept any broadcast tx hash so a
+        # retry checks it on-chain before re-sending: no double-refund)
+        updates = {
             "status": "refund_failed",
             "admin_note": f"Rejected but refund failed: {refund_result.get('error', 'unknown')}",
             "reviewed_by": admin_wallet.lower(),
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if refund_result.get("tx_hash"):
+            updates["refund_tx_hash"] = refund_result["tx_hash"]
+        update_request(request_id, updates)
         logger.error(f"❌ GCash cashout #{request_id} rejected but refund failed: {refund_result.get('error')}")
         return jsonify({
             "success": False,
             "error": f"Request rejected but refund failed: {refund_result.get('error', 'unknown')}",
             "refund_error_type": refund_result.get("error_type"),
         }), 500
+
+
+@gcash_bp.route("/admin/requests/<int:request_id>/retry-refund", methods=["POST"])
+def admin_retry_refund(request_id):
+    """Retry the refund for a refund_failed request (e.g. after the refund
+    wallet was topped up with CELO gas)."""
+    admin_wallet, err = _require_admin()
+    if err:
+        return err
+
+    req = get_request_by_id(request_id)
+    if not req:
+        return jsonify({"success": False, "error": "Request not found."}), 404
+    if req["status"] != "refund_failed":
+        return jsonify({"success": False, "error": f"Request is {req['status']} — only refund_failed requests can be retried."}), 409
+
+    if not claim_request_for_refund(request_id, expected_status="refund_failed"):
+        return jsonify({"success": False, "error": "Refund was already claimed by another process."}), 409
+
+    result = process_claimed_refund(req, f"Refund retried by admin {admin_wallet[:10]}…")
+
+    if result["success"]:
+        logger.info(f"✅ GCash cashout #{request_id} refund retried by {admin_wallet[:8]}…: {result['tx_hash'][:16]}…")
+        return jsonify({
+            "success": True,
+            "message": f"Request #{request_id} refunded: {result['tx_hash'][:16]}…",
+            "tx_hash": result["tx_hash"],
+        })
+    logger.error(f"❌ GCash cashout #{request_id} refund retry failed: {result.get('error')}")
+    return jsonify({
+        "success": False,
+        "error": f"Refund retry failed: {result.get('error', 'unknown')}",
+        "refund_error_type": result.get("error_type"),
+    }), 500
+
