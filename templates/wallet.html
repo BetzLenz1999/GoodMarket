@@ -5555,10 +5555,17 @@
             setTimeout(async function() {
                 const receiverInput = document.getElementById('streamReceiver');
                 const amountInput = document.getElementById('streamAmount');
+                const periodSelect = document.getElementById('streamPeriod');
                 const result = document.getElementById('streamResult');
                 if (receiverInput) {
                     receiverInput.value = recipient;
                     receiverInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                // The AI flow rate is always per DAY — the modal defaults to
+                // "/ month", which would silently create a 30x smaller stream.
+                if (periodSelect) {
+                    periodSelect.value = 'day';
+                    periodSelect.dispatchEvent(new Event('change', { bubbles: true }));
                 }
                 if (amountInput) {
                     amountInput.value = amount;
