@@ -24,9 +24,12 @@ MIN_CASHOUT_GD = Decimal("5000")          # 5,000 G$ minimum
 GD_PER_PESO = Decimal("100")              # 100 G$ = ₱1.00
 AUTO_REFUND_HOURS = 24                    # auto-refund if not reviewed within 24h
 
-_REFUND_GAS_FALLBACK = 80_000
-_REFUND_GAS_CAP = 150_000
-_REFUND_GAS_MARGIN = 1.2
+# Fixed gas budget for the refund transfer — mirrors reloadly/service.py
+# REFUND_GAS_LIMIT. The estimate-based preflight (fallback 80k, cap 150k) was
+# reverted in reloadly after it broke refunds in production (refund txs
+# reverting), so GCash must not repeat it: with the old numbers the refund
+# tx ran out of gas and the admin's reject "succeeded" while the refund died.
+_REFUND_GAS_LIMIT = 250_000
 
 # A freshly-broadcast tx isn't mined/indexed yet when the user submits — poll
 # briefly before declaring it "not found" (the frontend already waits for the
@@ -311,103 +314,138 @@ def update_request(request_id, updates):
 
 def _is_insufficient_gas_error(err):
     msg = str(err).lower()
-    return "insufficient funds" in msg or "insufficient balance" in msg or "gas required exceeds" in msg
+    return (
+        "insufficient funds" in msg
+        or "insufficient balance" in msg
+        or "insufficient gas" in msg
+        or "gas required exceeds" in msg
+        or "intrinsic gas too low" in msg
+        or "max fee per gas less" in msg
+    )
 
 
 def send_refund(to_wallet: str, amount_gd, request_id: int) -> dict:
     """Send G$ refund from GCASH_KEY wallet back to the user.
 
-    Returns {"success": True, "tx_hash": ...} or {"success": False, "error": ...,
-    "error_type": "insufficient_gas"|...}.
+    Never raises. Callers CAS-claim the request (status -> 'refunding') before
+    calling this, so an exception here would strand the row in 'refunding'
+    forever — the reject looks done but the refund never happens. Returns
+    {"success": True, "tx_hash": ...} or {"success": False, "error": ...,
+    "error_type": "insufficient_gas"|"insufficient_balance"|...}.
     """
-    gcash_key = get_gcash_key()
-    if not gcash_key:
-        return {"success": False, "error": "GCASH_KEY not configured", "error_type": "no_key"}
-
-    w3 = _get_w3()
-    from web3 import Web3
-    from eth_account import Account
-
-    if not w3.is_connected():
-        return {"success": False, "error": "Cannot connect to Celo network", "error_type": "rpc_unreachable"}
-
-    refund_account = Account.from_key(gcash_key)
-    token = w3.eth.contract(
-        address=Web3.to_checksum_address(GD_TOKEN_CONTRACT),
-        abi=ERC20_ABI,
-    )
-    recipient = Web3.to_checksum_address(to_wallet)
-
-    amount_dec = Decimal(str(amount_gd).replace(",", "").strip())
-    amount_wei = int((amount_dec * (Decimal(10) ** GD_DECIMALS)).to_integral_value(rounding=ROUND_HALF_UP))
-
-    # Gas preflight — same pattern as reloadly refund
-    gas_limit = _REFUND_GAS_FALLBACK
-    gas_price = None
     try:
-        gas_price = w3.eth.gas_price
+        gcash_key = get_gcash_key()
+        if not gcash_key:
+            return {"success": False, "error": "GCASH_KEY not configured", "error_type": "no_key"}
+
+        w3 = _get_w3()
+        from web3 import Web3
+        from eth_account import Account
+
+        if not w3.is_connected():
+            return {"success": False, "error": "Cannot connect to Celo network", "error_type": "rpc_unreachable"}
+
+        refund_account = Account.from_key(gcash_key)
+        token = w3.eth.contract(
+            address=Web3.to_checksum_address(GD_TOKEN_CONTRACT),
+            abi=ERC20_ABI,
+        )
+        recipient = Web3.to_checksum_address(to_wallet)
+
+        amount_dec = Decimal(str(amount_gd).replace(",", "").strip())
+        amount_wei = int((amount_dec * (Decimal(10) ** GD_DECIMALS)).to_integral_value(rounding=ROUND_HALF_UP))
+
+        # Preflight G$ balance (reloadly lesson): without this, a refund wallet
+        # with no G$ sends a transfer that reverts on-chain and the request
+        # hard-fails as refund_failed even after the admin refills CELO gas.
         try:
-            estimated = token.functions.transfer(recipient, amount_wei).estimate_gas(
-                {"from": refund_account.address}
-            )
-            gas_limit = min(int(estimated * _REFUND_GAS_MARGIN), _REFUND_GAS_CAP)
-        except Exception as est_err:
-            if _is_insufficient_gas_error(est_err):
-                raise
-            gas_limit = _REFUND_GAS_FALLBACK
+            gd_balance_wei = token.functions.balanceOf(refund_account.address).call()
+            if gd_balance_wei < amount_wei:
+                shortfall_gd = (amount_wei - gd_balance_wei) / (Decimal(10) ** GD_DECIMALS)
+                logger.error(
+                    f"❌ GCash refund wallet has insufficient G$: request={request_id} "
+                    f"needed={amount_wei} available={gd_balance_wei}"
+                )
+                return {
+                    "success": False,
+                    "error": f"GCash refund wallet needs a G$ top-up (short by {shortfall_gd:.2f} G$).",
+                    "error_type": "insufficient_balance",
+                }
+        except Exception as bal_err:
+            # The read is best-effort; the preflight/send path below is authoritative.
+            logger.warning(f"⚠️ Could not preflight GCash refund wallet G$ balance: {bal_err}")
 
-        required_wei = gas_limit * gas_price
-        signer_celo = w3.eth.get_balance(refund_account.address)
-        if signer_celo < required_wei:
-            logger.error(
-                f"❌ GCash refund wallet has insufficient CELO: request={request_id} "
-                f"needed={required_wei} available={signer_celo}"
-            )
+        # Gas preflight: fixed budget. The estimate-based preflight (fallback
+        # 80k, cap 150k) was reverted in reloadly after it broke refunds in
+        # production — the refund tx ran out of gas and the admin's reject
+        # "succeeded" while the refund died.
+        gas_price = None
+        try:
+            gas_price = w3.eth.gas_price
+            required_wei = _REFUND_GAS_LIMIT * gas_price
+            signer_celo = w3.eth.get_balance(refund_account.address)
+            if signer_celo < required_wei:
+                logger.error(
+                    f"❌ GCash refund wallet has insufficient CELO: request={request_id} "
+                    f"needed={required_wei} available={signer_celo}"
+                )
+                return {
+                    "success": False,
+                    "error": "GCash refund wallet needs a gas refill.",
+                    "error_type": "insufficient_gas",
+                }
+        except Exception as preflight_err:
+            if _is_insufficient_gas_error(preflight_err):
+                return {
+                    "success": False,
+                    "error": "GCash refund wallet needs a gas refill.",
+                    "error_type": "insufficient_gas",
+                }
+            # Non-gas preflight error — fall through; the send attempt below
+            # produces the authoritative error.
+
+        nonce = w3.eth.get_transaction_count(refund_account.address)
+        if gas_price is None:
+            gas_price = w3.eth.gas_price
+
+        tx = token.functions.transfer(recipient, amount_wei).build_transaction({
+            "chainId": CHAIN_ID,
+            "gas": _REFUND_GAS_LIMIT,
+            "gasPrice": gas_price,
+            "nonce": nonce,
+            "from": refund_account.address,
+        })
+
+        signed = w3.eth.account.sign_transaction(tx, private_key=refund_account.key)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        tx_hash_hex = tx_hash.hex()
+        if not tx_hash_hex.startswith("0x"):
+            tx_hash_hex = "0x" + tx_hash_hex
+
+        # Patient receipt polling (same lesson as the reloadly refund): raising
+        # on a 60s timeout here would hard-fail the refund even though the tx
+        # was already broadcast and could still confirm — a later re-send would
+        # DOUBLE-refund.
+        receipt = _wait_for_receipt_patient(w3, tx_hash, timeout=60)
+        if receipt is None:
+            return {
+                "success": False,
+                "error": "Refund tx broadcast but not confirmed within 60s — will be re-checked before any retry.",
+                "error_type": "submitted_unconfirmed",
+                "tx_hash": tx_hash_hex,
+            }
+        if receipt.get("status") == 1:
+            return {"success": True, "tx_hash": tx_hash_hex}
+        return {"success": False, "error": "Refund transaction reverted on-chain.", "error_type": "tx_reverted"}
+    except Exception as e:
+        logger.error(f"❌ GCash send_refund error for request {request_id}: {e}")
+        if _is_insufficient_gas_error(e):
             return {
                 "success": False,
                 "error": "GCash refund wallet needs a gas refill.",
                 "error_type": "insufficient_gas",
             }
-    except Exception as preflight_err:
-        if _is_insufficient_gas_error(preflight_err):
-            return {
-                "success": False,
-                "error": "GCash refund wallet needs a gas refill.",
-                "error_type": "insufficient_gas",
-            }
-
-    nonce = w3.eth.get_transaction_count(refund_account.address)
-    if gas_price is None:
-        gas_price = w3.eth.gas_price
-
-    tx = token.functions.transfer(recipient, amount_wei).build_transaction({
-        "chainId": CHAIN_ID,
-        "gas": gas_limit,
-        "gasPrice": gas_price,
-        "nonce": nonce,
-        "from": refund_account.address,
-    })
-
-    signed = w3.eth.account.sign_transaction(tx, private_key=refund_account.key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    tx_hash_hex = tx_hash.hex()
-    if not tx_hash_hex.startswith("0x"):
-        tx_hash_hex = "0x" + tx_hash_hex
-
-    # Patient receipt polling (same lesson as the reloadly refund): raising on a
-    # 60s timeout here would hard-fail the refund even though the tx was already
-    # broadcast and could still confirm — a later re-send would DOUBLE-refund.
-    receipt = _wait_for_receipt_patient(w3, tx_hash, timeout=60)
-    if receipt is None:
-        return {
-            "success": False,
-            "error": "Refund tx broadcast but not confirmed within 60s — will be re-checked before any retry.",
-            "error_type": "submitted_unconfirmed",
-            "tx_hash": tx_hash_hex,
-        }
-    if receipt.get("status") == 1:
-        return {"success": True, "tx_hash": tx_hash_hex}
-    return {"success": False, "error": "Refund transaction reverted on-chain.", "error_type": "tx_reverted"}
+        return {"success": False, "error": str(e)}
 
 
 def _wait_for_receipt_patient(w3, tx_hash, timeout=60):
