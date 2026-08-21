@@ -69,7 +69,7 @@ def run_refund_retry_once() -> dict:
     two workers (or the scheduler + a manual endpoint) can never double-refund
     the same order. The order is released to its final status afterwards.
     """
-    from .service import refund_gd, update_order_record, claim_order_for_refund
+    from .service import refund_gd, update_order_record, claim_order_for_refund, check_refund_tx_status
 
     summary = {"scanned": 0, "refunded": 0, "still_pending": 0, "failed": 0, "skipped": 0}
     orders = _fetch_pending_refund_orders(_MAX_ORDERS, _MAX_AGE_DAYS)
@@ -101,6 +101,35 @@ def run_refund_retry_once() -> dict:
             logger.info(f"🔒 Refund retry: order {order_id} already claimed by another worker — skipping.")
             continue
 
+        # Double-refund guard: if a previous attempt already BROADCAST a refund
+        # tx (parked as submitted_unconfirmed), check that tx's on-chain
+        # receipt instead of blindly re-sending. Confirmed → mark refunded;
+        # reverted → escalate; still pending → leave parked for the next run.
+        prior_tx = order.get("refund_tx_hash")
+        if prior_tx:
+            tx_status = check_refund_tx_status(prior_tx)
+            if tx_status == "confirmed":
+                update_order_record(order_id, {
+                    "status": "refunded",
+                    "refund_error": None,
+                })
+                summary["refunded"] += 1
+                logger.info(f"✅ Refund retry: prior tx {prior_tx} confirmed for order {order_id}.")
+                continue
+            if tx_status == "reverted":
+                update_order_record(order_id, {
+                    "status": "refund_failed",
+                    "refund_error": "Refund transaction reverted on-chain",
+                })
+                summary["failed"] += 1
+                logger.error(f"❌ Refund retry: prior tx {prior_tx} reverted for order {order_id}.")
+                continue
+            # Still pending (or RPC unreachable) — do NOT re-send yet.
+            update_order_record(order_id, {"status": "pending_refund"})
+            summary["still_pending"] += 1
+            logger.info(f"⏳ Refund retry: order {order_id} prior tx {prior_tx} still confirming.")
+            continue
+
         refund_result = refund_gd(wallet, amount, order_id)
         if refund_result.get("success"):
             update_order_record(order_id, {
@@ -110,6 +139,16 @@ def run_refund_retry_once() -> dict:
             })
             summary["refunded"] += 1
             logger.info(f"✅ Refund retry succeeded for order {order_id}: tx {refund_result.get('tx_hash')}")
+        elif refund_result.get("error_type") == "submitted_unconfirmed":
+            # The (re-)broadcast refund tx hasn't confirmed yet — keep its hash
+            # and wait for the next run to check the on-chain receipt.
+            update_order_record(order_id, {
+                "status": "pending_refund",
+                "refund_tx_hash": refund_result.get("tx_hash"),
+                "refund_error": refund_result.get("error"),
+            })
+            summary["still_pending"] += 1
+            logger.info(f"⏳ Refund retry: order {order_id} tx {refund_result.get('tx_hash')} still confirming.")
         elif refund_result.get("error_type") in ("insufficient_gas", "insufficient_balance"):
             # Still underfunded — release back to pending_refund for the next run.
             update_order_record(order_id, {"status": "pending_refund"})
