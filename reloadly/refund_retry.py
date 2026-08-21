@@ -1,18 +1,14 @@
-"""Automatic refund retry for Reloadly orders parked as ``pending_refund``.
+"""Automatic refund for GCash cashout requests not reviewed within 24 hours.
 
-When a Reloadly fulfillment fails and the refund also fails *because the
-REFUND_KEY wallet has no CELO gas*, the order is parked with status
-``pending_refund`` (see ``reloadly/routes.py``). Instead of failing the order
-and asking the user to contact support, this background scheduler retries the
-refund periodically. Once an admin refills the refund wallet with CELO, the
-next retry succeeds and the order moves to ``refunded`` — fully automatic,
-no user action required.
+When an admin does not approve or reject a cashout request within 24 hours,
+the user's G$ must be automatically refunded. This background scheduler polls
+for expired pending requests and refunds them, using the same CAS claim +
+gas preflight pattern as ``reloadly/refund_retry.py``.
 
 Env knobs (all optional):
-    RELOADLY_REFUND_RETRY_ENABLED       – "1"/"true" to enable (default off)
-    RELOADLY_REFUND_RETRY_INTERVAL_SEC  – seconds between runs (default 600)
-    RELOADLY_REFUND_RETRY_MAX_ORDERS    – cap orders processed per run (default 100)
-    RELOADLY_REFUND_RETRY_MAX_AGE_DAYS  – skip orders older than N days (default 14)
+    GCASH_AUTO_REFUND_ENABLED        – "1"/"true" to enable (default off)
+    GCASH_AUTO_REFUND_INTERVAL_SEC   – seconds between runs (default 300)
+    GCASH_AUTO_REFUND_MAX_REQUESTS   – cap requests processed per run (default 50)
 
 Follows the same background-thread + stop-event pattern as ``ubi_reminder.py``.
 """
@@ -23,184 +19,107 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-_RETRY_ENABLED = os.getenv("RELOADLY_REFUND_RETRY_ENABLED", "").lower() in ("1", "true", "yes", "on")
-_RETRY_INTERVAL_SEC = int(os.getenv("RELOADLY_REFUND_RETRY_INTERVAL_SEC", "600"))
-_MAX_ORDERS = int(os.getenv("RELOADLY_REFUND_RETRY_MAX_ORDERS", "100"))
-_MAX_AGE_DAYS = int(os.getenv("RELOADLY_REFUND_RETRY_MAX_AGE_DAYS", "14"))
+_REFUND_ENABLED = os.getenv("GCASH_AUTO_REFUND_ENABLED", "").lower() in ("1", "true", "yes", "on")
+_REFUND_INTERVAL_SEC = int(os.getenv("GCASH_AUTO_REFUND_INTERVAL_SEC", "300"))
+_MAX_REQUESTS = int(os.getenv("GCASH_AUTO_REFUND_MAX_REQUESTS", "50"))
+_AUTO_REFUND_HOURS = 24
+# refund_failed rows (e.g. refund wallet out of gas) are retried too, but not
+# every tick — wait this long between attempts on the same row.
+_REFUND_FAILED_RETRY_AFTER_SEC = int(os.getenv("GCASH_REFUND_FAILED_RETRY_AFTER_SEC", "3600"))
 
 _scheduler_stop = threading.Event()
 _scheduler_thread = None
 _scheduler_lock = threading.Lock()
 
 
-def _fetch_pending_refund_orders(limit: int, max_age_days: int):
-    """Return ``reloadly_orders`` rows with status == 'pending_refund'.
-
-    Ordered oldest-first so the longest-waiting users get refunded first.
-    """
-    from supabase_client import get_supabase_admin_client, get_supabase_client
-    supabase = get_supabase_admin_client() or get_supabase_client()
-    if not supabase:
-        logger.warning("⚠️ Refund retry: database unavailable")
-        return []
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
-    try:
-        result = (
-            supabase.table("reloadly_orders")
-            .select("*")
-            .eq("status", "pending_refund")
-            .gte("created_at", cutoff)
-            .order("created_at", desc=False)
-            .limit(limit)
-            .execute()
+def _fetch_refundable(limit: int):
+    """Return requests that need a refund: status='pending' older than 24h, or
+    status='refund_failed' whose last attempt is old enough to retry (the refund
+    wallet may have been topped up since)."""
+    from supabase_client import get_supabase_admin_client
+    sb = get_supabase_admin_client()
+    now = datetime.now(timezone.utc)
+    pending_cutoff = (now - timedelta(hours=_AUTO_REFUND_HOURS)).isoformat()
+    retry_cutoff = (now - timedelta(seconds=_REFUND_FAILED_RETRY_AFTER_SEC)).isoformat()
+    result = (
+        sb.table("gcash_cashout_requests")
+        .select("*")
+        .or_(
+            f"and(status.eq.pending,created_at.lt.{pending_cutoff}),"
+            f"and(status.eq.refund_failed,updated_at.lt.{retry_cutoff})"
         )
-        return result.data or []
-    except Exception as e:
-        logger.error(f"❌ Refund retry fetch error: {e}")
-        return []
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
 
 
-def run_refund_retry_once() -> dict:
-    """One pass: retry refunds for all ``pending_refund`` orders. Idempotent.
+def _process_one(req: dict):
+    """CAS-claim and refund a single refundable request."""
+    from .service import claim_request_for_refund, process_claimed_refund
 
-    Concurrency-safe: each order is atomically claimed (``pending_refund`` ->
-    ``refunding``) via ``claim_order_for_refund`` before ``refund_gd`` runs, so
-    two workers (or the scheduler + a manual endpoint) can never double-refund
-    the same order. The order is released to its final status afterwards.
-    """
-    from .service import refund_gd, update_order_record, claim_order_for_refund, check_refund_tx_status
+    request_id = req["id"]
+    claimed = claim_request_for_refund(request_id, expected_status=req["status"])
+    if not claimed:
+        logger.debug(f"GCash auto-refund: request #{request_id} already claimed")
+        return
 
-    summary = {"scanned": 0, "refunded": 0, "still_pending": 0, "failed": 0, "skipped": 0}
-    orders = _fetch_pending_refund_orders(_MAX_ORDERS, _MAX_AGE_DAYS)
-    summary["scanned"] = len(orders)
-    if not orders:
-        logger.info("🔁 Refund retry: no pending_refund orders.")
-        return summary
+    if req["status"] == "refund_failed":
+        note = "Refund succeeded on automatic retry."
+        logger.info(f"🔁 GCash auto-refund: retrying failed refund #{request_id} ({req['amount_gd']} G$ to {req['wallet_address'][:8]}…)")
+    else:
+        note = "Auto-refunded: not reviewed within 24 hours"
+        logger.info(f"⏰ GCash auto-refund: request #{request_id} expired (24h), refunding {req['amount_gd']} G$ to {req['wallet_address'][:8]}…")
 
-    logger.info(f"🔁 Refund retry: processing {len(orders)} pending_refund order(s).")
-    for order in orders:
-        order_id = order.get("id")
-        wallet = order.get("wallet_address")
-        gd_amount = order.get("gd_amount")
-        if not order_id or not wallet or gd_amount is None:
-            logger.warning(f"⚠️ Refund retry: skipping incomplete order row {order_id}")
-            continue
+    result = process_claimed_refund(req, note)
 
-        try:
-            amount = float(gd_amount)
-        except (TypeError, ValueError):
-            logger.warning(f"⚠️ Refund retry: invalid gd_amount for order {order_id}: {gd_amount}")
-            continue
-
-        # Atomic claim: flip pending_refund -> refunding. Only the winner sends a
-        # refund, so a concurrent worker / manual endpoint can't double-refund.
-        claim = claim_order_for_refund(order_id)
-        if not claim.get("claimed"):
-            summary["skipped"] += 1
-            logger.info(f"🔒 Refund retry: order {order_id} already claimed by another worker — skipping.")
-            continue
-
-        # Double-refund guard: if a previous attempt already BROADCAST a refund
-        # tx (parked as submitted_unconfirmed), check that tx's on-chain
-        # receipt instead of blindly re-sending. Confirmed → mark refunded;
-        # reverted → escalate; still pending → leave parked for the next run.
-        prior_tx = order.get("refund_tx_hash")
-        if prior_tx:
-            tx_status = check_refund_tx_status(prior_tx)
-            if tx_status == "confirmed":
-                update_order_record(order_id, {
-                    "status": "refunded",
-                    "refund_error": None,
-                })
-                summary["refunded"] += 1
-                logger.info(f"✅ Refund retry: prior tx {prior_tx} confirmed for order {order_id}.")
-                continue
-            if tx_status == "reverted":
-                update_order_record(order_id, {
-                    "status": "refund_failed",
-                    "refund_error": "Refund transaction reverted on-chain",
-                })
-                summary["failed"] += 1
-                logger.error(f"❌ Refund retry: prior tx {prior_tx} reverted for order {order_id}.")
-                continue
-            # Still pending (or RPC unreachable) — do NOT re-send yet.
-            update_order_record(order_id, {"status": "pending_refund"})
-            summary["still_pending"] += 1
-            logger.info(f"⏳ Refund retry: order {order_id} prior tx {prior_tx} still confirming.")
-            continue
-
-        refund_result = refund_gd(wallet, amount, order_id)
-        if refund_result.get("success"):
-            update_order_record(order_id, {
-                "status": "refunded",
-                "refund_tx_hash": refund_result.get("tx_hash"),
-                "refund_error": None,
-            })
-            summary["refunded"] += 1
-            logger.info(f"✅ Refund retry succeeded for order {order_id}: tx {refund_result.get('tx_hash')}")
-        elif refund_result.get("error_type") == "submitted_unconfirmed":
-            # The (re-)broadcast refund tx hasn't confirmed yet — keep its hash
-            # and wait for the next run to check the on-chain receipt.
-            update_order_record(order_id, {
-                "status": "pending_refund",
-                "refund_tx_hash": refund_result.get("tx_hash"),
-                "refund_error": refund_result.get("error"),
-            })
-            summary["still_pending"] += 1
-            logger.info(f"⏳ Refund retry: order {order_id} tx {refund_result.get('tx_hash')} still confirming.")
-        elif refund_result.get("error_type") in ("insufficient_gas", "insufficient_balance"):
-            # Still underfunded — release back to pending_refund for the next run.
-            update_order_record(order_id, {"status": "pending_refund"})
-            summary["still_pending"] += 1
-            logger.info(f"⏳ Refund retry: order {order_id} still waiting on a gas/balance top-up.")
-        else:
-            # A different failure (e.g. on-chain revert) — escalate so it isn't
-            # retried silently forever. Mark refund_failed.
-            summary["failed"] += 1
-            update_order_record(order_id, {
-                "status": "refund_failed",
-                "refund_error": refund_result.get("error"),
-            })
-            logger.error(f"❌ Refund retry hard-failed for order {order_id}: {refund_result.get('error')}")
-
-    logger.info("🔁 Refund retry run finished — %s", summary)
-    return summary
+    if result["success"]:
+        logger.info(f"✅ GCash auto-refund #{request_id}: {result['tx_hash'][:16]}…")
+    else:
+        logger.error(f"❌ GCash auto-refund #{request_id} failed: {result.get('error')}")
 
 
-def _scheduler_loop():
-    """Wake on the configured interval and run one retry pass."""
+def _run_scheduler():
+    logger.info(
+        f"🔄 GCash auto-refund scheduler started "
+        f"(interval={_REFUND_INTERVAL_SEC}s, max={_MAX_REQUESTS}/run)"
+    )
     while not _scheduler_stop.is_set():
         try:
-            run_refund_retry_once()
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Refund retry scheduler crashed: %s", exc)
-        _scheduler_stop.wait(_RETRY_INTERVAL_SEC)
+            refundable = _fetch_refundable(_MAX_REQUESTS)
+            if refundable:
+                logger.info(f"⏰ GCash auto-refund: {len(refundable)} refundable request(s) found")
+                for req in refundable:
+                    try:
+                        _process_one(req)
+                    except Exception as e:
+                        logger.error(f"❌ GCash auto-refund error for #{req.get('id')}: {e}")
+        except Exception as e:
+            logger.error(f"❌ GCash auto-refund scheduler error: {e}")
+        _scheduler_stop.wait(_REFUND_INTERVAL_SEC)
+    logger.info("🛑 GCash auto-refund scheduler stopped")
 
 
-def init_refund_retry_scheduler(app=None):
-    """Start the background refund-retry thread. Returns True if started."""
+def init_gcash_refund_scheduler(app=None):
+    """Start the auto-refund background thread. Returns True if started."""
     global _scheduler_thread
-    if not _RETRY_ENABLED:
-        logger.info("Reloadly refund retry scheduler disabled (RELOADLY_REFUND_RETRY_ENABLED not set)")
+
+    if not _REFUND_ENABLED:
+        logger.info("ℹ️ GCash auto-refund scheduler disabled (GCASH_AUTO_REFUND_ENABLED not set)")
         return False
-    if not os.getenv("REFUND_KEY"):
-        logger.info("Reloadly refund retry scheduler disabled: REFUND_KEY not set")
-        return False
+
     with _scheduler_lock:
         if _scheduler_thread and _scheduler_thread.is_alive():
-            return True
+            logger.warning("⚠️ GCash auto-refund scheduler already running")
+            return False
+
         _scheduler_stop.clear()
-        _scheduler_thread = threading.Thread(
-            target=_scheduler_loop,
-            name="reloadly-refund-retry-scheduler",
-            daemon=True,
-        )
+        _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True, name="gcash-refund-retry")
         _scheduler_thread.start()
-        logger.info("Reloadly refund retry scheduler started — interval %ss", _RETRY_INTERVAL_SEC)
         return True
 
 
-def shutdown_refund_retry_scheduler():
-    """Signal the scheduler thread to stop (best-effort, for tests)."""
+def stop_gcash_refund_scheduler():
+    """Signal the scheduler thread to stop."""
     _scheduler_stop.set()
