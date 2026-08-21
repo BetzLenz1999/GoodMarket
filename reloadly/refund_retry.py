@@ -110,11 +110,11 @@ def run_refund_retry_once() -> dict:
             })
             summary["refunded"] += 1
             logger.info(f"✅ Refund retry succeeded for order {order_id}: tx {refund_result.get('tx_hash')}")
-        elif refund_result.get("error_type") == "insufficient_gas":
-            # Still no gas — release back to pending_refund for the next run.
+        elif refund_result.get("error_type") in ("insufficient_gas", "insufficient_balance"):
+            # Still underfunded — release back to pending_refund for the next run.
             update_order_record(order_id, {"status": "pending_refund"})
             summary["still_pending"] += 1
-            logger.info(f"⏳ Refund retry: order {order_id} still waiting on gas refill.")
+            logger.info(f"⏳ Refund retry: order {order_id} still waiting on a gas/balance top-up.")
         else:
             # A different failure (e.g. on-chain revert) — escalate so it isn't
             # retried silently forever. Mark refund_failed.
