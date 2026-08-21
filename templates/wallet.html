@@ -4020,6 +4020,11 @@
         // not window.ethereum (which may be absent or point to an unrelated extension).
         if (IS_PRIVY_LOGIN) return null;
 
+        // Local self-custodial logins sign with the in-app browser wallet —
+        // an injected provider (e.g. a desktop MetaMask) is a different
+        // account and must never be offered.
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') return null;
+
         // WalletConnect / manual-address logins must NEVER use an injected wallet
         // (e.g. a desktop MetaMask extension): its account differs from the logged-in
         // GoodMarket wallet, so UBI claim / send / FV signing fail with "Wrong wallet
@@ -8753,6 +8758,21 @@
 
     // Get provider for signing (Injected or WalletConnect)
     async function _getSigningProvider() {
+        // Local self-custodial logins unlock the PIN-decrypted in-app wallet and
+        // sign with it — never fall through to an injected provider (a
+        // different account).
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+            if (!GMLocalWallet.isUnlocked()) {
+                if (typeof _lwUnlockIfNeeded === 'function') {
+                    await _lwUnlockIfNeeded();
+                } else if (typeof window._lwOpenUnlockModal === 'function') {
+                    await window._lwOpenUnlockModal();
+                } else {
+                    throw new Error('Please unlock your wallet. Reload the page and log in again.');
+                }
+            }
+            return GMLocalWallet.getProvider();
+        }
         return _awaitEthProvider();
     }
 
@@ -8763,12 +8783,16 @@
             throw new Error('No wallet connected. Please connect your wallet.');
         }
         
+        // The in-app local wallet always reports Celo (0xa4ec) — asking it to
+        // switch chains is both pointless and unsupported.
+        const isLocalProvider = !!provider.isGMLocalWallet;
+
         try {
             // First check current chain
             const chainId = await provider.request({ method: 'eth_chainId' });
             const currentChainId = parseInt(chainId, 16);
-            
-            if (currentChainId !== 42220) {
+
+            if (currentChainId !== 42220 && !isLocalProvider) {
                 // Try to switch to Celo
                 try {
                     await provider.request({
