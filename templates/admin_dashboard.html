@@ -3142,6 +3142,11 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                             + (r.receipt_image_url ? '<a href="' + r.receipt_image_url + '" target="_blank" rel="noopener" style="color:#38bdf8;">📷 Receipt ↗</a><br>' : '')
                             + (r.admin_note || '')
                             + '</div>';
+                    } else if (r.status === 'refund_failed') {
+                        actions = '<button onclick="gcashRetryRefund(' + r.id + ')" class="btn" style="background:#f59e0b;color:#fff;padding:0.3rem 0.6rem;font-size:0.75rem;border:none;border-radius:6px;cursor:pointer;margin-bottom:0.25rem;">🔁 Retry Refund</button>'
+                            + '<div style="font-size:0.72rem;color:rgba(241,245,249,0.6);">' + (r.admin_note || '')
+                            + (r.refund_tx_hash ? ' <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">tx ↗</a>' : '')
+                            + '</div>';
                     } else {
                         actions = '<span style="color:rgba(241,245,249,0.4);font-size:0.75rem;">' + (r.admin_note || r.status) + '</span>';
                     }
@@ -3243,6 +3248,24 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     alert('❌ ' + (data.error || 'Failed to reject'));
                     loadGcashRequests(); // refresh anyway — refund may have failed
                 }
+            } catch (e) { alert('❌ Network error'); }
+        }
+
+        async function gcashRetryRefund(id) {
+            if (!confirm('Retry the refund for request #' + id + '? Make sure the refund wallet has enough CELO gas.')) return;
+            try {
+                const res = await fetch('/api/gcash/admin/requests/' + id + '/retry-refund', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: '{}'
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                } else {
+                    alert('❌ ' + (data.error || 'Refund retry failed'));
+                }
+                loadGcashRequests();
             } catch (e) { alert('❌ Network error'); }
         }
 
