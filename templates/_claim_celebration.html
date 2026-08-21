@@ -295,12 +295,17 @@
     };
 
     // ── referral link: instant from cache, then refresh in background ──
+    // Always re-anchor on the current domain (goodmarket.live vs Vercel URL).
+    function withCurrentOrigin(link) {
+        var m = String(link || '').match(/^(https?:)?\/\/[^/]+/);
+        return m ? String(link).replace(m[0], window.location.origin) : String(link || '');
+    }
     function readCachedLink() {
         try {
             var raw = localStorage.getItem(REF_CACHE_KEY);
             if (!raw) return '';
             var obj = JSON.parse(raw);
-            return (obj && obj.link) ? String(obj.link) : '';
+            return withCurrentOrigin((obj && obj.link) ? String(obj.link) : '');
         } catch (_) { return ''; }
     }
     function writeCachedLink(link) {
@@ -316,8 +321,8 @@
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
                 if (d && d.success && d.referral_link) {
-                    state.link = d.referral_link;
-                    writeCachedLink(d.referral_link);
+                    state.link = withCurrentOrigin(d.referral_link);
+                    writeCachedLink(state.link);
                 }
             })
             .catch(function () { /* offline / 401 — keep cached value */ });
@@ -364,8 +369,8 @@
                 .then(function (r) { return r.json(); })
                 .then(function (d) {
                     if (d && d.success && d.referral_link) {
-                        state.link = d.referral_link;
-                        writeCachedLink(d.referral_link);
+                        state.link = withCurrentOrigin(d.referral_link);
+                        writeCachedLink(state.link);
                         doCopy();
                     } else {
                         copyLabel.textContent = 'Try again';
