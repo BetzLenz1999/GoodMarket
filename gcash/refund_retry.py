@@ -23,22 +23,31 @@ _REFUND_ENABLED = os.getenv("GCASH_AUTO_REFUND_ENABLED", "").lower() in ("1", "t
 _REFUND_INTERVAL_SEC = int(os.getenv("GCASH_AUTO_REFUND_INTERVAL_SEC", "300"))
 _MAX_REQUESTS = int(os.getenv("GCASH_AUTO_REFUND_MAX_REQUESTS", "50"))
 _AUTO_REFUND_HOURS = 24
+# refund_failed rows (e.g. refund wallet out of gas) are retried too, but not
+# every tick — wait this long between attempts on the same row.
+_REFUND_FAILED_RETRY_AFTER_SEC = int(os.getenv("GCASH_REFUND_FAILED_RETRY_AFTER_SEC", "3600"))
 
 _scheduler_stop = threading.Event()
 _scheduler_thread = None
 _scheduler_lock = threading.Lock()
 
 
-def _fetch_expired_pending(limit: int):
-    """Return gcash_cashout_requests rows with status='pending' older than 24h."""
+def _fetch_refundable(limit: int):
+    """Return requests that need a refund: status='pending' older than 24h, or
+    status='refund_failed' whose last attempt is old enough to retry (the refund
+    wallet may have been topped up since)."""
     from supabase_client import get_supabase_admin_client
     sb = get_supabase_admin_client()
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=_AUTO_REFUND_HOURS)).isoformat()
+    now = datetime.now(timezone.utc)
+    pending_cutoff = (now - timedelta(hours=_AUTO_REFUND_HOURS)).isoformat()
+    retry_cutoff = (now - timedelta(seconds=_REFUND_FAILED_RETRY_AFTER_SEC)).isoformat()
     result = (
         sb.table("gcash_cashout_requests")
         .select("*")
-        .eq("status", "pending")
-        .lt("created_at", cutoff)
+        .or_(
+            f"and(status.eq.pending,created_at.lt.{pending_cutoff}),"
+            f"and(status.eq.refund_failed,updated_at.lt.{retry_cutoff})"
+        )
         .order("created_at")
         .limit(limit)
         .execute()
@@ -47,33 +56,27 @@ def _fetch_expired_pending(limit: int):
 
 
 def _process_one(req: dict):
-    """CAS-claim and refund a single expired request."""
-    from .service import claim_request_for_refund, send_refund, update_request
+    """CAS-claim and refund a single refundable request."""
+    from .service import claim_request_for_refund, process_claimed_refund
 
     request_id = req["id"]
-    claimed = claim_request_for_refund(request_id, expected_status="pending")
+    claimed = claim_request_for_refund(request_id, expected_status=req["status"])
     if not claimed:
         logger.debug(f"GCash auto-refund: request #{request_id} already claimed")
         return
 
-    logger.info(f"⏰ GCash auto-refund: request #{request_id} expired (24h), refunding {req['amount_gd']} G$ to {req['wallet_address'][:8]}…")
+    if req["status"] == "refund_failed":
+        note = "Refund succeeded on automatic retry."
+        logger.info(f"🔁 GCash auto-refund: retrying failed refund #{request_id} ({req['amount_gd']} G$ to {req['wallet_address'][:8]}…)")
+    else:
+        note = "Auto-refunded: not reviewed within 24 hours"
+        logger.info(f"⏰ GCash auto-refund: request #{request_id} expired (24h), refunding {req['amount_gd']} G$ to {req['wallet_address'][:8]}…")
 
-    result = send_refund(req["wallet_address"], req["amount_gd"], request_id)
+    result = process_claimed_refund(req, note)
 
     if result["success"]:
-        update_request(request_id, {
-            "status": "refunded",
-            "admin_note": "Auto-refunded: not reviewed within 24 hours",
-            "refund_tx_hash": result["tx_hash"],
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
-        })
         logger.info(f"✅ GCash auto-refund #{request_id}: {result['tx_hash'][:16]}…")
     else:
-        update_request(request_id, {
-            "status": "refund_failed",
-            "admin_note": f"Auto-refund failed: {result.get('error', 'unknown')}",
-            "reviewed_at": datetime.now(timezone.utc).isoformat(),
-        })
         logger.error(f"❌ GCash auto-refund #{request_id} failed: {result.get('error')}")
 
 
@@ -84,10 +87,10 @@ def _run_scheduler():
     )
     while not _scheduler_stop.is_set():
         try:
-            expired = _fetch_expired_pending(_MAX_REQUESTS)
-            if expired:
-                logger.info(f"⏰ GCash auto-refund: {len(expired)} expired request(s) found")
-                for req in expired:
+            refundable = _fetch_refundable(_MAX_REQUESTS)
+            if refundable:
+                logger.info(f"⏰ GCash auto-refund: {len(refundable)} refundable request(s) found")
+                for req in refundable:
                     try:
                         _process_one(req)
                     except Exception as e:
