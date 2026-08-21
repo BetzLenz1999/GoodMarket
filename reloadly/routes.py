@@ -22,7 +22,7 @@ reloadly_bp = Blueprint("reloadly", __name__, url_prefix="/reloadly")
 _PENDING_REFUND_MSG = (
     "Your order could not be completed, but don't worry — your payment is safe. "
     "The automatic refund is queued and will be sent within a few hours once the "
-    "system refund wallet is refilled with gas by the admin. No action needed."
+    "system refund wallet is topped up by the admin. No action needed."
 )
 
 
@@ -52,17 +52,18 @@ def _process_refund_failure(order_id: str, wallet: str, gd_amount, failure_err: 
             "refunded": True, "refund_tx": refund_result.get("tx_hash"),
         }, 200
 
-    # Refund failed.
-    is_gas = refund_result.get("error_type") == "insufficient_gas"
-    if is_gas:
-        # Park for automatic retry once the admin refills gas.
+    # Refund failed. Missing CELO gas OR missing G$ balance parks the same way
+    # — the retry succeeds automatically once the admin tops up the wallet.
+    is_retryable = refund_result.get("error_type") in ("insufficient_gas", "insufficient_balance")
+    if is_retryable:
+        # Park for automatic retry once the admin refills gas / tops up G$.
         update_order_record(order_id, {
             "status": "pending_refund",
             "failure_reason": sanitize_error(failure_err),
             "refund_tx_hash": None,
             "refund_error": refund_result.get("error"),
         })
-        logger.warning(f"⏳ Refund parked (insufficient gas) for order {order_id}; will auto-retry.")
+        logger.warning(f"⏳ Refund parked (insufficient gas/balance) for order {order_id}; will auto-retry.")
         return refund_result, {
             "success": False, "found": True, "status": "pending_refund",
             "error": _PENDING_REFUND_MSG, "order_id": order_id,
