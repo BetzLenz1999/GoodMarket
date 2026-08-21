@@ -44,6 +44,7 @@
       ['Amount', payload.flow_rate_per_day ? (payload.flow_rate_per_day + ' G$/day') : (payload.amount || payload.fiat_amount)],
       ['Token', payload.token || payload.from_token],
       ['To', payload.recipient_username ? ('@' + payload.recipient_username + ' (' + payload.recipient + ')') : (payload.recipient || payload.to_token || payload.phone)],
+      ['Signing', action.login_method === 'local' ? 'In-app GoodMarket wallet (PIN unlock)' : null],
       ['Status', action.status]
     ].filter(function (row) { return row[1]; });
     rows.forEach(function (row) {
