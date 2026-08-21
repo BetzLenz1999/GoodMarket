@@ -13,6 +13,19 @@ REFEREE_REWARD = 500.0
 BASE_URL = os.getenv('BASE_URL', 'https://goodmarket.live')
 
 
+def build_referral_link(code: str) -> str:
+    """Build a referral link on the domain the requesting client actually used
+    (e.g. good-market-community.vercel.app vs goodmarket.live). Background
+    contexts (reconciler, schedulers) fall back to BASE_URL."""
+    base = BASE_URL
+    try:
+        from flask import request
+        base = request.host_url.rstrip('/')
+    except Exception:
+        pass
+    return f"{base}/?ref={code}"
+
+
 def _get_supabase():
     from supabase_client import get_supabase_client
     return get_supabase_client()
@@ -120,7 +133,7 @@ class ReferralService:
             return {
                 "success": True,
                 "referral_code": code,
-                "referral_link": f"{BASE_URL}/?ref={code}",
+                "referral_link": build_referral_link(code),
                 "total_referrals": row.get('total_referrals', 0),
                 "total_earned": row.get('total_earned', 0),
                 "created": False
@@ -156,7 +169,7 @@ class ReferralService:
         return {
             "success": True,
             "referral_code": code,
-            "referral_link": f"{BASE_URL}/?ref={code}",
+            "referral_link": build_referral_link(code),
             "total_referrals": 0,
             "total_earned": 0,
             "created": True
@@ -674,7 +687,7 @@ class ReferralService:
         return {
             "success": True,
             "referral_code": code,
-            "referral_link": f"{BASE_URL}/?ref={code}",
+            "referral_link": build_referral_link(code),
             "total_referrals": len(referrals),
             "completed_referrals": completed_count,
             "pending_referrals": pending_count,
