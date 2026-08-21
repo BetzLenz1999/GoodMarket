@@ -303,15 +303,18 @@
         const overlay = document.createElement('div');
         overlay.id = 'lwUnlockModalOverlay';
         overlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;align-items:center;justify-content:center;padding:1rem;';
+        // Signing-oriented defaults — the modal almost always appears right
+        // before a transaction signature, so say what the user is doing.
+        // Callers may override via _lwOpenUnlockModal({title, subtitle, ...}).
         overlay.innerHTML = `
             <div style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:1.5rem;max-width:320px;width:100%;text-align:center;">
-                <div style="font-size:1.5rem;margin-bottom:0.5rem">🔒</div>
-                <h3 style="margin:0 0 0.5rem;color:#fff;font-size:1.1rem">Unlock Your Wallet</h3>
-                <p style="color:#aaa;font-size:0.8rem;margin-bottom:1rem">Enter your 6-digit PIN to continue</p>
+                <div style="font-size:1.5rem;margin-bottom:0.5rem">🔐</div>
+                <h3 id="lwModalTitle" style="margin:0 0 0.5rem;color:#fff;font-size:1.1rem">Sign this transaction</h3>
+                <p id="lwModalSubtitle" style="color:#aaa;font-size:0.8rem;margin-bottom:1rem">Enter your 6-digit PIN to confirm and sign</p>
                 <input type="password" id="lwModalPin" inputmode="numeric" maxlength="6" placeholder="••••••"
                     style="width:100%;padding:0.8rem;text-align:center;font-size:1.3rem;letter-spacing:0.4rem;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;outline:none;margin-bottom:0.8rem;">
                 <div id="lwModalError" style="display:none;color:#f87171;font-size:0.75rem;margin-bottom:0.8rem"></div>
-                <button id="lwModalSubmit" style="width:100%;padding:0.75rem;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem">Unlock</button>
+                <button id="lwModalSubmit" style="width:100%;padding:0.75rem;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem">Sign &amp; Continue</button>
                 <button id="lwModalCancel" style="width:100%;padding:0.6rem;background:transparent;color:#888;border:1px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;font-size:0.85rem">Cancel</button>
             </div>
         `;
@@ -339,7 +342,7 @@
             const pin = pinInput.value.trim();
             if (!/^\d{6}$/.test(pin)) { showError('PIN must be exactly 6 digits.'); return; }
             submitBtn.disabled = true;
-            submitBtn.textContent = 'Unlocking…';
+            submitBtn.textContent = 'Signing…';
             try {
                 const saved = getLocalKeystore();
                 if (!saved || !saved.keystore) throw new Error('No saved wallet on this device.');
@@ -350,7 +353,7 @@
                 showError(/password|decrypt|mac/i.test(err && err.message) ? 'Wrong PIN.' : 'Unlock failed.');
             } finally {
                 submitBtn.disabled = false;
-                submitBtn.textContent = 'Unlock';
+                submitBtn.textContent = 'Sign & Continue';
             }
         };
 
@@ -373,8 +376,23 @@
         };
     }
 
-    window._lwOpenUnlockModal = function () {
+    // Optional copy overrides, e.g. _lwOpenUnlockModal({title, subtitle,
+    // submitLabel, busyLabel}) for message-signing (non-transaction) prompts.
+    // Defaults are transaction-signing oriented.
+    window._lwOpenUnlockModal = function (opts) {
+        opts = opts || {};
         _lwInjectModal();
+        var _ov = document.getElementById('lwUnlockModalOverlay');
+        if (_ov) {
+            var _t = _ov.querySelector('#lwModalTitle');
+            var _s = _ov.querySelector('#lwModalSubtitle');
+            var _b = _ov.querySelector('#lwModalSubmit');
+            if (_t) _t.textContent = opts.title || 'Sign this transaction';
+            if (_s) _s.textContent = opts.subtitle || 'Enter your 6-digit PIN to confirm and sign';
+            if (_b) _b.textContent = opts.submitLabel || 'Sign & Continue';
+        }
+        var _busyLabel = opts.busyLabel || 'Signing…';
+        var _submitLabel = opts.submitLabel || 'Sign & Continue';
 
         // Show the specific cause of failure instead of a blanket
         // "Unlock failed." — a correct PIN can still fail when the cached
@@ -459,7 +477,7 @@
                 var pin = pinInput.value.trim();
                 if (!/^\d{6}$/.test(pin)) { showError('PIN must be exactly 6 digits.'); return; }
                 submitBtn.disabled = true;
-                submitBtn.textContent = 'Unlocking…';
+                submitBtn.textContent = _busyLabel;
                 try {
                     var saved = getLocalKeystore();
                     var result = await handleUnlock(pin, saved);
@@ -483,7 +501,7 @@
                     showError(describeUnlockError(err, saved));
                 } finally {
                     submitBtn.disabled = false;
-                    submitBtn.textContent = 'Unlock';
+                    submitBtn.textContent = _submitLabel;
                 }
             };
 
