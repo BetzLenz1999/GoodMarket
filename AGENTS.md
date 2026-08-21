@@ -55,6 +55,13 @@ When a Reloadly fulfillment fails, the backend refunds G$ via the `REFUND_KEY` w
 - Keyword detection is **rules-based** (`is_tx_lookup_request` + `detect_feature`) so it works even without `OPENAI_API_KEY`; the OpenAI classifier is also taught the action via `lookup_feature`.
 - Tests: `tests/test_ai_agent_tx_lookup_content.py` (functional via importlib + text-based wiring, no deps).
 
+## AI chat agent — send/stream + keyword parsing + local wallet (2026-08)
+Send/stream execution is frontend-side: after `/api/ai-agent/actions/<id>/confirm`, `static/js/ai-agent.js` `continueWalletFlow` calls `window.GoodMarketAI.handleConfirmedAction` (defined in wallet.html; other pages redirect to `/wallet?ai_action=<id>` where `openAiActionFromUrl` replays it). wallet.html routes to `doSend()` (send) / `handleStartStream()` (stream), so **all login methods — including `local` (GMLocalWallet PIN unlock via `_getSigningProvider`/`doSend` local gates) — sign end-to-end**.
+- **Local signing mode:** `confirm_action` now returns `signing_mode: "local"` for `login_method == "local"` (`walletconnect`/`wallet` otherwise); ai-agent.js shows a "Signing: In-app GoodMarket wallet (PIN unlock)" row on the review card.
+- **Keyword-based parsing (any phrasing, English+Tagalog):** `_parse_with_rules` triggers send on send/transfer/padala/padalhan substrings; recipient prefixes are to/kay/ni/si/sa/para kay/para sa/@ (`_send_recipient_candidate`) with a `_RECIPIENT_STOP_WORDS` guard (araw/buwan/day/month/…) so time words never become usernames. Bare recipients with no prefix are NOT invented — they land in `missing_fields`. Stream daily rate accepts per day/daily/kada araw/bawat araw/araw-araw (`_stream_daily_amount`). The OpenAI prompt is told to classify Taglish by keywords; rules fallback needs no OPENAI_API_KEY.
+- **Stream-period bug fixed:** wallet.html's AI stream handler must set `streamPeriod` to `/ day` before `handleStartStream()` — the modal defaults to `/ month`, which silently created a 30x smaller stream from the agent's per-day rate.
+- Tests: `tests/test_ai_agent_send_stream_content.py` (functional importlib + content wiring, no deps).
+
 ## Telegram broadcast — durable delivery (2026-08)
 Admin broadcasts (`/api/admin/broadcast-message`) push to Telegram bot users. The web dashboard inbox reads the broadcast row directly so it always works, but the Telegram push used to drop silently.
 
