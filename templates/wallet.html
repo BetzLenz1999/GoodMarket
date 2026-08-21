@@ -5055,6 +5055,11 @@
                     detailHtml = '<div style="font-size:0.72rem;color:var(--text-dim);margin-top:0.15rem;">G$ refunded to your wallet'
                         + (r.refund_tx_hash ? ' · <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">Refund tx ↗</a>' : '')
                         + '</div>';
+                } else if (r.status === 'refund_failed' || r.status === 'refunding') {
+                    detailHtml = '<div style="font-size:0.72rem;color:#f59e0b;margin-top:0.15rem;">'
+                        + (r.status === 'refunding' ? 'Refund in progress…' : 'Refund is being retried automatically')
+                        + (r.refund_tx_hash ? ' · <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">Refund tx ↗</a>' : '')
+                        + '</div>';
                 }
                 return '<div style="padding:0.5rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.06);font-size:0.8rem;">'
                     + '<div style="display:flex;justify-content:space-between;align-items:center;">'
