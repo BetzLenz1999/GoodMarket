@@ -1,0 +1,9 @@
+<!--
+  Merge into the generated android/app/src/main/AndroidManifest.xml
+  inside <application>. MainActivity already exists in the Capacitor
+  template — only add the dApp browser screen below.
+-->
+<activity
+    android:name=".DappBrowserActivity"
+    android:exported="false"
+    android:label="DApps" />
