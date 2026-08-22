@@ -5596,7 +5596,7 @@
         const recipient = payload.recipient || '';
         const amount = payload.amount || '';
         const tokenLabel = String(payload.token || 'G$').trim().toLowerCase();
-        const tokenKey = tokenLabel === 'cusd' ? 'CUSD' : (tokenLabel === 'usdt' ? 'USDT' : 'GD');
+        const tokenKey = { cusd: 'CUSD', usdt: 'USDT', celo: 'CELO' }[tokenLabel] || 'GD';
         const tokenChip = Array.from(document.querySelectorAll('#tokenSelector .token-chip'))
             .find(chip => chip.textContent.trim().toLowerCase() === (tokenKey === 'GD' ? 'g$' : tokenKey.toLowerCase()));
         if (tokenChip) selectToken(tokenKey, tokenChip);
