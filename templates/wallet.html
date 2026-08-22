@@ -1993,28 +1993,29 @@
            migrated alongside; keep new markup on the CSS variables below.
            ───────────────────────────────────────────────────────────── */
         :root {
-            --bg: #f7f4ef;
-            --bg2: #faf7f2;
+            --bg: #f1ebdf;
+            --bg2: #f7f2e8;
             --card: #ffffff;
-            --card-border: #e9e2d6;
-            --card-soft: rgba(67,56,43,0.05);
+            --card-border: #e2d7c3;
+            --card-soft: rgba(67,56,43,0.06);
+            --card-shadow: 0 2px 6px rgba(67,56,43,0.08), 0 1px 2px rgba(67,56,43,0.06);
             --blue: #2563eb;
             --blue-dim: rgba(37,99,235,0.1);
             --blue-glow: rgba(37,99,235,0.25);
-            --accent: #f97316;
-            --accent-rgb: 249,115,22;
+            --accent: #ea580c;
+            --accent-rgb: 234,88,12;
             --accent-secondary: #0d9488;
             --accent-secondary-rgb: 13,148,136;
             --green: #16a34a;
             --green-dim: rgba(22,163,74,0.1);
-            --gold: #fb923c;
-            --gold-rgb: 249,115,22;
-            --gold-deep: #ea580c;
+            --gold: #f97316;
+            --gold-rgb: 234,88,12;
+            --gold-deep: #c2410c;
             --primary-button-text: #ffffff;
             --red: #dc2626;
             --text: #292524;
-            --text-dim: #78716c;
-            --text-muted: #a8a29e;
+            --text-dim: #665d51;
+            --text-muted: #93897b;
         }
 
         body { background: var(--bg); }
@@ -2023,14 +2024,18 @@
         }
 
         /* ── Top bar ── */
-        .top-bar { background: rgba(250,247,242,0.88); }
+        .top-bar {
+            background: rgba(247,242,232,0.92);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 4px rgba(67,56,43,0.06);
+        }
         .top-bar-title { color: var(--text); }
         .top-bar-subtitle { color: var(--text-dim); }
         .icon-btn {
             background: #fff;
             border: 1px solid var(--card-border);
             color: var(--text-dim);
-            box-shadow: 0 1px 3px rgba(67,56,43,0.07);
+            box-shadow: var(--card-shadow);
         }
         .icon-btn:hover { background: #fdf9f3; }
 
@@ -2061,7 +2066,7 @@
         .action-item {
             background: var(--card);
             border-color: var(--card-border);
-            box-shadow: 0 1px 2px rgba(67,56,43,0.05);
+            box-shadow: var(--card-shadow);
         }
         .action-item:hover { border-color: rgba(var(--accent-rgb),0.45); background: #fff7ed; }
         .action-circle { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.22); }
@@ -2077,8 +2082,9 @@
 
         /* ── Claim button box ── */
         .claim-button-box {
-            background: linear-gradient(135deg, rgba(251,191,36,0.16) 0%, rgba(var(--accent-rgb),0.12) 100%);
-            border-color: rgba(var(--accent-rgb),0.42);
+            background: linear-gradient(135deg, rgba(251,146,60,0.2) 0%, rgba(var(--accent-rgb),0.14) 100%), var(--card);
+            border-color: rgba(var(--accent-rgb),0.45);
+            box-shadow: var(--card-shadow);
         }
         .claim-button-box:hover {
             background: linear-gradient(135deg, rgba(251,191,36,0.24) 0%, rgba(var(--accent-rgb),0.18) 100%);
@@ -2104,15 +2110,30 @@
         .claim-button-box:hover .claim-box-arrow { color: var(--accent); }
         .claim-box-timer { color: var(--text-muted); }
 
+        /* ── Section labels ── */
+        .section-label {
+            color: #9a3412;
+            border-left: 3px solid var(--accent);
+            padding: 0.75rem 0 0.4rem 0.55rem;
+            letter-spacing: 0.1em;
+        }
+
         /* ── Tabs ── */
         .tab-bar { border-bottom-color: var(--card-border); }
-        .tab { color: var(--text-muted); }
-        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab { color: var(--text-muted); font-weight: 700; }
+        .tab.active { color: #c2410c; border-bottom-color: var(--accent); }
 
-        /* ── Token + transaction lists ── */
-        .token-item { border-bottom-color: rgba(67,56,43,0.08); }
+        /* ── Token + transaction lists (white cards lifting rows off the canvas) ── */
+        .token-list, .tx-list {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 0.25rem 1rem;
+            box-shadow: var(--card-shadow);
+        }
+        .token-item { border-bottom-color: rgba(67,56,43,0.09); }
         .token-symbol, .token-amount { color: var(--text); }
-        .tx-item { border-bottom-color: rgba(67,56,43,0.08); }
+        .tx-item { border-bottom-color: rgba(67,56,43,0.09); }
         .tx-dir { color: var(--text); }
         .tx-icon-circle.sent             { background: rgba(220,38,38,0.1);  color: #dc2626; }
         .tx-icon-circle.received         { background: rgba(22,163,74,0.1);  color: #16a34a; }
@@ -2226,19 +2247,26 @@
         .raffle-explainer-copy, .raffle-explainer-list { color: var(--text-dim); }
         .raffle-close-btn { background: var(--card-soft); color: var(--text-dim); }
 
-        /* ── UBI hero orb ── */
+        /* ── UBI hero orb ──
+           Light theme: the dark-theme glow pulse reads as washed-out haze on a
+           cream canvas, so the orb uses a static, well-defined card-like shadow. */
         .ubi-hero-orb {
-            background: radial-gradient(circle at 50% 40%, rgba(var(--accent-rgb),0.16) 0%, rgba(var(--accent-rgb),0.09) 45%, transparent 75%);
-            border-color: rgba(var(--accent-rgb),0.35);
+            background: radial-gradient(circle at 50% 40%, rgba(var(--accent-rgb),0.24) 0%, rgba(var(--accent-rgb),0.13) 45%, rgba(var(--accent-rgb),0.05) 72%, transparent 80%);
+            border: 2px solid rgba(var(--accent-rgb),0.5);
+            box-shadow: 0 10px 28px rgba(234,88,12,0.16), inset 0 0 34px rgba(255,255,255,0.6);
+            animation: none;
         }
         .ubi-hero-orb.is-claimed {
-            background: radial-gradient(circle at 50% 40%, rgba(22,163,74,0.14) 0%, rgba(22,163,74,0.07) 45%, transparent 78%);
-            border-color: rgba(22,163,74,0.35);
+            background: radial-gradient(circle at 50% 40%, rgba(22,163,74,0.2) 0%, rgba(22,163,74,0.1) 45%, transparent 78%);
+            border-color: rgba(22,163,74,0.45);
+            box-shadow: 0 10px 26px rgba(22,163,74,0.15), inset 0 0 34px rgba(255,255,255,0.6);
         }
         .ubi-hero-orb.is-disabled {
-            background: radial-gradient(circle at 50% 40%, rgba(168,162,158,0.16) 0%, rgba(168,162,158,0.07) 55%, transparent 80%);
-            border-color: rgba(168,162,158,0.5);
+            background: radial-gradient(circle at 50% 40%, rgba(217,119,6,0.22) 0%, rgba(217,119,6,0.11) 55%, rgba(217,119,6,0.04) 75%, transparent 82%);
+            border-color: rgba(217,119,6,0.5);
+            box-shadow: 0 10px 26px rgba(217,119,6,0.15), inset 0 0 34px rgba(255,255,255,0.6);
         }
+        .ubi-hero-cta { border-color: rgba(154,52,18,0.35); }
         .ubi-hero-eyebrow { color: var(--text-dim); }
         .ubi-hero-amount { color: var(--text); }
         .ubi-hero-amount .unit, .ubi-hero-orb.is-claimed .ubi-hero-amount .unit { color: #15803d; }
