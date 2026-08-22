@@ -85,7 +85,6 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
 }
 
 _VALUE_ACTIONS = {"send_gd", "stream_gd", "mobile_load", "swap", "claim"}
-_MAX_SEND_GD = Decimal(os.getenv("AI_AGENT_MAX_SEND_GD", "100"))
 _MAX_STREAM_GD_PER_DAY = Decimal(os.getenv("AI_AGENT_MAX_STREAM_GD_PER_DAY", "100"))
 _MAX_MOBILE_LOAD_FIAT = Decimal(os.getenv("AI_AGENT_MAX_MOBILE_LOAD_FIAT", "100"))
 _ACTION_TTL_MINUTES = int(os.getenv("AI_AGENT_ACTION_TTL_MINUTES", "15"))
@@ -214,7 +213,7 @@ def _parse_with_openai(message: str) -> dict[str, Any] | None:
         "Messages may be in English, Tagalog, or Taglish — classify by keywords, not grammar "
         "(e.g. 'Magpadala ako ng 100 G$ kay @user' = send_gd, 'Padalhan si @user ng 50 G$' = send_gd, "
         "'Mag-stream ng 5 G$ kada araw kay @user' = stream_gd with flow_rate_per_day). "
-        "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, or USDT. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily/kada araw/bawat araw, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
+        "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, USDT, or CELO; any positive amount is allowed. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily/kada araw/bawat araw, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
         "For lookup_transaction (read-only, no signature), set lookup_feature to one of learn_earn, reloadly, referral, twitter, trustpilot when the user names a feature, otherwise empty string. lookup_transaction is for questions about a transaction hash / tx id / 'where is my tx'. "
         "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, transaction_history, lookup_transaction, help, unknown.\n\n"
         f"User message: {message}"
@@ -403,10 +402,10 @@ def _apply_safety_policy(intent: dict[str, Any], wallet: str | None) -> None:
 
     if action == "send_gd":
         intent["token"] = _normalise_send_token(intent.get("token")) or "G$"
+        # Any positive amount is accepted — the sender's on-chain balance is
+        # the only real limit, enforced when the wallet signs the transfer.
         if not _valid_decimal(intent["amount"]):
             intent["missing_fields"].append("amount")
-        elif Decimal(intent["amount"]) > _MAX_SEND_GD:
-            intent["missing_fields"].append(f"amount_at_or_below_{_MAX_SEND_GD}_{intent['token']}")
         _resolve_send_recipient(intent)
         if not intent["recipient"] or not Web3.is_address(intent["recipient"]):
             intent["missing_fields"].append("valid_recipient_username_or_wallet")
@@ -591,7 +590,7 @@ def _send_tokens_help_reply() -> str:
         "How to send tokens with GoodMarket Agent:\n"
         "1. Type a command like: send 10 G$ to @username or send 10 G$ to 0xWalletAddress.\n"
         "   Tagalog works too: Magpadala ako ng 10 G$ kay @username or kay 0xWalletAddress.\n"
-        "2. You can also use cUSD or USDT, for example: send 1 cUSD to @username.\n"
+        "2. You can also use cUSD, USDT, or CELO, for example: send 1 cUSD to @username. Any amount works.\n"
         "3. The agent prepares a review card only. No token moves yet.\n"
         "4. Tap Confirm action, then sign in your wallet to actually send.\n"
         "Any phrasing works — the agent only looks for keywords (send/magpadala/padalhan + amount + recipient).\n"
@@ -606,6 +605,7 @@ def _welcome_help_reply() -> str:
         "• send 10 G$ to @bebet or 0x wallet\n"
         "• send 1 cUSD to @bebet or 0x wallet\n"
         "• send 1 USDT to @bebet or 0x wallet\n"
+        "• send 0.5 CELO to @bebet or 0x wallet\n"
         "• stream 5 G$ per day to @bebet or 0x wallet\n"
         "• load 09653870395 20\n"
         "• my transaction hash / my Learn & Earn tx hash / my Reloadly tx\n"
@@ -616,11 +616,11 @@ def _welcome_help_reply() -> str:
 
 def _normalise_send_token(value: str | None) -> str | None:
     token = (value or "").strip().lower().replace(" ", "")
-    aliases = {"g$": "G$", "gd": "G$", "gooddollar": "G$", "cusd": "cUSD", "celo-dollar": "cUSD", "usdt": "USDT", "tether": "USDT"}
+    aliases = {"g$": "G$", "gd": "G$", "gooddollar": "G$", "cusd": "cUSD", "celo-dollar": "cUSD", "usdt": "USDT", "tether": "USDT", "celo": "CELO"}
     return aliases.get(token)
 
 def _send_token_candidate(text: str) -> str | None:
-    match = re.search(r"(?<!\w)(g\$|gd|gooddollar|cusd|celo-dollar|usdt|tether)(?!\w)", text, re.IGNORECASE)
+    match = re.search(r"(?<!\w)(g\$|gd|gooddollar|cusd|celo-dollar|usdt|tether|celo)(?!\w)", text, re.IGNORECASE)
     return _normalise_send_token(match.group(1)) if match else None
 
 def _balance_reply(wallet: str | None) -> str:
