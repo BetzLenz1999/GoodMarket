@@ -3063,7 +3063,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             if (needsVerification) {
                 heroEyebrow.textContent = 'Face verification';
                 heroAmount.innerHTML = '🪪';
-                heroSub.textContent = 'Required to claim your UBI G$';
+                heroSub.textContent = 'Tap to start face verification';
                 heroCta.textContent = 'Verify Face ID';
                 hero.classList.add('is-disabled');
             } else if (hasClaimable) {
