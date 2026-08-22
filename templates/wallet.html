@@ -5592,6 +5592,27 @@
             return true;
         }
 
+        if (action.action_type === 'gcash_cashout') {
+            // Prefill the GCash modal and run the exact same submitGcashCashout
+            // path as the manual modal: PIN unlock (local wallet) -> sign G$
+            // transfer -> wait for receipt -> POST /api/gcash/cashout-request,
+            // so the cashout still lands in the GCash history.
+            if (typeof openModal === 'function') openModal('gcashModal');
+            setTimeout(async function() {
+                const amountInput = document.getElementById('gcashAmount');
+                const numberInput = document.getElementById('gcashNumber');
+                const nameInput = document.getElementById('gcashName');
+                if (amountInput) {
+                    amountInput.value = payload.amount || '';
+                    amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                if (numberInput) numberInput.value = payload.gcash_number || '';
+                if (nameInput) nameInput.value = payload.gcash_name || '';
+                if (typeof submitGcashCashout === 'function') await submitGcashCashout();
+            }, 150);
+            return true;
+        }
+
         if (action.action_type !== 'send_gd') return false;
         const recipient = payload.recipient || '';
         const amount = payload.amount || '';
