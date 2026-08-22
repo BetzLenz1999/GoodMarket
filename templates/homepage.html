@@ -2479,8 +2479,8 @@
                     <button id="lwFinishBtn" class="connect-btn" type="button" onclick="finishLocalWalletSignup()" disabled>Continue to GoodMarket</button>
                 </div>
 
-                <!-- First-time creators only: username setup before the wallet
-                     page so they can receive money via username right away. -->
+                <!-- Shown after ANY local login while the account has no
+                     username yet, so users can receive money via @username. -->
                 <div id="lwUsernameStep" style="display:none">
                     <p class="wc-panel-note"><strong>🎉 Setting up username.</strong><br>
                         You can now receive money using your username — so set your username now.</p>
@@ -2490,6 +2490,9 @@
                         <small style="opacity:0.7">3–24 characters: letters, numbers, and underscore (_) only. Others can send you G$ with @username.</small>
                     </div>
                     <button id="lwUsernameBtn" class="connect-btn" type="button" onclick="submitLocalWalletUsername()">Set my username</button>
+                    <p class="wc-panel-note" style="margin-top:0.7rem;text-align:center;">
+                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="skipLocalWalletUsername()">Skip for now</button>
+                    </p>
                 </div>
 
                 <div id="localWalletStatus" class="status-message" style="margin-top:0.85rem;"></div>
@@ -2999,7 +3002,7 @@
                 });
                 const data = await resp.json();
                 if (!resp.ok || !data.success) throw new Error(data.error || 'Login failed.');
-                _lwCompleteLogin(data, true);
+                await _lwCompleteLogin(data);
             } catch (err) {
                 lwStatus('❌ ' + (err && err.message ? err.message : 'Login failed.'), 'error');
                 btn.disabled = false;
@@ -3040,7 +3043,7 @@
             _lwCompleteLogin(data);
         }
 
-        function _lwCompleteLogin(data, isNewAccount) {
+        async function _lwCompleteLogin(data) {
             const pinEl = document.getElementById('lwPin');
             const confirmEl = document.getElementById('lwPinConfirm');
             if (pinEl) pinEl.value = '';
@@ -3055,14 +3058,25 @@
                 if (saved && saved.email) sessionStorage.setItem('lw_session_email', saved.email);
                 if (data.wallet) window.GMLocalWalletEmail = saved && saved.email ? saved.email : null;
             } catch (e) {}
-            // First-time creators pick a username before landing on the wallet
-            // page; returning users (unlock path) go straight through.
-            if (isNewAccount) {
-                _lwShowUsernameStep(data.redirect_to || '/wallet');
+            // Gate on the actual username, not account age: brand-new creators
+            // AND older accounts made before this flow get the setup step until
+            // they have a username. A failed lookup must not block the login.
+            const redirectTo = data.redirect_to || '/wallet';
+            let needsUsername = false;
+            try {
+                const uRes = await fetch('/api/user/username');
+                if (uRes.ok) {
+                    const uData = await uRes.json();
+                    needsUsername = !!(uData && uData.success && !uData.username);
+                    if (uData && uData.username) sessionStorage.setItem('username', uData.username);
+                }
+            } catch (e) {}
+            if (needsUsername) {
+                _lwShowUsernameStep(redirectTo);
                 return;
             }
             lwStatus('✅ Welcome! Redirecting…', 'success');
-            setTimeout(function () { window.location.href = data.redirect_to || '/wallet'; }, 900);
+            setTimeout(function () { window.location.href = redirectTo; }, 900);
         }
 
         let _lwUsernameRedirect = '/wallet';
@@ -3074,11 +3088,15 @@
             document.getElementById('lwUsernameStep').style.display = 'block';
             const btn = document.getElementById('lwUsernameBtn');
             if (btn) btn.disabled = false;
-            lwStatus('✅ Wallet created! One last step — set your username.', 'success');
+            lwStatus('👤 One last step — set your username to receive money easily.', 'success');
             setTimeout(function () {
                 const input = document.getElementById('lwUsername');
                 if (input) input.focus();
             }, 50);
+        }
+
+        function skipLocalWalletUsername() {
+            window.location.href = _lwUsernameRedirect;
         }
 
         async function submitLocalWalletUsername() {
