@@ -126,6 +126,11 @@
 
     toggle.addEventListener('click', function () { setOpen(true); });
     close.addEventListener('click', function () { setOpen(false); });
+    messages.addEventListener('click', function (event) {
+      const button = event.target.closest('[data-gm-ai-command]');
+      if (!button) return;
+      sendAgentMessage(button.getAttribute('data-gm-ai-command') || button.textContent);
+    });
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       sendAgentMessage(input.value);
