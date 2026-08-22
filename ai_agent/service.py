@@ -31,6 +31,7 @@ SUPPORTED_ACTIONS = {
     "mobile_load",
     "swap",
     "claim",
+    "gcash_cashout",
     "transaction_history",
     "lookup_transaction",
     "help",
@@ -50,6 +51,8 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
         "recipient": {"type": "string"},
         "recipient_username": {"type": "string"},
         "phone": {"type": "string"},
+        "gcash_number": {"type": "string"},
+        "gcash_name": {"type": "string"},
         "from_token": {"type": "string"},
         "to_token": {"type": "string"},
         "flow_rate_per_day": {"type": "string"},
@@ -71,6 +74,8 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
         "recipient",
         "recipient_username",
         "phone",
+        "gcash_number",
+        "gcash_name",
         "from_token",
         "to_token",
         "flow_rate_per_day",
@@ -84,15 +89,31 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
     ],
 }
 
-_VALUE_ACTIONS = {"send_gd", "stream_gd", "mobile_load", "swap", "claim"}
+_VALUE_ACTIONS = {"send_gd", "stream_gd", "mobile_load", "swap", "claim", "gcash_cashout"}
 _MAX_STREAM_GD_PER_DAY = Decimal(os.getenv("AI_AGENT_MAX_STREAM_GD_PER_DAY", "100"))
 _MAX_MOBILE_LOAD_FIAT = Decimal(os.getenv("AI_AGENT_MAX_MOBILE_LOAD_FIAT", "100"))
+# Must match the app-wide GCash cashout minimum (5,000 G$ = PHP 50).
+_GCASH_MIN_GD = Decimal(os.getenv("AI_AGENT_GCASH_MIN_GD", "5000"))
 _ACTION_TTL_MINUTES = int(os.getenv("AI_AGENT_ACTION_TTL_MINUTES", "15"))
 _OPENAI_MODEL = os.getenv("AI_AGENT_OPENAI_MODEL", "gpt-5.5-mini")
+
+# The chat agent is only for GoodMarket-created accounts (local email + PIN
+# login) — WalletConnect / injected / Privy sessions get a not-eligible reply.
+_LOCAL_ONLY_REPLY = (
+    "The GoodMarket Agent is available only for GoodMarket users — those who "
+    "created their wallet using GoodMarket (email + PIN login). Please log in "
+    "with your GoodMarket account to use this feature."
+)
 
 # Local fallback storage keeps the MVP functional without requiring a new DB
 # migration. Production deployments can persist these rows in Supabase later.
 _ACTION_STORE: dict[str, dict[str, Any]] = {}
+
+# A cashout is a two-turn conversation: the user says "cashout 5,000 G$" first,
+# then replies with their GCash number + full name. The pending amount is kept
+# per wallet (same in-memory fallback pattern as _ACTION_STORE) so the follow-up
+# reply can be merged with the original request.
+_PENDING_GCASH: dict[str, dict[str, Any]] = {}
 
 
 @dataclass
@@ -124,6 +145,40 @@ def parse_and_plan(message: str, wallet: str | None, login_method: str | None) -
             intent=_empty_intent("unknown", "No message provided."),
         )
 
+    # The agent is for GoodMarket-created (local email + PIN) accounts only —
+    # WalletConnect / injected / Privy sessions always get the same reply.
+    if (login_method or "").strip().lower() != "local":
+        return AgentResult(
+            status="not_eligible",
+            reply=_LOCAL_ONLY_REPLY,
+            intent=_empty_intent("unknown", "GoodMarket Agent requires a GoodMarket (local) account."),
+        )
+
+    # GCash cashout is a two-turn conversation: a pending cashout with missing
+    # details turns the next plain reply ("09651234567 Wilbert Lenteria") into
+    # the rest of the cashout request.
+    wallet_key = (wallet or "").lower()
+    pending_gcash = _PENDING_GCASH.get(wallet_key) if wallet_key else None
+    if pending_gcash is not None:
+        if _GCASH_CANCEL_RE.search(clean_message):
+            _PENDING_GCASH.pop(wallet_key, None)
+            return AgentResult(
+                status="answer",
+                reply="Your GCash cashout was cancelled. No funds moved.",
+                intent=_empty_intent("gcash_cashout", "Cashout cancelled by user."),
+            )
+        if not _COMMAND_KEYWORD_RE.search(clean_message):
+            # Fill in only the fields the follow-up reply is still missing, so
+            # freshly-typed details always win over the remembered ones.
+            extras = []
+            if pending_gcash.get("amount") and not _gcash_amount_candidate(clean_message):
+                extras.append(f"{pending_gcash['amount']} G$")
+            if pending_gcash.get("gcash_number") and not _gcash_number_candidate(clean_message):
+                extras.append(pending_gcash["gcash_number"])
+            if pending_gcash.get("gcash_name") and not _gcash_name_candidate(clean_message):
+                extras.append(pending_gcash["gcash_name"])
+            clean_message = " ".join(["cashout"] + extras + [clean_message])
+
     faq_reply = _faq_reply(clean_message)
     if faq_reply:
         return AgentResult(
@@ -137,6 +192,20 @@ def parse_and_plan(message: str, wallet: str | None, login_method: str | None) -
     _supplement_intent_from_message(intent, clean_message)
     _apply_safety_policy(intent, wallet)
 
+    # Keep / refresh / drop the pending GCash context based on the outcome.
+    if wallet_key:
+        if intent["action"] == "gcash_cashout":
+            if intent["missing_fields"]:
+                _PENDING_GCASH[wallet_key] = {
+                    "amount": intent.get("amount") or "",
+                    "gcash_number": intent.get("gcash_number") or "",
+                    "gcash_name": intent.get("gcash_name") or "",
+                }
+            else:
+                _PENDING_GCASH.pop(wallet_key, None)
+        elif intent["action"] in _VALUE_ACTIONS - {"gcash_cashout"}:
+            _PENDING_GCASH.pop(wallet_key, None)
+
     if intent["action"] in _VALUE_ACTIONS and not wallet:
         intent["missing_fields"].append("wallet_session")
         intent["requires_confirmation"] = True
@@ -148,9 +217,10 @@ def parse_and_plan(message: str, wallet: str | None, login_method: str | None) -
         )
 
     if intent["missing_fields"]:
+        reply = _gcash_missing_reply(intent) if intent["action"] == "gcash_cashout" else _missing_details_reply(intent)
         return AgentResult(
             status="needs_details",
-            reply=_missing_details_reply(intent),
+            reply=reply,
             intent=intent,
         )
 
@@ -214,8 +284,9 @@ def _parse_with_openai(message: str) -> dict[str, Any] | None:
         "(e.g. 'Magpadala ako ng 100 G$ kay @user' = send_gd, 'Padalhan si @user ng 50 G$' = send_gd, "
         "'Mag-stream ng 5 G$ kada araw kay @user' = stream_gd with flow_rate_per_day). "
         "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, USDT, or CELO; any positive amount is allowed. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily/kada araw/bawat araw, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
+        "For gcash_cashout (cash out G$ to a GCash account), extract the G$ amount, put an 11-digit Philippine mobile number (09xxxxxxxxx) in gcash_number, and the GCash-registered full name in gcash_name; the number and name may appear in any order and without labels. "
         "For lookup_transaction (read-only, no signature), set lookup_feature to one of learn_earn, reloadly, referral, twitter, trustpilot when the user names a feature, otherwise empty string. lookup_transaction is for questions about a transaction hash / tx id / 'where is my tx'. "
-        "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, transaction_history, lookup_transaction, help, unknown.\n\n"
+        "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, gcash_cashout, transaction_history, lookup_transaction, help, unknown.\n\n"
         f"User message: {message}"
     )
     body = {
@@ -281,6 +352,18 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
         return intent
     if "claim" in lower:
         intent.update(action="claim", summary="Open or prepare a G$ claim action.", requires_confirmation=True, requires_signature=True, confidence=0.72)
+        return intent
+    if _GCASH_KEYWORD_RE.search(message):
+        intent.update(
+            action="gcash_cashout",
+            summary="Prepare a GCash cashout preview.",
+            amount=_gcash_amount_candidate(message) or "",
+            gcash_number=_gcash_number_candidate(message) or "",
+            gcash_name=_gcash_name_candidate(message) or "",
+            requires_confirmation=True,
+            requires_signature=True,
+            confidence=0.85,
+        )
         return intent
     if any(word in lower for word in ["swap", "palit", "exchange"]):
         amount = _first_amount(message)
@@ -349,7 +432,7 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
 
 def _normalise_intent(intent: dict[str, Any]) -> dict[str, Any]:
     normalised = _empty_intent(intent.get("action") if intent.get("action") in SUPPORTED_ACTIONS else "unknown", intent.get("summary") or "")
-    normalised.update({k: str(intent.get(k) or "").strip() for k in ["token", "amount", "fiat_amount", "fiat_currency", "recipient", "recipient_username", "phone", "from_token", "to_token", "flow_rate_per_day", "flow_rate_per_month", "lookup_feature", "safety_note"]})
+    normalised.update({k: str(intent.get(k) or "").strip() for k in ["token", "amount", "fiat_amount", "fiat_currency", "recipient", "recipient_username", "phone", "gcash_number", "gcash_name", "from_token", "to_token", "flow_rate_per_day", "flow_rate_per_month", "lookup_feature", "safety_note"]})
     normalised["requires_confirmation"] = bool(intent.get("requires_confirmation"))
     normalised["requires_signature"] = bool(intent.get("requires_signature"))
     try:
@@ -363,6 +446,18 @@ def _normalise_intent(intent: dict[str, Any]) -> dict[str, Any]:
 
 def _supplement_intent_from_message(intent: dict[str, Any], message: str) -> None:
     """Fill obvious fields that an LLM may omit; never invent values."""
+    # GCash cashout: recover the action from keywords when the LLM missed it
+    # (but never hijack a read-only lookup like "where is my gcash tx hash").
+    if intent["action"] in {"unknown", "help"} and _GCASH_KEYWORD_RE.search(message):
+        intent["action"] = "gcash_cashout"
+        intent["summary"] = intent["summary"] or "Prepare a GCash cashout preview."
+    if intent["action"] == "gcash_cashout":
+        if not intent.get("amount"):
+            intent["amount"] = _gcash_amount_candidate(message) or ""
+        if not intent.get("gcash_number"):
+            intent["gcash_number"] = _gcash_number_candidate(message) or ""
+        if not intent.get("gcash_name"):
+            intent["gcash_name"] = _gcash_name_candidate(message) or ""
     if intent["action"] == "mobile_load":
         phone = _first_phone(message)
         if phone and not intent.get("phone"):
@@ -437,6 +532,23 @@ def _apply_safety_policy(intent: dict[str, Any], wallet: str | None) -> None:
             intent["missing_fields"].append(f"amount_at_or_below_{_MAX_MOBILE_LOAD_FIAT}_{intent['fiat_currency']}")
         intent["requires_confirmation"] = True
         intent["requires_signature"] = True
+    elif action == "gcash_cashout":
+        intent["token"] = "G$"
+        if not _valid_decimal(intent["amount"]):
+            intent["missing_fields"].append("cashout_amount")
+        elif Decimal(intent["amount"]) < _GCASH_MIN_GD:
+            intent["missing_fields"].append(f"minimum_cashout_is_{_GCASH_MIN_GD}_G$")
+        number = re.sub(r"\D", "", intent.get("gcash_number") or "")
+        intent["gcash_number"] = number
+        if not re.fullmatch(r"09\d{9}", number):
+            intent["missing_fields"].append("gcash_mobile_number_11_digits")
+        name = " ".join((intent.get("gcash_name") or "").split())
+        intent["gcash_name"] = name
+        # Full name = at least first + last name.
+        if len(name.split()) < 2:
+            intent["missing_fields"].append("gcash_registered_full_name")
+        intent["requires_confirmation"] = True
+        intent["requires_signature"] = True
     elif action == "swap":
         if not _valid_decimal(intent["amount"]):
             intent["missing_fields"].append("amount")
@@ -488,6 +600,8 @@ def _empty_intent(action: str, summary: str) -> dict[str, Any]:
         "recipient": "",
         "recipient_username": "",
         "phone": "",
+        "gcash_number": "",
+        "gcash_name": "",
         "from_token": "",
         "to_token": "",
         "flow_rate_per_day": "",
@@ -504,6 +618,21 @@ def _empty_intent(action: str, summary: str) -> dict[str, Any]:
 def _missing_details_reply(intent: dict[str, Any]) -> str:
     fields = ", ".join(intent.get("missing_fields", []))
     return f"I can help with that, but I need: {fields}."
+
+
+def _gcash_missing_reply(intent: dict[str, Any]) -> str:
+    missing = set(intent.get("missing_fields", []))
+    parts = []
+    if "cashout_amount" in missing:
+        parts.append("Please tell me the G$ amount you want to cash out (e.g. cashout 5,000 G$).")
+    elif f"minimum_cashout_is_{_GCASH_MIN_GD}_G$" in missing:
+        parts.append(f"The minimum GCash cashout is {_GCASH_MIN_GD:,} G$ (₱50.00). Please say a higher amount, e.g. cashout 5,000 G$.")
+    if "gcash_mobile_number_11_digits" in missing or "gcash_registered_full_name" in missing:
+        parts.append(
+            "Please reply your GCash mobile # and full name registered on GCash "
+            "(11-digit number starting with 09, e.g. 09651234567 Juan Dela Cruz)."
+        )
+    return " ".join(parts)
 
 
 def _read_only_reply(intent: dict[str, Any], wallet: str | None) -> str:
@@ -607,6 +736,7 @@ def _welcome_help_reply() -> str:
         "• send 1 USDT to @bebet or 0x wallet\n"
         "• send 0.5 CELO to @bebet or 0x wallet\n"
         "• stream 5 G$ per day to @bebet or 0x wallet\n"
+        "• cashout 5,000 G$ (GCash cash-out — I'll ask for your GCash # and full name)\n"
         "• load 09653870395 20\n"
         "• my transaction hash / my Learn & Earn tx hash / my Reloadly tx\n"
         "Pwede ring Tagalog: 'Magpadala ako ng 100 G$ kay @bebet' o 'Mag-stream ng 5 G$ kada araw kay @bebet'.\n"
@@ -622,6 +752,43 @@ def _normalise_send_token(value: str | None) -> str | None:
 def _send_token_candidate(text: str) -> str | None:
     match = re.search(r"(?<!\w)(g\$|gd|gooddollar|cusd|celo-dollar|usdt|tether|celo)(?!\w)", text, re.IGNORECASE)
     return _normalise_send_token(match.group(1)) if match else None
+
+
+_GCASH_KEYWORD_RE = re.compile(r"(?i)(cash\s*out|cashout|gcash)")
+_GCASH_NUMBER_RE = re.compile(r"(?<!\d)(09\d{9})(?!\d)")
+_GCASH_CANCEL_RE = re.compile(r"(?i)\b(cancel|itigil|huwag|hwag|wag)\b")
+# Any of these means the follow-up message is a NEW command, not GCash details.
+_COMMAND_KEYWORD_RE = re.compile(
+    r"(?i)\b(cash\s*out|cashout|gcash|send|transfer|padala|padalhan|stream|load|topup|"
+    r"swap|palit|exchange|claim|balance|balanse|history|transactions|magkano)\b"
+)
+# Words that never belong to a person's name in a cashout message. Lookarounds
+# (not \b) so "G$" — which ends in a non-word char — is matched too.
+_GCASH_NAME_STOPWORDS = re.compile(
+    r"(?i)(?<!\w)(cashout|cash|out|gcash|g\$|gd|gooddollar|pesos?|php|ko|ako|si|ni|kay|sa|na|ang|ng|"
+    r"i|my|name|is|number|num|no|mobile|phone|account|acct|to|please|po|ito|iyan|iyon|"
+    r"this|here|heres|full|register|registered|send|cashin|cash)(?!\w)"
+)
+
+
+def _gcash_number_candidate(text: str) -> str | None:
+    match = _GCASH_NUMBER_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _gcash_amount_candidate(text: str) -> str | None:
+    # The 11-digit GCash number must never be mistaken for the G$ amount.
+    return _first_amount(_GCASH_NUMBER_RE.sub(" ", text))
+
+
+def _gcash_name_candidate(text: str) -> str | None:
+    """Whatever is left after removing the number, amounts, and keywords —
+    works whether the name comes before or after the number."""
+    cleaned = _GCASH_NUMBER_RE.sub(" ", text)
+    cleaned = re.sub(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])", " ", cleaned.replace(",", ""))
+    cleaned = _GCASH_NAME_STOPWORDS.sub(" ", cleaned)
+    words = re.findall(r"[A-Za-zÀ-ÿÑñ]+(?:[.'-][A-Za-zÀ-ÿÑñ]+)*", cleaned)
+    return " ".join(words) if words else None
 
 def _balance_reply(wallet: str | None) -> str:
     if not wallet:
