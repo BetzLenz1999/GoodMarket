@@ -1602,9 +1602,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     async function loadHistory(force = false) {
         const list = document.getElementById('txList');
         list.innerHTML = '<li class="empty-state"><span class="spinner"></span> Loading transactions...</li>';
+        // The backend scans 14 days of Celo + XDC logs — normally ~10-30 s.
+        // If it ever stalls (RPC outage / slow cold scan), don't spin forever.
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 90000);
         try {
             const url = '/api/wallet/transaction-history?limit=100' + (force ? '&force=1' : '');
-            const res  = await fetch(url);
+            const res  = await fetch(url, { signal: ctrl.signal });
             const data = await res.json();
             if (!data.success || !data.transactions || !data.transactions.length) {
                 list.innerHTML = '<li class="empty-state">No Celo or XDC transactions found in the last 14 days.</li>';
@@ -1680,7 +1684,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 list.appendChild(li);
             });
         } catch (e) {
-            list.innerHTML = '<li class="empty-state">Failed to load transactions.</li>';
+            if (e && e.name === 'AbortError') {
+                list.innerHTML = '<li class="empty-state">Taking longer than usual — pull the tab again to retry.</li>';
+            } else {
+                list.innerHTML = '<li class="empty-state">Failed to load transactions.</li>';
+            }
+        } finally {
+            clearTimeout(timer);
         }
     }
 
