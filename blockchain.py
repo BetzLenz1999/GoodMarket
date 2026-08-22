@@ -1,4 +1,3 @@
-
 from env_utils import get_env_float, get_env_int
 import requests
 from datetime import datetime, timedelta, timezone
@@ -411,13 +410,86 @@ def _get_logs_chunked(params_template: dict, from_block_int: int, to_block_int: 
     return all_logs
 
 
+# Public Celo RPCs (forno.celo.org) cap eth_getLogs block ranges — queries
+# spanning too many blocks are rejected with "query exceeds range" (observed
+# limit: 5000 blocks). Keep chunks under that; GETLOGS_MAX_CHUNK can override.
+GETLOGS_MAX_CHUNK = get_env_int("GETLOGS_MAX_CHUNK", 4000)
+
+# Fallback Celo RPCs for log/history fetching — forno regularly returns
+# transient -32011 "no backend is currently healthy" errors, and silently
+# dropping those chunks is what made Celo transactions vanish from the wallet
+# history. CELO_RPC_FALLBACKS (comma-separated) overrides the defaults.
+CELO_RPC_FALLBACKS = [u.strip() for u in os.getenv(
+    "CELO_RPC_FALLBACKS",
+    "https://forno.celo.org,https://rpc.ankr.com/celo,https://celo.drpc.org",
+).split(",") if u.strip()]
+
+
+def _celo_rpc_urls() -> list:
+    """CELO_RPC first (env-configured primary), then the public fallbacks."""
+    urls = [CELO_RPC]
+    for u in CELO_RPC_FALLBACKS:
+        if u not in urls:
+            urls.append(u)
+    return urls
+
+
+def _get_logs_range_adaptive(params_template: dict, from_block_int: int,
+                             to_block_int: int, min_chunk: int = 250) -> list:
+    """Fetch logs for a single block range. Halves the range and retries when
+    the RPC rejects it as too large; on transient backend errors falls over to
+    the next Celo RPC. A tightened provider limit or a flaky node can therefore
+    never silently zero out the results again."""
+    import time as _time
+    session = _get_rpc_session()
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "eth_getLogs",
+        "params": [{**params_template,
+                    "fromBlock": hex(from_block_int),
+                    "toBlock":   hex(to_block_int)}],
+        "id": 1,
+    }
+    last_err = None
+    urls = _celo_rpc_urls()
+    for attempt in range(2):
+        for url in urls:
+            try:
+                response = session.post(url, json=payload, timeout=15)
+                result = response.json()
+            except Exception as e:
+                last_err = e
+                continue
+            if isinstance(result, dict) and "error" in result:
+                msg = str((result.get("error") or {}).get("message", "")).lower()
+                span = to_block_int - from_block_int
+                if any(k in msg for k in ("range", "limit", "exceed", "too large", "too many")) \
+                        and span >= min_chunk * 2:
+                    mid = (from_block_int + to_block_int) // 2
+                    logger.warning(
+                        f"eth_getLogs range rejected (blocks {from_block_int}-{to_block_int}); halving")
+                    return (_get_logs_range_adaptive(params_template, from_block_int, mid, min_chunk)
+                            + _get_logs_range_adaptive(params_template, mid + 1, to_block_int, min_chunk))
+                last_err = result["error"]
+                continue  # transient backend error — try the next RPC
+            if isinstance(result, dict):
+                return result.get("result") or []
+        if attempt == 0:
+            _time.sleep(0.6)
+    logger.error(f"eth_getLogs failed on all Celo RPCs (blocks {from_block_int}-{to_block_int}): {last_err}")
+    return []
+
+
 def _get_logs_full(params_template: dict, from_block_int: int, to_block_int: int,
-                   chunk_size: int = 10000, batch_size: int = 10) -> list:
+                   chunk_size: int = 10000, batch_size: int = 25) -> list:
     """
     Like _get_logs_chunked but scans the ENTIRE block range without early-stopping.
     Sends multiple chunk requests as a single JSON-RPC batch (up to batch_size at once)
-    to minimise round-trips.  Uses a larger default chunk_size for efficiency.
+    to minimise round-trips. Chunks are clamped to GETLOGS_MAX_CHUNK and any chunk the
+    RPC still rejects is retried via _get_logs_range_adaptive — never silently dropped.
     """
+    chunk_size = min(chunk_size, GETLOGS_MAX_CHUNK)
+
     # Build the list of (from, to) block ranges
     chunks = []
     current_to = to_block_int
@@ -432,29 +504,54 @@ def _get_logs_full(params_template: dict, from_block_int: int, to_block_int: int
     # Send chunks in batches to keep individual HTTP requests manageable
     for batch_start in range(0, len(chunks), batch_size):
         sub_chunks = chunks[batch_start: batch_start + batch_size]
-        batch_payload = [
-            {
+        id_to_chunk = {}
+        batch_payload = []
+        for idx, (cf, ct) in enumerate(sub_chunks):
+            req_id = batch_start + idx
+            id_to_chunk[req_id] = (cf, ct)
+            batch_payload.append({
                 "jsonrpc": "2.0",
                 "method": "eth_getLogs",
                 "params": [{**params_template,
                             "fromBlock": hex(cf),
                             "toBlock":   hex(ct)}],
-                "id": batch_start + idx,
-            }
-            for idx, (cf, ct) in enumerate(sub_chunks)
-        ]
-        try:
-            response = session.post(CELO_RPC, json=batch_payload, timeout=20)
-            results  = response.json()
-            # Response may be a list (batch) or a single dict (error)
-            if isinstance(results, list):
-                for item in results:
-                    logs = item.get("result") or []
-                    all_logs.extend(logs)
-            elif isinstance(results, dict) and "result" in results:
-                all_logs.extend(results["result"] or [])
-        except Exception as exc:
-            logger.error(f"_get_logs_full batch error (chunks {batch_start}–{batch_start+len(sub_chunks)}): {exc}")
+                "id": req_id,
+            })
+        # Post the batch, failing over to the next Celo RPC when a node is down
+        results = None
+        for rpc_url in _celo_rpc_urls():
+            try:
+                response = session.post(rpc_url, json=batch_payload, timeout=30)
+                parsed = response.json()
+                if isinstance(parsed, dict) and "error" in parsed:
+                    logger.warning(f"_get_logs_full batch rejected by {rpc_url}: {parsed['error']}")
+                    continue
+                results = parsed
+                break
+            except Exception as exc:
+                logger.error(f"_get_logs_full batch error via {rpc_url} "
+                             f"(chunks {batch_start}–{batch_start+len(sub_chunks)}): {exc}")
+        if results is None:
+            # Every RPC failed for this batch — per-chunk adaptive fetch still
+            # retries each range (with its own failover), so nothing is skipped.
+            for cf, ct in sub_chunks:
+                all_logs.extend(_get_logs_range_adaptive(params_template, cf, ct))
+            continue
+        # Response may be a list (batch) or a single dict
+        if isinstance(results, list):
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                if "error" in item:
+                    cf, ct = id_to_chunk.get(item.get("id"), (None, None))
+                    logger.warning(
+                        f"_get_logs_full chunk error (blocks {cf}-{ct}): {item['error']}")
+                    if cf is not None:
+                        all_logs.extend(_get_logs_range_adaptive(params_template, cf, ct))
+                else:
+                    all_logs.extend(item.get("result") or [])
+        elif isinstance(results, dict):
+            all_logs.extend(results.get("result") or [])
 
     return all_logs
 
@@ -476,49 +573,41 @@ def has_recent_ubi_claim(wallet_address: str) -> dict:
         all_activities = []
 
         # --- Check for G$ transfers FROM UBI Proxy TO user ---
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "eth_getLogs",
-            "params": [{
-                "fromBlock": from_block,
-                "toBlock": to_block,
-                "address": gooddollar_token,
-                "topics": [
-                    UBI_EVENT_SIGNATURES["TRANSFER"],
-                    _topic_for_address(ubi_proxy_address),
-                    _topic_for_address(wallet_address)
-                ]
-            }],
-            "id": 1
-        }
-
+        # Routed through _get_logs_full: the 7-day window far exceeds forno's
+        # 5000-block eth_getLogs cap, so a single-shot query always errored and
+        # the error path silently read as "no recent claim".
         try:
-            session = _get_rpc_session()
-            response = session.post(CELO_RPC, json=payload, timeout=15)
-            result = response.json()
-
-            if "error" not in result:
-                logs = result.get("result", [])
-                for log_entry in logs:
-                    block_num = int(log_entry.get("blockNumber", "0x0"), 16)
-                    tx_hash = log_entry.get("transactionHash", "Unknown")
-                    timestamp_info = _format_timestamp(block_num)
-                    amount_hex = log_entry.get("data", "0x0")
-                    try:
-                        amount_g = int(amount_hex, 16) / (10 ** 18)
-                    except Exception:
-                        amount_g = 0
-                    all_activities.append({
-                        "contract": "UBI Proxy",
-                        "contract_address": ubi_proxy_address,
-                        "block": block_num,
-                        "tx_hash": tx_hash,
-                        "timestamp": timestamp_info,
-                        "method": "UBI claim",
-                        "status": "success",
-                        "amount": f"{amount_g:.6f} G$",
-                        "activity_type": "ubi_claim"
-                    })
+            logs = _get_logs_full(
+                {
+                    "address": gooddollar_token,
+                    "topics": [
+                        UBI_EVENT_SIGNATURES["TRANSFER"],
+                        _topic_for_address(ubi_proxy_address),
+                        _topic_for_address(wallet_address)
+                    ],
+                },
+                int(from_block, 16), int(to_block, 16),
+            )
+            for log_entry in logs:
+                block_num = int(log_entry.get("blockNumber", "0x0"), 16)
+                tx_hash = log_entry.get("transactionHash", "Unknown")
+                timestamp_info = _format_timestamp(block_num)
+                amount_hex = log_entry.get("data", "0x0")
+                try:
+                    amount_g = int(amount_hex, 16) / (10 ** 18)
+                except Exception:
+                    amount_g = 0
+                all_activities.append({
+                    "contract": "UBI Proxy",
+                    "contract_address": ubi_proxy_address,
+                    "block": block_num,
+                    "tx_hash": tx_hash,
+                    "timestamp": timestamp_info,
+                    "method": "UBI claim",
+                    "status": "success",
+                    "amount": f"{amount_g:.6f} G$",
+                    "activity_type": "ubi_claim"
+                })
         except Exception as e:
             logger.error(f"Error checking UBI Proxy transfers: {e}")
 
@@ -534,60 +623,49 @@ def has_recent_ubi_claim(wallet_address: str) -> dict:
             else:
                 topics.append(None)
 
-            payload = {
-                "jsonrpc": "2.0",
-                "method": "eth_getLogs",
-                "params": [{
-                    "fromBlock": from_block,
-                    "toBlock": to_block,
-                    "address": ubi_proxy_address,
-                    "topics": topics
-                }],
-                "id": 1
-            }
-
             try:
-                session = _get_rpc_session()
-                response = session.post(CELO_RPC, json=payload, timeout=15)
-                result = response.json()
+                logs = _get_logs_full(
+                    {
+                        "address": ubi_proxy_address,
+                        "topics": topics,
+                    },
+                    int(from_block, 16), int(to_block, 16),
+                )
 
-                if "error" not in result:
-                    logs = result.get("result", [])
+                if event_name not in ["UBI_CLAIMED", "CLAIM", "REWARD_CLAIMED", "UBI_DISTRIBUTED", "DAILY_UBI"]:
+                    wallet_topic = _topic_for_address(wallet_address)
+                    logs = [log for log in logs if wallet_topic in log.get("topics", [])]
 
-                    if event_name not in ["UBI_CLAIMED", "CLAIM", "REWARD_CLAIMED", "UBI_DISTRIBUTED", "DAILY_UBI"]:
-                        wallet_topic = _topic_for_address(wallet_address)
-                        logs = [log for log in logs if wallet_topic in log.get("topics", [])]
-
-                    for log_entry in logs:
-                        block_num = int(log_entry.get("blockNumber", "0x0"), 16)
-                        tx_hash = log_entry.get("transactionHash", "Unknown")
-                        timestamp_info = _format_timestamp(block_num)
-                        amount_str = "Event logged"
+                for log_entry in logs:
+                    block_num = int(log_entry.get("blockNumber", "0x0"), 16)
+                    tx_hash = log_entry.get("transactionHash", "Unknown")
+                    timestamp_info = _format_timestamp(block_num)
+                    amount_str = "Event logged"
+                    try:
+                        data = log_entry.get("data", "0x")
+                        if data and data != "0x":
+                            amount_g = int(data, 16) / (10 ** 18)
+                            amount_str = f"{amount_g:.6f} G$"
+                    except Exception:
                         try:
-                            data = log_entry.get("data", "0x")
-                            if data and data != "0x":
-                                amount_g = int(data, 16) / (10 ** 18)
+                            log_topics = log_entry.get("topics", [])
+                            if len(log_topics) > 2:
+                                amount_g = int(log_topics[2], 16) / (10 ** 18)
                                 amount_str = f"{amount_g:.6f} G$"
                         except Exception:
-                            try:
-                                log_topics = log_entry.get("topics", [])
-                                if len(log_topics) > 2:
-                                    amount_g = int(log_topics[2], 16) / (10 ** 18)
-                                    amount_str = f"{amount_g:.6f} G$"
-                            except Exception:
-                                pass
+                            pass
 
-                        all_activities.append({
-                            "contract": "UBI Proxy",
-                            "contract_address": ubi_proxy_address,
-                            "block": block_num,
-                            "tx_hash": tx_hash,
-                            "timestamp": timestamp_info,
-                            "method": event_name.lower().replace("_", " "),
-                            "status": "success",
-                            "amount": amount_str,
-                            "activity_type": "ubi_event"
-                        })
+                    all_activities.append({
+                        "contract": "UBI Proxy",
+                        "contract_address": ubi_proxy_address,
+                        "block": block_num,
+                        "tx_hash": tx_hash,
+                        "timestamp": timestamp_info,
+                        "method": event_name.lower().replace("_", " "),
+                        "status": "success",
+                        "amount": amount_str,
+                        "activity_type": "ubi_event"
+                    })
             except Exception as e:
                 logger.error(f"Error checking {event_name}: {e}")
 
@@ -1384,7 +1462,7 @@ def get_comprehensive_tx_history(wallet_address: str, limit: int = 50, force: bo
         }
 
         for params in [sent_params, recv_params]:
-            logs = _get_logs_full(params, from_block_int, to_block_int, chunk_size=10000)
+            logs = _get_logs_full(params, from_block_int, to_block_int)
             for log_entry in logs:
                 tlist = log_entry.get("topics", [])
                 if len(tlist) < 3:
