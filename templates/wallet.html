@@ -2756,9 +2756,9 @@
     <div class="modal-overlay" id="lwUnlockModal">
         <div class="modal-sheet">
             <div class="modal-handle"></div>
-            <div class="modal-title">🔒 Unlock Your Wallet</div>
+            <div class="modal-title">🔐 Sign this transaction</div>
             <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:1rem;text-align:center">
-                Enter your 6-digit PIN to continue. Your wallet locks automatically after 15 minutes for security.
+                Enter your 6-digit PIN to confirm and sign. Your wallet locks automatically after 15 minutes for security.
             </p>
             <div style="margin-bottom:1rem">
                 <input type="password" id="lwUnlockPin" inputmode="numeric" maxlength="6"
@@ -2768,7 +2768,7 @@
             </div>
             <div id="lwUnlockError" style="display:none;color:var(--red);font-size:0.8rem;margin-bottom:0.8rem;text-align:center"></div>
             <button id="lwUnlockBtn" onclick="_lwUnlockSubmit()" class="btn-primary">
-                Unlock & Continue
+                Sign &amp; Continue
             </button>
             <button class="btn-secondary" onclick="_lwUnlockCancel()" style="margin-top:0.5rem">Cancel</button>
         </div>
@@ -4481,6 +4481,17 @@
 
     // ── Modal ────────────────────────────────────────────────
     function openModal(id) {
+        // The bottom nav (z-index 1200) stays tappable above any open modal
+        // (z-index 200), so a second modal can be triggered while one is open.
+        // All modal overlays share z-index 200, so stacking falls back to DOM
+        // order — e.g. opening sendModal while gcashModal is open leaves the
+        // send sheet invisible behind it ("dead button"). Close any other open
+        // modal first. lwUnlockModal is exempt: it is the PIN prompt stacked
+        // deliberately on top of the triggering modal (z-index 100000), and
+        // closing it here would strand the awaiting sign flow.
+        document.querySelectorAll('.modal-overlay.open').forEach(el => {
+            if (el.id !== id && el.id !== 'lwUnlockModal') el.classList.remove('open');
+        });
         document.getElementById(id).classList.add('open');
         document.body.style.overflow = 'hidden';
         // Hide the floating GoodMarket Agent launcher while a modal is open —
@@ -7991,7 +8002,7 @@
                 if (errEl) { errEl.textContent = 'PIN must be exactly 6 digits.'; errEl.style.display = 'block'; }
                 return;
             }
-            if (unlockBtn) { unlockBtn.disabled = true; unlockBtn.textContent = 'Unlocking…'; }
+            if (unlockBtn) { unlockBtn.disabled = true; unlockBtn.textContent = 'Signing…'; }
             try {
                 const saved = GMLocalWallet.getLocalKeystore();
                 if (!saved || !saved.keystore) throw new Error('No saved wallet found on this device. Please log in again.');
@@ -8008,7 +8019,7 @@
                     errEl.style.display = 'block';
                 }
             } finally {
-                if (unlockBtn) { unlockBtn.disabled = false; unlockBtn.textContent = 'Unlock & Continue'; }
+                if (unlockBtn) { unlockBtn.disabled = false; unlockBtn.textContent = 'Sign & Continue'; }
                 if (pinInput) pinInput.value = '';
             }
         };
