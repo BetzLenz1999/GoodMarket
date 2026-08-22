@@ -1775,7 +1775,16 @@
             background: linear-gradient(135deg, var(--gold), var(--gold-deep));
             border: 1px solid rgba(255,255,255,0.2);
             box-shadow: 0 8px 26px rgba(var(--gold-rgb),0.34);
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: transform 0.2s ease, box-shadow 0.25s ease;
         }
+        .ubi-hero-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 30px rgba(var(--gold-rgb),0.45);
+        }
+        .ubi-hero-cta:active { transform: scale(0.97); }
         .ubi-hero-timer {
             margin-top: 0.6rem;
             font-size: 0.74rem;
@@ -2556,7 +2565,9 @@
             <div class="ubi-hero-sub" id="heroClaimSub">Loading…</div>
             <div class="ubi-hero-timer" id="heroClaimTimer"></div>
         </div>
-        <div class="ubi-hero-cta" id="heroClaimCta">Claim UBI G$</div>
+        <div class="ubi-hero-cta" id="heroClaimCta" role="button" tabindex="0"
+             onclick="openModal('claimModal');"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('claimModal');}">Claim UBI G$</div>
     </div>
     </section>
 
