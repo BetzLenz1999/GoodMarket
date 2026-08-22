@@ -101,6 +101,9 @@ Users cash out G$ → PHP via GCash. 100 G$ = ₱1.00, minimum 5,000 G$ (₱50),
   - **SQL migration MUST be re-run:** `sql/gcash_cashout.sql` relaxes `amount_gd` CHECK from `>= 5000` to `> 0` (auto-refund rows record the actual received amount, which can be below the minimum; the 5,000 min is still app-enforced for new cashouts).
 - Tests: `tests/test_gcash_cashout_content.py`.
 
+## First-time username setup after wallet creation (2026-08)
+First-time local-wallet creators (`_lwCreateAccount` → `finishLocalWalletSignup` in `templates/homepage.html`) now land on a username-setup step (`#lwUsernameStep`) BEFORE redirecting to `/wallet`: `_lwCompleteLogin(data, isNewAccount)` takes a second arg — only the create flow passes `true`; the unlock path (`_lwUnlockAccount`) omits it and redirects straight through. The step posts to the existing `POST /api/user/username` (`@auth_required` — session already exists post-login), validates `^[A-Za-z0-9_]{3,24}$` client-side (same rule as the backend), caches `sessionStorage['username']`, then redirects. The wallet page picks the username up automatically via `loadPortfolioCardholder()` → `GET /api/user/username`. `showLocalWalletPanel`/`_lwRenderPhraseStep` must hide `lwUsernameStep` when resetting steps. Tests: `tests/test_local_wallet_username_setup_content.py` (no deps).
+
 ## Local wallet unlock fix (2026-08)
 The unlock modal (`_lwOpenUnlockModal` in `static/js/local-wallet.js`) used to show a blanket "Unlock failed." for every error — a correct PIN could still fail when the cached keystore belonged to a different wallet (address mismatch) or when the device had no local copy (server keystore only). Fixed:
 - **Specific error messages:** `describeUnlockError()` maps the decrypt error ("Incorrect PIN or corrupted wallet backup.") to "Wrong PIN.", surfaces "No wallet found on this device…" and "Cached wallet belongs to a different address…" instead of the misleading blanket text.
@@ -132,6 +135,12 @@ The daily voucher (`/api/voucher/claim` in routes.py, banner in `templates/walle
 - **Spinner gotcha:** `.spinner` is orange by default (light surfaces); `.btn-primary .spinner` overrides to white for the orange buttons.
 - **JS status colors:** `setStatus(..., color)` calls now pass light-readable colors (`#d97706` warnings, `#7c3aed` info, `#15803d` success).
 - Verified by rendering the template with jinja2 (stub `url_for`) + browser screenshots of page + every modal. All 149 wallet content tests pass; the 6 `test_ubi_reminder_content.py` failures are pre-existing on main (need `requests`).
+
+## Local-wallet UX copy — "Log in" / "Sign this transaction" (2026-08, PR #200)
+User-facing copy avoids the word "Unlock": the homepage Get Started toggle says **"Log in with email + PIN"** (submit: "Log in to my account"), and every local-wallet PIN prompt says **"Sign this transaction" / "Sign & Continue" / "Signing…"** — the prompt almost always precedes a tx signature, and "unlock" read like a re-login. `window._lwOpenUnlockModal(opts)` in `static/js/local-wallet.js` accepts optional copy overrides (`{title, subtitle, submitLabel, busyLabel}`) for future message-signing (non-tx) prompts; defaults are tx-signing. `templates/wallet.html` has its own richer modal with the same copy. Internal identifiers (`setLocalWalletMode('unlock')`, `isUnlock`, `lwUnlockModal` ids, `unlockWithKeystore`) intentionally kept — code-only.
+
+## Wallet page — modal stacking / hidden-modal dead buttons (2026-08)
+All `.modal-overlay` modals in `templates/wallet.html` share `z-index: 200`, and the bottom nav (`.wallet-bottom-nav`) is `z-index: 1200` — so the nav stays tappable while a modal is open, and a second modal triggered from it (via `bnGo` → `openModal`) stacks by DOM order. If the new modal is EARLIER in the DOM than the open one (e.g. `sendModal` vs `gcashModal`), it opens invisibly behind it — dead button, zero feedback. Fix: `openModal(id)` closes any other open `.modal-overlay` first, EXCEPT `lwUnlockModal` (the PIN prompt, z-index 100000, stacked deliberately over the triggering modal — closing it would strand the awaiting sign flow). New modals opened on top of an existing flow must bypass `openModal` (direct `classList.add('open')`), like `lwUnlockModal`/`savingsPopupModal` do. Tests: `tests/test_wallet_modal_stacking_content.py` (no deps).
 
 ## Testing
 - `tests/test_revert_data_handling.py` — content/behavior tests locking in the fix. Run with `python -m pytest tests/test_revert_data_handling.py`.
