@@ -18,7 +18,7 @@
     if (window.GoodMarketAI && typeof window.GoodMarketAI.handleConfirmedAction === 'function') {
       return window.GoodMarketAI.handleConfirmedAction(action);
     }
-    if (action.action_type === 'send_gd' || action.action_type === 'stream_gd') {
+    if (action.action_type === 'send_gd' || action.action_type === 'stream_gd' || action.action_type === 'gcash_cashout') {
       const target = new URL('/wallet', window.location.origin);
       if (actionId) target.searchParams.set('ai_action', actionId);
       window.location.href = target.toString();
@@ -44,6 +44,8 @@
       ['Amount', payload.flow_rate_per_day ? (payload.flow_rate_per_day + ' G$/day') : (payload.amount || payload.fiat_amount)],
       ['Token', payload.token || payload.from_token],
       ['To', payload.recipient_username ? ('@' + payload.recipient_username + ' (' + payload.recipient + ')') : (payload.recipient || payload.to_token || payload.phone)],
+      ['GCash #', payload.gcash_number],
+      ['GCash Name', payload.gcash_name],
       ['Signing', action.login_method === 'local' ? 'In-app GoodMarket wallet (PIN unlock)' : null],
       ['Status', action.status]
     ].filter(function (row) { return row[1]; });
@@ -124,11 +126,6 @@
 
     toggle.addEventListener('click', function () { setOpen(true); });
     close.addEventListener('click', function () { setOpen(false); });
-    messages.addEventListener('click', function (event) {
-      const button = event.target.closest('[data-gm-ai-command]');
-      if (!button) return;
-      sendAgentMessage(button.getAttribute('data-gm-ai-command') || button.textContent);
-    });
     form.addEventListener('submit', function (event) {
       event.preventDefault();
       sendAgentMessage(input.value);
