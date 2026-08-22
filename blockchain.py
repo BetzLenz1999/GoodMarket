@@ -1,3 +1,4 @@
+
 from env_utils import get_env_float, get_env_int
 import requests
 from datetime import datetime, timedelta, timezone
@@ -254,6 +255,36 @@ def _topic_for_address(wallet: str) -> str:
     return "0x" + ("0" * 24) + wallet.lower().replace("0x", "")
 
 
+def _format_unix_time(timestamp: int) -> str:
+    """Format a Unix timestamp as '<relative> | <exact UTC>' (cached per block)."""
+    block_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    now = datetime.now(timezone.utc)
+    diff = now - block_time
+
+    if diff.days > 0:
+        relative = f"{diff.days}d ago"
+    elif diff.seconds > 3600:
+        relative = f"{diff.seconds // 3600}h ago"
+    else:
+        relative = f"{diff.seconds // 60}m ago"
+
+    exact_time = block_time.strftime("%b %d %Y %H:%M:%S %p (+00:00 UTC)")
+    return f"{relative} | {exact_time}"
+
+
+def _cache_block_timestamp(block_number: int, formatted: str) -> None:
+    import time as _time
+    with _block_ts_cache_lock:
+        _block_ts_cache[block_number] = {
+            "formatted": formatted,
+            "expires_at": _time.time() + BLOCK_TS_CACHE_TTL
+        }
+        # Keep cache size bounded
+        if len(_block_ts_cache) > 2000:
+            oldest = min(_block_ts_cache, key=lambda k: _block_ts_cache[k]["expires_at"])
+            del _block_ts_cache[oldest]
+
+
 def _format_timestamp(block_number: int) -> str:
     import time as _time
     # Block timestamps are immutable — check cache first to avoid redundant RPC calls
@@ -274,38 +305,66 @@ def _format_timestamp(block_number: int) -> str:
         result = response.json()
 
         if "result" in result and result["result"]:
-            timestamp = int(result["result"]["timestamp"], 16)
-            block_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            now = datetime.now(timezone.utc)
-            diff = now - block_time
-
-            if diff.days > 0:
-                relative = f"{diff.days}d ago"
-            elif diff.seconds > 3600:
-                hours = diff.seconds // 3600
-                relative = f"{hours}h ago"
-            else:
-                minutes = diff.seconds // 60
-                relative = f"{minutes}m ago"
-
-            exact_time = block_time.strftime("%b %d %Y %H:%M:%S %p (+00:00 UTC)")
-            formatted = f"{relative} | {exact_time}"
-
-            with _block_ts_cache_lock:
-                _block_ts_cache[block_number] = {
-                    "formatted": formatted,
-                    "expires_at": _time.time() + BLOCK_TS_CACHE_TTL
-                }
-                # Keep cache size bounded
-                if len(_block_ts_cache) > 2000:
-                    oldest = min(_block_ts_cache, key=lambda k: _block_ts_cache[k]["expires_at"])
-                    del _block_ts_cache[oldest]
-
+            formatted = _format_unix_time(int(result["result"]["timestamp"], 16))
+            _cache_block_timestamp(block_number, formatted)
             return formatted
     except Exception as e:
         logger.error(f"Error formatting timestamp for block {block_number}: {e}")
 
     return f"Block #{block_number}"
+
+
+def _format_timestamps_batch(block_numbers: list) -> dict:
+    """Batch-fetch block timestamps in a few JSON-RPC batch calls.
+
+    The wallet tx history used to call _format_timestamp per log — hundreds of
+    sequential eth_getBlockByNumber round-trips that pushed the endpoint past
+    the 120s gunicorn timeout (users stared at "Loading transactions..."
+    forever). Returns {block_number: formatted}; blocks that fail are simply
+    absent so callers can fall back to an approximate time.
+    """
+    import time as _time
+    out: dict = {}
+    missing: list = []
+    with _block_ts_cache_lock:
+        for b in block_numbers:
+            entry = _block_ts_cache.get(b)
+            if entry and entry["expires_at"] > _time.time():
+                out[b] = entry["formatted"]
+            else:
+                missing.append(b)
+    if not missing:
+        return out
+
+    session = _get_rpc_session()
+    for rpc_url in _celo_rpc_urls():
+        try:
+            for start in range(0, len(missing), 50):
+                chunk = missing[start:start + 50]
+                id_to_block = {i: b for i, b in enumerate(chunk)}
+                payload = [
+                    {"jsonrpc": "2.0", "method": "eth_getBlockByNumber",
+                     "params": [hex(b), False], "id": i}
+                    for i, b in enumerate(chunk)
+                ]
+                resp = session.post(rpc_url, json=payload, timeout=20)
+                results = resp.json()
+                if isinstance(results, dict):
+                    results = [results]
+                for item in results:
+                    if not isinstance(item, dict) or "result" not in item or not item["result"]:
+                        continue
+                    blk = id_to_block.get(item.get("id"))
+                    if blk is None:
+                        continue
+                    formatted = _format_unix_time(int(item["result"]["timestamp"], 16))
+                    _cache_block_timestamp(blk, formatted)
+                    out[blk] = formatted
+            break
+        except Exception as exc:
+            logger.warning(f"_format_timestamps_batch via {rpc_url} failed: {exc}")
+            out = {b: f for b, f in out.items() if b not in missing}
+    return out
 
 
 def _get_latest_block_number() -> int:
@@ -576,18 +635,42 @@ def has_recent_ubi_claim(wallet_address: str) -> dict:
         # Routed through _get_logs_full: the 7-day window far exceeds forno's
         # 5000-block eth_getLogs cap, so a single-shot query always errored and
         # the error path silently read as "no recent claim".
+        # All scans run concurrently — four serial full-window scans could take
+        # ~30-60s and stall the login flow.
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        _scan_specs = {
+            "__transfer__": {
+                "address": gooddollar_token,
+                "topics": [
+                    UBI_EVENT_SIGNATURES["TRANSFER"],
+                    _topic_for_address(ubi_proxy_address),
+                    _topic_for_address(wallet_address)
+                ],
+            },
+        }
+        for _ev_name, _ev_sig in UBI_EVENT_SIGNATURES.items():
+            if _ev_name == "TRANSFER":
+                continue
+            _topics = [_ev_sig]
+            if _ev_name in ["UBI_CLAIMED", "CLAIM", "REWARD_CLAIMED", "UBI_DISTRIBUTED", "DAILY_UBI"]:
+                _topics.append(_topic_for_address(wallet_address))
+            else:
+                _topics.append(None)
+            _scan_specs[_ev_name] = {"address": ubi_proxy_address, "topics": _topics}
+
+        def _run_ubi_scan(params):
+            try:
+                return _get_logs_full(params, int(from_block, 16), int(to_block, 16))
+            except Exception as scan_err:
+                logger.error(f"UBI scan failed: {scan_err}")
+                return []
+
+        with _TPE(max_workers=4) as _pool:
+            _scan_results = dict(zip(_scan_specs.keys(),
+                                     _pool.map(_run_ubi_scan, _scan_specs.values())))
+
         try:
-            logs = _get_logs_full(
-                {
-                    "address": gooddollar_token,
-                    "topics": [
-                        UBI_EVENT_SIGNATURES["TRANSFER"],
-                        _topic_for_address(ubi_proxy_address),
-                        _topic_for_address(wallet_address)
-                    ],
-                },
-                int(from_block, 16), int(to_block, 16),
-            )
+            logs = _scan_results["__transfer__"]
             for log_entry in logs:
                 block_num = int(log_entry.get("blockNumber", "0x0"), 16)
                 tx_hash = log_entry.get("transactionHash", "Unknown")
@@ -616,21 +699,8 @@ def has_recent_ubi_claim(wallet_address: str) -> dict:
             if event_name == "TRANSFER":
                 continue
 
-            topics = [event_signature]
-
-            if event_name in ["UBI_CLAIMED", "CLAIM", "REWARD_CLAIMED", "UBI_DISTRIBUTED", "DAILY_UBI"]:
-                topics.append(_topic_for_address(wallet_address))
-            else:
-                topics.append(None)
-
             try:
-                logs = _get_logs_full(
-                    {
-                        "address": ubi_proxy_address,
-                        "topics": topics,
-                    },
-                    int(from_block, 16), int(to_block, 16),
-                )
+                logs = _scan_results.get(event_name, [])
 
                 if event_name not in ["UBI_CLAIMED", "CLAIM", "REWARD_CLAIMED", "UBI_DISTRIBUTED", "DAILY_UBI"]:
                     wallet_topic = _topic_for_address(wallet_address)
@@ -1447,54 +1517,78 @@ def get_comprehensive_tx_history(wallet_address: str, limit: int = 50, force: bo
     wallet_lower = wallet_address.lower()
 
     now_ts = _time.time()
-    raw_transfers = []
 
-    for token in TOKENS:
-        # Fetch sent events (wallet is the `from`)
-        sent_params = {
-            "address": token["address"],
-            "topics": [TRANSFER_SIG, wallet_topic, None],
-        }
-        # Fetch received events (wallet is the `to`)
-        recv_params = {
-            "address": token["address"],
-            "topics": [TRANSFER_SIG, None, wallet_topic],
-        }
+    # One eth_getLogs filter can match an ARRAY of token addresses — combining
+    # the 4 tokens into a single query per direction cuts the chunk queries
+    # from 8x to 2x. Eight parallel per-token scans used to fire ~500 getLogs
+    # calls at forno, which throttled batches to 130+ seconds each.
+    addr_to_token = {t["address"].lower(): t for t in TOKENS}
 
-        for params in [sent_params, recv_params]:
+    def _scan_token_transfers(wallet_pos: int) -> list:
+        # wallet_pos 1 = wallet is sender, 2 = wallet is receiver
+        topics = [TRANSFER_SIG, None, None]
+        topics[wallet_pos] = wallet_topic
+        params = {"address": [t["address"] for t in TOKENS], "topics": topics}
+        found = []
+        try:
             logs = _get_logs_full(params, from_block_int, to_block_int)
-            for log_entry in logs:
-                tlist = log_entry.get("topics", [])
-                if len(tlist) < 3:
-                    continue
-                from_addr = "0x" + tlist[1][-40:]
-                to_addr   = "0x" + tlist[2][-40:]
-                block_num = int(log_entry.get("blockNumber", "0x0"), 16)
-                tx_hash   = log_entry.get("transactionHash", "")
-                try:
-                    amount = int(log_entry.get("data", "0x0"), 16) / (10 ** token["decimals"])
-                except Exception:
-                    amount = 0
+        except Exception as scan_err:
+            logger.error(f"[tx-history] token scan failed: {scan_err}")
+            return found
+        for log_entry in logs:
+            token = addr_to_token.get((log_entry.get("address") or "").lower())
+            if not token:
+                continue
+            tlist = log_entry.get("topics", [])
+            if len(tlist) < 3:
+                continue
+            from_addr = "0x" + tlist[1][-40:]
+            to_addr   = "0x" + tlist[2][-40:]
+            block_num = int(log_entry.get("blockNumber", "0x0"), 16)
+            tx_hash   = log_entry.get("transactionHash", "")
+            try:
+                amount = int(log_entry.get("data", "0x0"), 16) / (10 ** token["decimals"])
+            except Exception:
+                amount = 0
 
-                direction = "sent" if from_addr.lower() == wallet_lower else "received"
-                # Format nicely: 2 decimals for cUSD/USDT, 4 for G$
-                decimals_display = 2 if token["symbol"] in ("cUSD", "USDT", "USDC") else 4
-                # Approximate Unix timestamp from block number (Celo ~5 sec/block)
-                approx_ts = now_ts - (to_block_int - block_num) * 5
-                raw_transfers.append({
-                    "network":          "celo",
-                    "token":            token["symbol"],
-                    "direction":        direction,
-                    "from":             from_addr,
-                    "to":               to_addr,
-                    "amount":           float(amount),
-                    "amount_formatted": f"{amount:.{decimals_display}f} {token['symbol']}",
-                    "block":            block_num,
-                    "tx_hash":          tx_hash,
-                    "timestamp":        _format_timestamp(block_num),
-                    "explorer_url":     f"https://celoscan.io/tx/{tx_hash}",
-                    "_sort_ts":         approx_ts,
-                })
+            direction = "sent" if from_addr.lower() == wallet_lower else "received"
+            # Format nicely: 2 decimals for cUSD/USDT, 4 for G$
+            decimals_display = 2 if token["symbol"] in ("cUSD", "USDT", "USDC") else 4
+            # Approximate Unix timestamp from block number (Celo ~5 sec/block)
+            approx_ts = now_ts - (to_block_int - block_num) * 5
+            found.append({
+                "network":          "celo",
+                "token":            token["symbol"],
+                "direction":        direction,
+                "from":             from_addr,
+                "to":               to_addr,
+                "amount":           float(amount),
+                "amount_formatted": f"{amount:.{decimals_display}f} {token['symbol']}",
+                "block":            block_num,
+                "tx_hash":          tx_hash,
+                # Filled in later via one batched timestamp fetch — a per-log
+                # _format_timestamp RPC call here was the main reason this
+                # endpoint blew past the 120s gunicorn timeout.
+                "timestamp":        None,
+                "explorer_url":     f"https://celoscan.io/tx/{tx_hash}",
+                "_sort_ts":         approx_ts,
+            })
+        return found
+
+    # The two direction scans and the XDC scan run concurrently — serially
+    # this was ~90s of RPC round-trips, enough to hit the 120s worker timeout
+    # and leave the frontend stuck on "Loading transactions...".
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        sent_future = pool.submit(_scan_token_transfers, 1)
+        recv_future = pool.submit(_scan_token_transfers, 2)
+        xdc_future  = pool.submit(get_xdc_gd_transfer_history, wallet_address, 50)
+        raw_transfers = sent_future.result() + recv_future.result()
+        try:
+            xdc_txs = xdc_future.result()
+        except Exception as xdc_err:
+            logger.warning(f"[tx-history] XDC G$ fetch failed (non-fatal): {xdc_err}")
+            xdc_txs = []
 
     # Deduplicate — same event can appear in both sent and received queries
     seen: set = set()
@@ -1510,6 +1604,12 @@ def get_comprehensive_tx_history(wallet_address: str, limit: int = 50, force: bo
     # Trim before expensive swap-detection batch call (Celo only)
     unique_transfers = unique_transfers[:min(limit * 3, 150)]
 
+    # Fill display timestamps with ONE batched eth_getBlockByNumber fetch
+    # (falls back to the approximate block-offset time for any block missing).
+    ts_map = _format_timestamps_batch([tx["block"] for tx in unique_transfers])
+    for tx in unique_transfers:
+        tx["timestamp"] = ts_map.get(tx["block"]) or _format_unix_time(int(tx["_sort_ts"]))
+
     # ── Batch-fetch tx details to detect Uniswap Router calls (swaps) ────────
     # Only Celo transactions need this check; XDC G$ txs are pre-classified.
     celo_hashes = list({tx["tx_hash"] for tx in unique_transfers
@@ -1522,19 +1622,24 @@ def get_comprehensive_tx_history(wallet_address: str, limit: int = 50, force: bo
              "params": [h], "id": idx}
             for idx, h in enumerate(celo_hashes)
         ]
-        try:
-            session = _get_rpc_session()
-            resp = session.post(CELO_RPC, json=batch_payload, timeout=25)
-            batch_results = resp.json()
-            if isinstance(batch_results, list):
+        session = _get_rpc_session()
+        for rpc_url in _celo_rpc_urls():
+            try:
+                resp = session.post(rpc_url, json=batch_payload, timeout=25)
+                batch_results = resp.json()
+                if not isinstance(batch_results, list):
+                    batch_results = [batch_results]
                 for item in batch_results:
+                    if not isinstance(item, dict):
+                        continue
                     tx_data = item.get("result") or {}
                     if (tx_data.get("to") or "").lower() == _UNISWAP_ROUTER_CELO:
                         h = (tx_data.get("hash") or "").lower()
                         if h:
                             swap_hashes.add(h)
-        except Exception as exc:
-            logger.warning(f"[tx-history] batch tx-hash fetch failed: {exc}")
+                break
+            except Exception as exc:
+                logger.warning(f"[tx-history] batch tx-hash fetch via {rpc_url} failed: {exc}")
     # ─────────────────────────────────────────────────────────────────────────
 
     # Classify each Celo transfer; XDC transfers already have tx_type set
@@ -1571,17 +1676,12 @@ def get_comprehensive_tx_history(wallet_address: str, limit: int = 50, force: bo
 
         celo_classified.append({**tx, "tx_type": tx_type, "label": label})
 
-    # ── Merge in XDC G$ transfer history ─────────────────────────────────────
-    try:
-        xdc_txs = get_xdc_gd_transfer_history(wallet_address, limit=50)
-        # _sort_ts is already set as approx Unix ts by get_xdc_gd_transfer_history;
-        # fall back to 0 only if missing (shouldn't happen)
-        for xtx in xdc_txs:
-            if "_sort_ts" not in xtx:
-                xtx["_sort_ts"] = 0.0
-        celo_classified.extend(xdc_txs)
-    except Exception as xdc_err:
-        logger.warning(f"[tx-history] XDC G$ fetch failed (non-fatal): {xdc_err}")
+    # ── Merge in XDC G$ transfer history (fetched concurrently with the Celo
+    # scans in the thread pool above) ─────────────────────────────────────────
+    for xtx in xdc_txs:
+        if "_sort_ts" not in xtx:
+            xtx["_sort_ts"] = 0.0
+    celo_classified.extend(xdc_txs)
     # ─────────────────────────────────────────────────────────────────────────
 
     # Re-sort after merging and strip internal sort key
