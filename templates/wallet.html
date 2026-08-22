@@ -3142,6 +3142,8 @@
     <!-- Shared WalletConnect bridge (claim / send / FV signing fallback for WC users). -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+    <!-- Host hub for the in-app dApp browser (see static/js/dapp-browser-bridge.js). -->
+    <script src="{{ url_for('static', filename='js/dapp-browser-host.js', v=ASSET_VERSION) }}"></script>
     <!--
         MiniPay gas top-up: detect users with CELO but no stablecoin and
         auto-prompt a CELO -> cUSD swap before tx-bound actions (claim, etc.)
