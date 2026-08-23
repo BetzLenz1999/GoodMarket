@@ -284,7 +284,15 @@
         }
 
         const GD_ABI  = ["function balanceOf(address) view returns (uint256)", "function transferAndCall(address,uint256,bytes) returns (bool)"];
-        const OTP_ABI = ["function hasPayment(address) view returns (bool)", "function cancel(address) public"];
+        const OTP_ABI = ["function hasPayment(address) view returns (bool)", "function cancel(address) public",
+                         "function payments(address) view returns (bool hasPayment, uint256 paymentAmount, address paymentSender)"];
+
+        // OTP withdraw event: topics = [sig, sender, receiver, paymentId], data = amount.
+        // cancel() does NOT emit it, so a settled payment with no withdraw event
+        // between its deposit block and the chain head was refunded, not claimed.
+        const OTP_WITHDRAW_TOPIC = "0x39ca68a9f5d8038e871ef25a6622a56579cda4a6eedf63813574d23652e94048";
+        const GETLOGS_CHUNK = 4000;            // forno.celo.org rejects eth_getLogs ranges > ~5000 blocks
+        const SETTLE_SCAN_MAX_BLOCKS = 500000; // ~5.8 days at 1s blocks; older exits fall back to "claimed"
 
         // ── MiniPay CIP-64 helpers ──
         function _isMiniPay() {
@@ -924,6 +932,28 @@
             }
         }
 
+        // Scan for the OTP withdraw event of a settled payment, from its deposit
+        // block to the chain head. Returns "claimed" when the event exists,
+        // "cancelled" when the scan reaches the head without it (cancel() is the
+        // only other exit and emits no withdraw event), or null when the scan
+        // budget ran out on a very old payment (caller picks a fallback label).
+        async function _classifySettledPayment(provider, paymentId, fromBlock) {
+            const latest  = await provider.getBlockNumber();
+            const start   = Number.isInteger(fromBlock) ? fromBlock : Math.max(0, latest - SETTLE_SCAN_MAX_BLOCKS);
+            const stop    = Math.min(latest, start + SETTLE_SCAN_MAX_BLOCKS);
+            const idTopic = ethers.zeroPadValue(paymentId, 32);
+            for (let b = start; b <= stop; b += GETLOGS_CHUNK) {
+                const logs = await provider.getLogs({
+                    address: OTP_ADDRESS,
+                    topics: [OTP_WITHDRAW_TOPIC, null, null, idTopic],
+                    fromBlock: b,
+                    toBlock: Math.min(b + GETLOGS_CHUNK - 1, stop)
+                });
+                if (logs.length) return "claimed";
+            }
+            return stop >= latest ? "cancelled" : null;
+        }
+
         // ── History rendering ─────────────────────────────────────────────────
         async function renderHistory() {
             const list = await loadAllPayments();
@@ -939,22 +969,42 @@
             countEl.style.display = '';
             container.innerHTML  = list.map(p => buildItemHTML(p)).join('');
 
-            // Check on-chain status for active payments in background
+            // Check on-chain status for active payments in background.
+            // Reads the full payments() struct, NOT just hasPayment: forno's
+            // load-balanced nodes can lag behind the node that served the
+            // deposit receipt, and a lagging node answers hasPayment=false with
+            // a ZERO paymentSender — treating that as "claimed" used to flip
+            // fresh links to claimed seconds after sending (and hid the Refund
+            // button while the G$ was still claimable by the receiver).
             const provider = new ethers.JsonRpcProvider(CELO_RPC);
             const otp = new ethers.Contract(OTP_ADDRESS, OTP_ABI, provider);
             for (const p of list) {
-                if (p.status === "active") {
+                if (p.status !== "active") continue;
+                try {
+                    const info = await otp.payments(p.paymentId);
+                    if (info.hasPayment) continue;                                    // still claimable
+                    if (info.paymentSender.toLowerCase() === ethers.ZeroAddress) continue; // deposit not visible to this node yet — keep active
+
+                    let status = null;
                     try {
-                        const still = await otp.hasPayment(p.paymentId);
-                        if (!still) {
-                            lsUpdateStatus(p.paymentId, "claimed");
-                            apiUpdateStatus(p.paymentId, "claimed");
-                            p.status = "claimed";
-                            const el = document.getElementById(`pay-${p.paymentId}`);
-                            if (el) el.outerHTML = buildItemHTML(p);
+                        let fromBlock = null;
+                        if (p.txHash) {
+                            const depTx = await provider.getTransaction(p.txHash);
+                            if (depTx && depTx.blockNumber) fromBlock = depTx.blockNumber;
                         }
-                    } catch(e) { /* ignore */ }
-                }
+                        status = await _classifySettledPayment(provider, p.paymentId, fromBlock);
+                    } catch(_) { /* fall through to the default label */ }
+                    // Undetermined (scan budget exhausted or RPC hiccup): a
+                    // receiver claim is by far the common exit, and cancels made
+                    // from any device already persist "cancelled" themselves.
+                    status = status || "claimed";
+
+                    lsUpdateStatus(p.paymentId, status);
+                    apiUpdateStatus(p.paymentId, status);
+                    p.status = status;
+                    const el = document.getElementById(`pay-${p.paymentId}`);
+                    if (el) el.outerHTML = buildItemHTML(p);
+                } catch(e) { /* ignore */ }
             }
         }
 
