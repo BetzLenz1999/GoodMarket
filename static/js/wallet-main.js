@@ -4759,8 +4759,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const errEl = document.getElementById('lwUnlockError');
             const unlockBtn = document.getElementById('lwUnlockBtn');
             const pin = pinInput ? pinInput.value.trim() : '';
-            if (!/^\d{6}$/.test(pin)) {
-                if (errEl) { errEl.textContent = 'PIN must be exactly 6 digits.'; errEl.style.display = 'block'; }
+            // 6 or 8 digits: legacy wallets were created with 6-digit PINs.
+            if (!/^(?:\d{6}|\d{8})$/.test(pin)) {
+                if (errEl) { errEl.textContent = 'PIN must be 6 or 8 digits.'; errEl.style.display = 'block'; }
                 return;
             }
             if (unlockBtn) { unlockBtn.disabled = true; unlockBtn.textContent = 'Signing…'; }
