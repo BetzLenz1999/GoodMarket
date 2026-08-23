@@ -5156,6 +5156,40 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
     }
 
+    // ── In-app dApp browser entry point ─────────────────────
+    // Works only inside the Capacitor shell (mobile/): the native
+    // DappBrowserPlugin launches a second WebView with the GoodMarket
+    // EIP-1193 bridge injected (see static/js/dapp-browser-bridge.js).
+    // A regular browser has no native WebView layer to inject into, so we
+    // show a friendly notice instead of a dead button.
+    function _dappBrowserPlugin() {
+        try {
+            return (window.Capacitor &&
+                    window.Capacitor.Plugins &&
+                    window.Capacitor.Plugins.DappBrowser) || null;
+        } catch (_) { return null; }
+    }
+
+    function openDappBrowser(url) {
+        // The bridge signs with the GoodMarket in-app wallet only.
+        if ((LOGIN_METHOD || '').toLowerCase() !== 'local') {
+            window.alert('🌐 The DApp Browser uses your GoodMarket in-app wallet. ' +
+                'Please log in with your email + PIN account to use it.');
+            return;
+        }
+        const plugin = _dappBrowserPlugin();
+        if (!plugin) {
+            window.alert('🌐 DApp Browser is available in the GoodMarket app.\n\n' +
+                'It opens dApps (like claim.superfluid.org) in a secure in-app browser ' +
+                'connected to your GoodMarket wallet. Install the GoodMarket app to use it.');
+            return;
+        }
+        const opts = {};
+        if (url) opts.url = url;
+        plugin.open(opts);
+    }
+    window.openDappBrowser = openDappBrowser;
+
     // ── Init ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
         const reminderBanner = document.getElementById('walletReminderBanner');
