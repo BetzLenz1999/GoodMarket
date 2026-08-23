@@ -63,10 +63,55 @@
         }
     }
 
+    // Unlock accepts 6 OR 8 digits: legacy wallets were created with 6-digit
+    // PINs and must keep unlocking forever — the digit rule is client-side
+    // only, ethers decrypts with whatever string it is given.
     function _normalizePin(pin) {
         pin = String(pin == null ? '' : pin).trim();
-        if (!/^\d{6}$/.test(pin)) {
-            throw new Error('PIN must be exactly 6 digits.');
+        if (!/^(?:\d{6}|\d{8})$/.test(pin)) {
+            throw new Error('PIN must be 6 or 8 digits.');
+        }
+        return pin;
+    }
+
+    // New wallets require 8 digits and reject the trivially brute-forced
+    // choices — scrypt slows offline guesses down but can't save "12345678".
+    var _WEAK_PINS = ['11223344', '11112222', '00001111', '12344321'];
+
+    function _isWeakPin(pin) {
+        if (!/^\d+$/.test(pin)) return false; // incomplete input isn't "weak"
+        if (/^(\d)\1+$/.test(pin)) return true;                // 00000000, 44444444, …
+        if (pin.length >= 4 && pin.length % 2 === 0) {
+            var half = pin.length / 2;
+            if (pin.slice(0, half) === pin.slice(half)) return true;       // 12341234
+            if (pin.slice(0, 2) === pin.slice(2, 4) &&
+                pin.slice(0, 4) === pin.slice(4)) return true;             // 12121212, 34343434
+        }
+        var up = true, down = true;
+        for (var i = 1; i < pin.length; i++) {
+            var d = pin.charCodeAt(i) - pin.charCodeAt(i - 1);
+            if (d !== 1) up = false;
+            if (d !== -1) down = false;
+        }
+        if (up || down) return true;                           // 12345678 / 87654321
+        return _WEAK_PINS.indexOf(pin) !== -1;
+    }
+
+    // Live strength signal for the create form: 'empty' | 'typing' | 'weak' | 'strong'
+    function _pinStrength(pin) {
+        pin = String(pin == null ? '' : pin).trim();
+        if (!pin) return 'empty';
+        if (!/^\d{8}$/.test(pin)) return 'typing';
+        return _isWeakPin(pin) ? 'weak' : 'strong';
+    }
+
+    function _normalizeNewPin(pin) {
+        pin = _normalizePin(pin);
+        if (!/^\d{8}$/.test(pin)) {
+            throw new Error('Choose an 8-digit PIN for your new wallet.');
+        }
+        if (_isWeakPin(pin)) {
+            throw new Error('Weak PIN — avoid repeated or sequential digits (e.g. 44444444, 12345678). Pick 8 mixed digits that are easy for you to remember but hard to guess.');
         }
         return pin;
     }
@@ -121,11 +166,11 @@
     async function create(opts) {
         _assertEthers();
         var email = _normalizeEmail(opts && opts.email);
-        var pin = _normalizePin(opts && opts.pin);
+        var pin = _normalizeNewPin(opts && opts.pin);
 
         var wallet = ethers.Wallet.createRandom();
         // ethers V3 keystore uses scrypt — deliberately slow (~1-2s) so a
-        // stolen keystore is impractical to brute-force with a 6-digit PIN.
+        // stolen keystore is impractical to brute-force with an 8-digit PIN.
         var keystore = await wallet.encrypt(pin);
         var mnemonic = wallet.mnemonic && wallet.mnemonic.phrase;
         if (!mnemonic) throw new Error('Wallet generation failed (no mnemonic).');
@@ -310,8 +355,8 @@
             <div style="background:#1a1a2e;border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:1.5rem;max-width:320px;width:100%;text-align:center;">
                 <div style="font-size:1.5rem;margin-bottom:0.5rem">🔐</div>
                 <h3 id="lwModalTitle" style="margin:0 0 0.5rem;color:#fff;font-size:1.1rem">Sign this transaction</h3>
-                <p id="lwModalSubtitle" style="color:#aaa;font-size:0.8rem;margin-bottom:1rem">Enter your 6-digit PIN to confirm and sign</p>
-                <input type="password" id="lwModalPin" inputmode="numeric" maxlength="6" placeholder="••••••"
+                <p id="lwModalSubtitle" style="color:#aaa;font-size:0.8rem;margin-bottom:1rem">Enter your PIN to confirm and sign</p>
+                <input type="password" id="lwModalPin" inputmode="numeric" maxlength="8" placeholder="••••••••"
                     style="width:100%;padding:0.8rem;text-align:center;font-size:1.3rem;letter-spacing:0.4rem;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;outline:none;margin-bottom:0.8rem;">
                 <div id="lwModalError" style="display:none;color:#f87171;font-size:0.75rem;margin-bottom:0.8rem"></div>
                 <button id="lwModalSubmit" style="width:100%;padding:0.75rem;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem">Sign &amp; Continue</button>
@@ -340,7 +385,7 @@
 
         submitBtn.onclick = async function () {
             const pin = pinInput.value.trim();
-            if (!/^\d{6}$/.test(pin)) { showError('PIN must be exactly 6 digits.'); return; }
+            if (!/^(?:\d{6}|\d{8})$/.test(pin)) { showError('PIN must be 6 or 8 digits.'); return; }
             submitBtn.disabled = true;
             submitBtn.textContent = 'Signing…';
             try {
@@ -388,7 +433,7 @@
             var _s = _ov.querySelector('#lwModalSubtitle');
             var _b = _ov.querySelector('#lwModalSubmit');
             if (_t) _t.textContent = opts.title || 'Sign this transaction';
-            if (_s) _s.textContent = opts.subtitle || 'Enter your 6-digit PIN to confirm and sign';
+            if (_s) _s.textContent = opts.subtitle || 'Enter your PIN to confirm and sign';
             if (_b) _b.textContent = opts.submitLabel || 'Sign & Continue';
         }
         var _busyLabel = opts.busyLabel || 'Signing…';
@@ -475,7 +520,7 @@
 
             submitBtn.onclick = async function () {
                 var pin = pinInput.value.trim();
-                if (!/^\d{6}$/.test(pin)) { showError('PIN must be exactly 6 digits.'); return; }
+                if (!/^(?:\d{6}|\d{8})$/.test(pin)) { showError('PIN must be 6 or 8 digits.'); return; }
                 submitBtn.disabled = true;
                 submitBtn.textContent = _busyLabel;
                 try {
@@ -550,6 +595,8 @@
         canonicalizeKeystore: _canonicalizeKeystore,
         isUnlocked: function () { return !!_activeWallet; },
         normalizeEmail: _normalizeEmail,
-        normalizePin: _normalizePin
+        normalizePin: _normalizePin,
+        normalizeNewPin: _normalizeNewPin,
+        pinStrength: _pinStrength
     };
 })();
