@@ -2501,19 +2501,20 @@
 
                 <div id="lwCreateStep">
                     <p class="wc-panel-note" id="lwModeNote">
-                        Make a free GoodMarket account & wallet — secured by your email and a 6-digit PIN. No app install, no fees.
+                        Make a free GoodMarket account & wallet — secured by your email and an 8-digit PIN. No app install, no fees.
                     </p>
                     <div class="wallet-input-group">
                         <label class="wallet-label" for="lwEmail">Email <small style="opacity:0.7;font-weight:normal">(we store only a masked copy)</small></label>
                         <input id="lwEmail" class="wallet-input" type="email" autocomplete="email" placeholder="you@example.com">
                     </div>
                     <div class="wallet-input-group">
-                        <label class="wallet-label" for="lwPin">6-digit PIN</label>
-                        <input id="lwPin" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••••">
+                        <label class="wallet-label" for="lwPin" id="lwPinLabel">8-digit PIN</label>
+                        <input id="lwPin" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password" placeholder="••••••••" oninput="lwPinStrengthHint()">
+                        <div id="lwPinStrength" style="display:none;font-size:0.78rem;margin-top:0.35rem;font-weight:600"></div>
                     </div>
                     <div class="wallet-input-group" id="lwPinConfirmWrap">
                         <label class="wallet-label" for="lwPinConfirm">Confirm PIN</label>
-                        <input id="lwPinConfirm" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••••">
+                        <input id="lwPinConfirm" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password" placeholder="••••••••">
                     </div>
                     <div class="wallet-input-group" id="lwReferralWrap">
                         <label class="wallet-label" for="lwReferralCode">Referral code <span style="font-weight:500;color:#9ca3af">(optional)</span></label>
@@ -2940,9 +2941,14 @@
             const isUnlock = _lwMode === 'unlock';
             document.getElementById('lwPinConfirmWrap').style.display = isUnlock ? 'none' : 'block';
             document.getElementById('lwReferralWrap').style.display = isUnlock ? 'none' : 'block';
+            // Legacy accounts have 6-digit PINs; new accounts are 8 — the
+            // label reflects which rule applies to the active mode.
+            document.getElementById('lwPinLabel').textContent = isUnlock ? 'PIN (6 or 8 digits)' : '8-digit PIN';
+            const strengthEl = document.getElementById('lwPinStrength');
+            if (strengthEl) strengthEl.style.display = 'none';
             document.getElementById('lwModeNote').textContent = isUnlock
                 ? 'Enter the email and PIN for your GoodMarket account. Works on any device — we fetch your encrypted wallet and your PIN unlocks it here in the browser.'
-                : 'Make a free GoodMarket account & wallet — secured by your email and a 6-digit PIN. No app install, no fees.';
+                : 'Make a free GoodMarket account & wallet — secured by your email and an 8-digit PIN. No app install, no fees.';
             document.getElementById('lwSubmitBtn').textContent = isUnlock ? 'Log in to my account' : 'Create my free wallet';
             document.getElementById('lwToggleNote').innerHTML = isUnlock
                 ? 'New here? <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode(\'create\')">Create a free account</button>'
@@ -2954,6 +2960,28 @@
             if (!el) return;
             if (!message) { el.textContent = ''; el.className = 'status-message'; return; }
             showWalletStatus('localWalletStatus', message, type || 'info');
+        }
+
+        // Live weak/strong hint under the PIN field (create mode only — in
+        // unlock mode a 6-digit legacy PIN is valid and must not show "weak").
+        function lwPinStrengthHint() {
+            const el = document.getElementById('lwPinStrength');
+            if (!el) return;
+            if (_lwMode !== 'create') { el.style.display = 'none'; return; }
+            const pin = document.getElementById('lwPin').value.trim();
+            const strength = GMLocalWallet.pinStrength(pin);
+            if (strength === 'empty') { el.style.display = 'none'; return; }
+            el.style.display = 'block';
+            if (strength === 'typing') {
+                el.style.color = '#9ca3af';
+                el.textContent = pin.length + '/8 digits';
+            } else if (strength === 'weak') {
+                el.style.color = '#dc2626';
+                el.textContent = '🔴 Weak PIN — avoid repeated or sequential digits (e.g. 44444444, 12345678).';
+            } else {
+                el.style.color = '#16a34a';
+                el.textContent = '🟢 Strong PIN';
+            }
         }
 
         // sha256 of the normalized email — the login call sends this instead of
@@ -2973,14 +3001,17 @@
                 const email = document.getElementById('lwEmail').value;
                 const pin = document.getElementById('lwPin').value;
                 GMLocalWallet.normalizeEmail(email);
-                GMLocalWallet.normalizePin(pin);
 
                 btn.disabled = true;
                 if (_lwMode === 'create') {
+                    // New wallets: strict 8-digit + weak-PIN blocklist.
+                    GMLocalWallet.normalizeNewPin(pin);
                     const confirmPin = document.getElementById('lwPinConfirm').value;
                     if (pin !== confirmPin) throw new Error('PINs do not match.');
                     await _lwCreateAccount(email, pin, btn);
                 } else {
+                    // Unlock: lenient — legacy 6-digit PINs must still work.
+                    GMLocalWallet.normalizePin(pin);
                     await _lwUnlockAccount(email, pin, btn);
                 }
             } catch (err) {
@@ -3109,6 +3140,8 @@
             const confirmEl = document.getElementById('lwPinConfirm');
             if (pinEl) pinEl.value = '';
             if (confirmEl) confirmEl.value = '';
+            const strengthEl = document.getElementById('lwPinStrength');
+            if (strengthEl) strengthEl.style.display = 'none';
             _lwPendingSignup = null;
             try {
                 sessionStorage.setItem('wallet', data.wallet || '');
