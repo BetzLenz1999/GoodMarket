@@ -202,50 +202,12 @@
         .gm-loader-dots span:nth-child(2) { animation-delay: 0.16s; }
         .gm-loader-dots span:nth-child(3) { animation-delay: 0.32s; }
 
-        /* Admin-uploaded developer profiles replace the static welcome text
-           when the admin dashboard has at least one active profile. */
-        .gm-loader-profiles {
-            display: none;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 1.1rem;
-            margin-top: 0.25rem;
-        }
-
-        .gm-loader-profiles.is-visible {
-            display: flex;
-        }
-
-        .gm-loader-profile {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            max-width: 150px;
-        }
-
-        .gm-loader-profile img {
-            width: 76px;
-            height: 76px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 3px solid rgba(96, 165, 250, 0.75);
-            box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
-        }
-
-        .gm-loader-profile-name {
-            margin-top: 0.6rem;
-            font-weight: 800;
-            color: #dbeafe;
-            font-size: 0.95rem;
-            letter-spacing: 0.01em;
-        }
-
-        .gm-loader-profile-position {
-            margin-top: 0.25rem;
-            color: rgba(219, 234, 254, 0.72);
-            font-size: 0.78rem;
+        .gm-loader-credit {
+            margin-top: 0.7rem;
+            color: rgba(219, 234, 254, 0.55);
+            font-size: clamp(0.72rem, 2vw, 0.85rem);
             font-weight: 600;
-            line-height: 1.3;
+            letter-spacing: 0.01em;
         }
 
         @keyframes gmLoaderSpin {
@@ -1879,15 +1841,13 @@
     </script>
 </head>
 <body>
-    <!-- Entrance loading screen: hidden once the homepage is ready. When the
-         admin dashboard has developer profiles, they replace the static
-         welcome text (see the gmWelcomeLoader script below). -->
+    <!-- Entrance loading screen: hidden once the homepage is ready. -->
     <div id="gmWelcomeLoader" class="gm-welcome-loader" role="status" aria-live="polite" aria-label="GoodMarket loading">
         <div class="gm-loader-card">
             <div class="gm-loader-orb" aria-hidden="true"></div>
             <h1 class="gm-loader-title">Welcome to GoodMarket</h1>
-            <p class="gm-loader-subtitle">Developed by MOB Labs Team - Contributor: Betz, Omar &amp; Moh - Gooddollar Academy Author: Pablo</p>
-            <div id="gmLoaderProfiles" class="gm-loader-profiles"></div>
+            <p class="gm-loader-subtitle">Claim up to 100+ G$ daily by claiming UBI, taking quizzes and playing games.</p>
+            <p class="gm-loader-credit">Developed by MOB Labs Team &middot; Contributors: Betz, Omar &amp; Moh &middot; GoodDollar Academy Author: Pablo</p>
             <div class="gm-loader-dots" aria-hidden="true"><span></span><span></span><span></span></div>
         </div>
     </div>
@@ -4790,12 +4750,6 @@
     </style>
 
     <div id="musicPlayer" style="position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999; display:none; flex-direction:column; align-items:flex-end; gap:0.5rem;">
-        <div id="musicLabel" style="display:none; background:rgba(11,15,42,0.92); border:1px solid rgba(124,58,237,0.35); border-radius:10px; padding:0.4rem 0.75rem; font-size:0.75rem; color:#a78bfa; white-space:nowrap; backdrop-filter:blur(10px);">
-            🎵 Background Music
-        </div>
-        <div id="musicHint" style="background:rgba(11,15,42,0.92); border:1px solid rgba(124,58,237,0.35); border-radius:10px; padding:0.4rem 0.75rem; font-size:0.72rem; color:rgba(167,139,250,0.8); white-space:nowrap; backdrop-filter:blur(10px);">
-            Tap to play music
-        </div>
         <button id="musicToggleBtn" onclick="toggleMusic()" title="Toggle Background Music" class="waiting"
             style="width:48px; height:48px; border-radius:50%; background:linear-gradient(135deg,#7c3aed,#5b21b6); border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.3rem; transition:transform 0.2s ease, box-shadow 0.2s ease;">
             🎵
@@ -4834,8 +4788,6 @@
         function startMusic() {
             if (musicStarted) return;
             var btn = document.getElementById('musicToggleBtn');
-            var label = document.getElementById('musicLabel');
-            var hint = document.getElementById('musicHint');
             var musicPlayer = document.getElementById('musicPlayer');
 
             if (ytPlayer && ytPlayer.mute) {
@@ -4848,8 +4800,6 @@
             btn.innerHTML = '🔇';
             btn.style.boxShadow = '0 4px 20px rgba(124,58,237,0.7)';
             musicPlayer.style.display = 'flex';
-            label.style.display = 'block';
-            hint.style.display = 'none';
 
             document.removeEventListener('scroll', startMusic);
             document.removeEventListener('click', onFirstInteraction);
@@ -5162,56 +5112,6 @@
         (function () {
             const loader = document.getElementById('gmWelcomeLoader');
             if (!loader) return;
-
-            // Show the developer profiles uploaded via the admin dashboard in
-            // place of the static welcome text. Falls back to the static
-            // content when no profile exists or the fetch fails.
-            function renderLoaderProfiles(profiles) {
-                const container = document.getElementById('gmLoaderProfiles');
-                if (!container || !profiles || !profiles.length) return;
-
-                profiles.forEach(function (profile) {
-                    if (!profile || !profile.image_url || !profile.name) return;
-
-                    const card = document.createElement('div');
-                    card.className = 'gm-loader-profile';
-
-                    const img = document.createElement('img');
-                    img.src = profile.image_url;
-                    img.alt = profile.name;
-                    img.loading = 'eager';
-                    card.appendChild(img);
-
-                    const name = document.createElement('div');
-                    name.className = 'gm-loader-profile-name';
-                    name.textContent = profile.name;
-                    card.appendChild(name);
-
-                    if (profile.position) {
-                        const position = document.createElement('div');
-                        position.className = 'gm-loader-profile-position';
-                        position.textContent = profile.position;
-                        card.appendChild(position);
-                    }
-
-                    container.appendChild(card);
-                });
-
-                if (!container.children.length) return;
-
-                const staticParts = loader.querySelectorAll('.gm-loader-orb, .gm-loader-title, .gm-loader-subtitle');
-                staticParts.forEach(function (el) { el.style.display = 'none'; });
-                container.classList.add('is-visible');
-            }
-
-            fetch('/api/developer-profile')
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    if (data && data.success && Array.isArray(data.profiles)) {
-                        renderLoaderProfiles(data.profiles);
-                    }
-                })
-                .catch(function () { /* static welcome text stays */ });
 
             const MIN_VISIBLE_MS = 12000;
             const MAX_VISIBLE_MS = 15000;
