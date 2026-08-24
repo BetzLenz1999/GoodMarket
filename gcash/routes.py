@@ -4,6 +4,7 @@ User submits a cashout request after sending G$ on-chain to GCASH_ADDRESS.
 Admin reviews in the dashboard and approves (sends GCash manually) or rejects
 (triggers auto-refund). Unreviewed requests auto-refund after 24 hours.
 """
+import html
 import logging
 import re
 from datetime import datetime, timezone
@@ -231,6 +232,20 @@ def admin_approve(request_id):
     if not updated:
         return jsonify({"success": False, "error": "Failed to update request."}), 500
 
+    # Tell the user (if they linked the Telegram bot) their cashout was paid.
+    try:
+        from telegram_notify import notify_user_by_wallet_async
+        php_amount = req["amount_gd"] / 100  # 100 G$ = ₱1.00 (app-wide rate)
+        notify_user_by_wallet_async(
+            req["wallet_address"],
+            "✅ <b>GCash Cashout Approved!</b>\n\n"
+            f"Your cashout of <b>{req['amount_gd']:,.2f} G$</b> (≈ ₱{php_amount:,.2f}) was approved and sent to your GCash account.\n"
+            f"📎 Ref #: <code>{reference_number}</code>\n\n"
+            "Thank you for using GoodMarket! 💛"
+        )
+    except Exception as e:  # noqa: BLE001 - notify is best-effort
+        logger.warning(f"⚠️ GCash approve notify failed for #{request_id}: {e}")
+
     logger.info(f"✅ GCash cashout #{request_id} approved by {admin_wallet[:8]}… ref={reference_number}")
     return jsonify({
         "success": True,
@@ -272,6 +287,19 @@ def admin_reject(request_id):
             "reviewed_by": admin_wallet.lower(),
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
         })
+        # Tell the user their cashout was rejected and the G$ came back.
+        try:
+            from telegram_notify import notify_user_by_wallet_async
+            reason_line = f"\n📝 Reason: {html.escape(note)}" if note else ""
+            notify_user_by_wallet_async(
+                req["wallet_address"],
+                "❌ <b>GCash Cashout Rejected</b>\n\n"
+                f"Your cashout of <b>{req['amount_gd']:,.2f} G$</b> was rejected.{reason_line}\n"
+                f"💰 Your G$ was refunded to your wallet.\n"
+                f"🔗 Refund tx: https://celoscan.io/tx/{refund_result['tx_hash']}"
+            )
+        except Exception as e:  # noqa: BLE001 - notify is best-effort
+            logger.warning(f"⚠️ GCash reject notify failed for #{request_id}: {e}")
         logger.info(f"❌ GCash cashout #{request_id} rejected + refunded: {refund_result['tx_hash'][:16]}…")
         return jsonify({
             "success": True,
