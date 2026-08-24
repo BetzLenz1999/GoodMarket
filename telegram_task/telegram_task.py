@@ -9,6 +9,18 @@ from referral_program.referral_service import current_origin_domain
 
 logger = logging.getLogger(__name__)
 
+
+def _wallet_filter(query, wallet_address: str):
+    """Case-insensitive wallet_address match.
+
+    Web sessions store checksummed addresses (Web3.to_checksum_address) while
+    the Telegram bot stores lowercase — a case-sensitive .eq() made rows
+    written from one surface invisible to the other. Addresses are hex-only,
+    so ilike without wildcards is a safe case-insensitive equality.
+    """
+    return query.ilike('wallet_address', wallet_address)
+
+
 # Preloaded custom messages (generated once at import time)
 _TELEGRAM_MESSAGES: List[str] = []
 
@@ -393,9 +405,11 @@ class TelegramTaskService:
 
             # Check for pending submission (waiting for approval)
             # Cooldown starts IMMEDIATELY after submission, not after approval
-            pending_check = self.supabase.table('telegram_task_log')\
-                .select('created_at, status')\
-                .eq('wallet_address', wallet_address)\
+            pending_check = _wallet_filter(
+                self.supabase.table('telegram_task_log')\
+                    .select('created_at, status'),
+                wallet_address,
+            )\
                 .eq('status', 'pending')\
                 .order('created_at', desc=True)\
                 .limit(1)\
@@ -422,9 +436,11 @@ class TelegramTaskService:
             # Check last COMPLETED or REJECTED claim within 72 hours
             # Only check claims from the last 72 hours
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.cooldown_hours)
-            last_claim = self.supabase.table('telegram_task_log')\
-                .select('created_at, status')\
-                .eq('wallet_address', wallet_address)\
+            last_claim = _wallet_filter(
+                self.supabase.table('telegram_task_log')\
+                    .select('created_at, status'),
+                wallet_address,
+            )\
                 .in_('status', ['completed', 'rejected'])\
                 .gte('created_at', cutoff_time.isoformat())\
                 .order('created_at', desc=True)\
@@ -526,7 +542,7 @@ class TelegramTaskService:
                         previous_wallet = previous_claim.get('wallet_address', 'Unknown')
                         previous_status = previous_claim.get('status', 'pending')
 
-                        if previous_wallet == wallet_address:
+                        if str(previous_wallet).lower() == wallet_address.lower():
                             if previous_status == 'pending':
                                 return {
                                     'success': False,
@@ -561,7 +577,11 @@ class TelegramTaskService:
                     # Transaction hash will be added when admin approves
                     current_reward = self.get_task_reward() # Fetch dynamic reward
                     self.supabase.table('telegram_task_log').insert({
-                        'wallet_address': wallet_address,
+                        # Store lowercase so rows written here, by the web app
+                        # (checksummed session wallet) and by the Telegram bot
+                        # (lowercase) are uniform going forward; reads match
+                        # case-insensitively via _wallet_filter.
+                        'wallet_address': wallet_address.lower(),
                         'telegram_url': telegram_url,
                         'reward_amount': current_reward,
                         'status': 'pending',
@@ -712,10 +732,11 @@ class TelegramTaskService:
                 }
 
             # Get total earned
-            claims = self.supabase.table('telegram_task_log')\
-                .select('reward_amount')\
-                .eq('wallet_address', wallet_address)\
-                .execute()
+            claims = _wallet_filter(
+                self.supabase.table('telegram_task_log')\
+                    .select('reward_amount'),
+                wallet_address,
+            ).execute()
 
             total_earned = sum(float(c.get('reward_amount', 0)) for c in claims.data or [])
             total_claims = len(claims.data or [])
@@ -753,9 +774,11 @@ class TelegramTaskService:
             logger.info(f"📋 Getting Telegram task history for {wallet_address[:8]}... (limit: {limit})")
 
             # Get transaction history
-            history = self.supabase.table('telegram_task_log')\
-                .select('*')\
-                .eq('wallet_address', wallet_address)\
+            history = _wallet_filter(
+                self.supabase.table('telegram_task_log')\
+                    .select('*'),
+                wallet_address,
+            )\
                 .order('created_at', desc=True)\
                 .limit(limit)\
                 .execute()
