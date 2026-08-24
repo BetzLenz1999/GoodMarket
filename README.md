@@ -1,3 +1,4 @@
+
 # GoodMarket / GoodDollar — Development Progress
 
 Repository-specific notes for OpenHands agents.
