@@ -217,7 +217,12 @@ def parse_and_plan(message: str, wallet: str | None, login_method: str | None) -
         )
 
     if intent["missing_fields"]:
-        reply = _gcash_missing_reply(intent) if intent["action"] == "gcash_cashout" else _missing_details_reply(intent)
+        if intent["action"] == "gcash_cashout":
+            reply = _gcash_missing_reply(intent)
+        elif intent["action"] == "swap":
+            reply = _swap_missing_reply(intent)
+        else:
+            reply = _missing_details_reply(intent)
         return AgentResult(
             status="needs_details",
             reply=reply,
@@ -285,6 +290,7 @@ def _parse_with_openai(message: str) -> dict[str, Any] | None:
         "'Mag-stream ng 5 G$ kada araw kay @user' = stream_gd with flow_rate_per_day). "
         "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, USDT, or CELO; any positive amount is allowed. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily/kada araw/bawat araw, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
         "For gcash_cashout (cash out G$ to a GCash account), extract the G$ amount, put an 11-digit Philippine mobile number (09xxxxxxxxx) in gcash_number, and the GCash-registered full name in gcash_name; the number and name may appear in any order and without labels. "
+        "For swap, set from_token to the token the user holds and to_token to the token they want, keeping the token symbols (G$, GD, CELO, cUSD, USDT); supported tokens are G$, CELO, cUSD, USDT. "
         "For lookup_transaction (read-only, no signature), set lookup_feature to one of learn_earn, reloadly, referral, twitter, trustpilot when the user names a feature, otherwise empty string. lookup_transaction is for questions about a transaction hash / tx id / 'where is my tx'. "
         "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, gcash_cashout, transaction_history, lookup_transaction, help, unknown.\n\n"
         f"User message: {message}"
@@ -367,13 +373,15 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
         return intent
     if any(word in lower for word in ["swap", "palit", "exchange"]):
         amount = _first_amount(message)
-        tokens = re.findall(r"(?<!\w)(g\$|gd|celo|cusd|usdt|xdc)(?!\w)", lower)
+        tokens = re.findall(r"(?<!\w)(g\$|gd|gooddollar|celo|cusd|usdt|usdc|xdc)(?!\w)", lower)
+        from_token = _normalise_swap_token(tokens[0]) if tokens else ""
+        to_token = _normalise_swap_token(tokens[1]) if len(tokens) > 1 else ""
         intent.update(
             action="swap",
             summary="Prepare a token swap preview.",
             amount=amount or "",
-            from_token=(tokens[0].upper() if tokens else ""),
-            to_token=(tokens[1].upper() if len(tokens) > 1 else ""),
+            from_token=from_token or "",
+            to_token=to_token or "",
             requires_confirmation=True,
             requires_signature=True,
             confidence=0.7,
@@ -465,6 +473,15 @@ def _supplement_intent_from_message(intent: dict[str, Any], message: str) -> Non
         amount = _mobile_load_amount(message, phone)
         if amount and not intent.get("fiat_amount"):
             intent["fiat_amount"] = amount
+    elif intent["action"] == "swap":
+        tokens = re.findall(r"(?<!\w)(g\$|gd|gooddollar|celo|cusd|usdt|usdc|xdc)(?!\w)", message.lower())
+        if tokens and not intent.get("from_token"):
+            intent["from_token"] = _normalise_swap_token(tokens[0]) or ""
+        if len(tokens) > 1 and not intent.get("to_token"):
+            intent["to_token"] = _normalise_swap_token(tokens[1]) or ""
+        amount = _first_amount(message)
+        if amount and not intent.get("amount"):
+            intent["amount"] = amount
     elif intent["action"] in {"send_gd", "stream_gd"}:
         address = _first_address(message)
         if address and not intent.get("recipient"):
@@ -550,12 +567,26 @@ def _apply_safety_policy(intent: dict[str, Any], wallet: str | None) -> None:
         intent["requires_confirmation"] = True
         intent["requires_signature"] = True
     elif action == "swap":
+        from_token = _normalise_swap_token(intent.get("from_token"))
+        to_token = _normalise_swap_token(intent.get("to_token"))
+        intent["from_token"] = from_token or ""
+        intent["to_token"] = to_token or ""
         if not _valid_decimal(intent["amount"]):
             intent["missing_fields"].append("amount")
-        if not intent["from_token"]:
+        if not from_token:
             intent["missing_fields"].append("from_token")
-        if not intent["to_token"]:
+        if not to_token:
             intent["missing_fields"].append("to_token")
+        if from_token and to_token:
+            if from_token == to_token:
+                intent["missing_fields"].append("different_tokens")
+            else:
+                route, direction = _resolve_swap_route(from_token, to_token)
+                if not route:
+                    intent["missing_fields"].append("supported_pair")
+                else:
+                    intent["swap_route"] = route
+                    intent["swap_direction"] = direction
         intent["requires_confirmation"] = True
         intent["requires_signature"] = True
     elif action == "claim":
@@ -618,6 +649,18 @@ def _empty_intent(action: str, summary: str) -> dict[str, Any]:
 def _missing_details_reply(intent: dict[str, Any]) -> str:
     fields = ", ".join(intent.get("missing_fields", []))
     return f"I can help with that, but I need: {fields}."
+
+
+def _swap_missing_reply(intent: dict[str, Any]) -> str:
+    missing = set(intent.get("missing_fields", []))
+    if "supported_pair" in missing:
+        return (
+            "I can only swap G$, CELO, cUSD, and USDT on Celo. "
+            "G$ and cUSD go through the GoodReserve; other pairs go through Uniswap V3."
+        )
+    if "different_tokens" in missing:
+        return "Please pick two different tokens to swap, e.g. 'swap 1000 G$ to cusd'."
+    return "Please tell me the amount and both tokens, e.g. 'swap 1000 G$ to cusd' or 'swap 50 cusd to celo'."
 
 
 def _gcash_missing_reply(intent: dict[str, Any]) -> str:
@@ -748,6 +791,32 @@ def _normalise_send_token(value: str | None) -> str | None:
     token = (value or "").strip().lower().replace(" ", "")
     aliases = {"g$": "G$", "gd": "G$", "gooddollar": "G$", "cusd": "cUSD", "celo-dollar": "cUSD", "usdt": "USDT", "tether": "USDT", "celo": "CELO"}
     return aliases.get(token)
+
+
+# Same token set the /swap page exposes: G$ <-> cUSD runs through the
+# GoodReserve (Mento) bonding curve; any other supported pair routes through
+# Uniswap V3 on Celo. XDC/USDC have no executable path on the swap page.
+_SWAP_TOKENS = ("GD", "cUSD", "CELO", "USDT")
+
+
+def _normalise_swap_token(value: str | None) -> str | None:
+    token = (value or "").strip().lower().replace(" ", "")
+    aliases = {
+        "g$": "GD", "gd": "GD", "gooddollar": "GD",
+        "cusd": "cUSD", "celo-dollar": "cUSD",
+        "celo": "CELO", "usdt": "USDT", "tether": "USDT",
+        "usdc": "USDC", "xdc": "XDC",
+    }
+    return aliases.get(token)
+
+
+def _resolve_swap_route(from_token: str, to_token: str) -> tuple[str | None, str]:
+    """Return (route, direction) — goodreserve direction: buy = cUSD -> G$."""
+    if {from_token, to_token} == {"GD", "cUSD"}:
+        return "goodreserve", "buy" if to_token == "GD" else "sell"
+    if from_token in _SWAP_TOKENS and to_token in _SWAP_TOKENS:
+        return "uniswap", ""
+    return None, ""
 
 def _send_token_candidate(text: str) -> str | None:
     match = re.search(r"(?<!\w)(g\$|gd|gooddollar|cusd|celo-dollar|usdt|tether|celo)(?!\w)", text, re.IGNORECASE)
