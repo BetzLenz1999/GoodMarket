@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from supabase_client import get_supabase_client
@@ -111,10 +112,17 @@ class TwitterTaskService:
         return wallet_address[:6] + "..." + wallet_address[-4:]
 
     def get_custom_message_for_user(self, wallet_address: str) -> str:
-        """Get custom message for the user - wallet-based rotation ensures unique messages with personal referral link"""
+        """Get custom message for the user - wallet-based rotation ensures unique messages with personal referral link.
+
+        Domain re-anchoring: the static pool text says 'goodmarket.live', but
+        the referral link and bare-domain text are re-anchored to the origin
+        the requesting client actually used (Vercel preview / custom domain),
+        same convention as referral_service.build_referral_link."""
         import hashlib
         from datetime import datetime, timezone
-        from referral_program.referral_service import ReferralService
+        from referral_program.referral_service import (
+            ReferralService, build_referral_link, current_origin_domain,
+        )
         
         # Normalize wallet address to lowercase
         wallet_normalized = wallet_address.lower().strip()
@@ -141,15 +149,26 @@ class TwitterTaskService:
         # Get the base message template
         message = self.custom_messages[message_index]
         
-        # Replace the static goodmarket.live URL with the user's personal referral link
+        # Replace the static goodmarket.live URL with the user's personal referral link.
+        # Origin-aware: build_referral_link uses flask.request.host_url on request.
         try:
             referral_service = ReferralService()
             referral_code = referral_service.generate_code_for_wallet(wallet_address)
-            referral_link = f"https://goodmarket.live/?ref={referral_code}"
+            referral_link = build_referral_link(referral_code)
             message = message.replace("https://goodmarket.live", referral_link)
             logger.info(f"🔗 Referral link injected for {wallet_address[:8]}...: {referral_link}")
         except Exception as ref_err:
             logger.warning(f"⚠️ Could not generate referral link for {wallet_address[:8]}...: {ref_err}")
+
+        # Re-anchor any remaining bare 'goodmarket.live' text (opening/middle
+        # phrases) to the current origin domain. Lambda repl avoids re's
+        # backreference escaping on domain strings containing digits.
+        try:
+            domain = current_origin_domain()
+            if domain != 'goodmarket.live':
+                message = re.sub(r'goodmarket\.live', lambda _: domain, message, flags=re.IGNORECASE)
+        except Exception as anchor_err:
+            logger.warning(f"⚠️ Could not re-anchor message domain: {anchor_err}")
         
         logger.info(f"📅 Message index {message_index} for user: {wallet_address[:8]}... (Day: {day_of_year}, Hour: {hour_of_day}, 1000 unique messages available)")
         return message
