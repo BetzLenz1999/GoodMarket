@@ -2292,6 +2292,266 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     }
 
     window.GoodMarketAI = window.GoodMarketAI || {};
+    // ── AI chat swap engine (Celo, in-app wallet signing) ───────────────────
+    // Minimal port of templates/swap.html's execution path so a confirmed
+    // chat swap signs in-page (send-token style — no swap-page redirect, no
+    // modal). The ai_agent chat gate accepts local logins only, so the in-app
+    // wallet (GMLocalWallet, PIN-unlocked) is the only signer resolved here.
+    const AI_SWAP_TOKENS = {
+        GD:   { symbol: 'G$',   address: '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A', decimals: 18 },
+        CELO: { symbol: 'CELO', address: '0x471EcE3750Da237f93B8E339c536989b8978a438', decimals: 18 },
+        CUSD: { symbol: 'cUSD', address: '0x765DE816845861e75A25fCA122bb6898B8B1282a', decimals: 18 },
+        USDT: { symbol: 'USDT', address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6 }
+    };
+    const AI_SWAP_UNISWAP_ROUTER = '0x643770E279d5D0733F21d6DC03A8efbABf3255B4';
+    const AI_SWAP_PERMIT2        = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+    const AI_SWAP_QUOTER         = '0x82825d0554fA07f7FC52Ab63c961F330fdEFa8E8';
+    const AI_SWAP_FEE_TIERS      = [10000, 3000, 500]; // G$/CELO pool is 1% — try it first
+    const AI_SWAP_ERC20_ABI = [
+        'function balanceOf(address owner) view returns (uint256)',
+        'function allowance(address owner, address spender) view returns (uint256)',
+        'function approve(address spender, uint256 amount) returns (bool)'
+    ];
+    const AI_SWAP_QUOTER_ABI = [
+        'function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
+        'function quoteExactInput(bytes path, uint256 amountIn) returns (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate)'
+    ];
+    const AI_SWAP_ROUTER_ABI = ['function execute(bytes commands, bytes[] inputs, uint256 deadline) payable'];
+    const AI_SWAP_PERMIT2_ABI = [
+        'function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)',
+        'function approve(address token, address spender, uint160 amount, uint48 expiration)'
+    ];
+    const AI_SWAP_BROKER_ABI = [
+        'function swapIn(address exchangeProvider, bytes32 exchangeId, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOutMin) returns (uint256 amountOut)'
+    ];
+    const AI_SWAP_RESERVE_BROKER = '0x88de45906D4F5a57315c133620cfa484cB297541';
+    const AI_SWAP_RESERVE_SLIPPAGE_BPS = 50n; // 0.5% — mirrors swap.html
+    const AI_SWAP_PERMIT2_MAX_AMOUNT = (1n << 160n) - 1n;
+    const AI_SWAP_PERMIT2_MAX_EXPIRATION = (1n << 48n) - 1n;
+    const AI_SWAP_CELO_RPC = 'https://forno.celo.org';
+
+    function _aiSwapFail(detail) {
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', { detail }));
+        return false;
+    }
+    function _aiSwapSuccess(detail) {
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', { detail }));
+        return true;
+    }
+    function _aiSwapErrMsg(err) {
+        return (window.GMTxError && GMTxError.format) ? GMTxError.format(err)
+            : (err && (err.shortMessage || err.message)) || 'Unknown error';
+    }
+    async function _aiSwapEnsureEthers() {
+        for (let i = 0; i < 30 && !window.ethers; i++) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+        if (!window.ethers) throw new Error('Wallet library is still loading. Please try again in a moment.');
+    }
+    function _aiSwapNormalizeToken(raw) {
+        const alias = { 'g$': 'GD', 'gd': 'GD', 'gooddollar': 'GD', 'cusd': 'CUSD', 'celo-dollar': 'CUSD', 'celo': 'CELO', 'usdt': 'USDT', 'tether': 'USDT' };
+        return alias[String(raw || '').trim().toLowerCase()] || null;
+    }
+    function _aiSwapEncodePath(addrs, fees) {
+        let encoded = addrs[0].toLowerCase().replace('0x', '');
+        for (let i = 0; i < fees.length; i++) {
+            encoded += fees[i].toString(16).padStart(6, '0');
+            encoded += addrs[i + 1].toLowerCase().replace('0x', '');
+        }
+        return '0x' + encoded;
+    }
+    function _aiSwapBuildExecute(quote, recipient, amountIn, amountOutMin) {
+        const from = AI_SWAP_TOKENS[quote.fromKey];
+        const to = AI_SWAP_TOKENS[quote.toKey];
+        const path = quote.path || _aiSwapEncodePath([from.address, to.address], [quote.fee]);
+        const input = ethers.AbiCoder.defaultAbiCoder().encode(
+            ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+            [recipient, amountIn, amountOutMin, path, true]
+        );
+        return {
+            commands: '0x00', // V3_SWAP_EXACT_IN
+            inputs: [input],
+            deadline: BigInt(Math.floor(Date.now() / 1000) + 20 * 60)
+        };
+    }
+    function _aiSwapPermit2StillValid(allowance, amountIn) {
+        const now = Math.floor(Date.now() / 1000);
+        return allowance && allowance.amount >= amountIn && Number(allowance.expiration) > now + 20 * 60;
+    }
+    // Local-only gate: the in-app wallet signs; never an injected/WC provider.
+    async function _aiSwapResolveSigner() {
+        if ((LOGIN_METHOD || '').toLowerCase() !== 'local' || typeof GMLocalWallet === 'undefined') {
+            throw new Error('Chat swap is available for GoodMarket (local) accounts only.');
+        }
+        const provider = new ethers.BrowserProvider(GMLocalWallet.getProvider());
+        const signer = await provider.getSigner();
+        const addr = await signer.getAddress();
+        if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+            throw new Error('Please unlock your GoodMarket wallet (the one tied to this account) to continue.');
+        }
+        return signer;
+    }
+    // Run approve+execute while reporting a tx result back to the chat widget.
+    async function _aiSwapRun(flow, label) {
+        let signer;
+        try {
+            await _aiSwapEnsureEthers();
+            if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined' && !GMLocalWallet.isUnlocked()) {
+                await _lwUnlockIfNeeded().catch(function (e) {
+                    if (e && e.message !== 'Unlock cancelled.') throw e;
+                    const cancel = new Error('Unlock cancelled.');
+                    cancel._gmCancelled = true;
+                    throw cancel;
+                });
+            }
+            signer = await _aiSwapResolveSigner();
+            const txHash = await flow(signer);
+            return _aiSwapSuccess({
+                txHash,
+                explorerUrl: 'https://celoscan.io/tx/' + txHash,
+                message: '✅ ' + label + ' successful. Tx hash: ' + txHash.slice(0, 10) + '…' + txHash.slice(-6)
+            });
+        } catch (err) {
+            if (err && err._gmCancelled) return _aiSwapFail({ message: 'Swap cancelled.' });
+            return _aiSwapFail({ error: _aiSwapErrMsg(err), message: '❌ ' + label + ' failed: ' + _aiSwapErrMsg(err) });
+        }
+    }
+    // GoodReserve (Mento broker): G$ <-> cUSD direct buy/sell. Quote comes from
+    // /api/reserve/quote so we never guess the exchangeId.
+    async function _aiSwapReserve(fromKey, toKey, amountStr, direction) {
+        return _aiSwapRun(async function (signer) {
+            const quoteRes = await fetch('/api/reserve/quote', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ direction, amount: String(amountStr) })
+            });
+            const quote = await quoteRes.json().catch(() => null);
+            if (!quote || !quote.success) throw new Error((quote && quote.error) || 'Could not fetch a reserve quote.');
+            const amountIn = BigInt(quote.amount_in_wei);
+            const amountOut = BigInt(quote.amount_out_wei);
+            const minOut = (amountOut * (10000n - AI_SWAP_RESERVE_SLIPPAGE_BPS)) / 10000n;
+            const fromAddr = direction === 'buy' ? quote.cusd : quote.gd;
+            const toAddr = direction === 'buy' ? quote.gd : quote.cusd;
+            // Exact-amount approval — no leftover allowance (mirrors swap.html).
+            const readProvider = signer.provider;
+            const tokenRead = new ethers.Contract(fromAddr, AI_SWAP_ERC20_ABI, readProvider);
+            const allowance = await tokenRead.allowance(WALLET, AI_SWAP_RESERVE_BROKER);
+            if (allowance < amountIn) {
+                const token = new ethers.Contract(fromAddr, AI_SWAP_ERC20_ABI, signer);
+                const approveTx = await token.approve(AI_SWAP_RESERVE_BROKER, amountIn);
+                await approveTx.wait();
+            }
+            const broker = new ethers.Contract(AI_SWAP_RESERVE_BROKER, AI_SWAP_BROKER_ABI, signer);
+            const swapTx = await broker.swapIn(quote.provider, quote.exchange_id, fromAddr, toAddr, amountIn, minOut);
+            const receipt = await swapTx.wait();
+            try { loadBalances(true); } catch (_) { /* balance refresh is best-effort */ }
+            return receipt.hash || swapTx.hash;
+        }, 'Swap (GoodReserve)');
+    }
+    // Uniswap V3 via UniversalRouter + Permit2, mirroring swap.html's flow.
+    async function _aiSwapUniswap(fromKey, toKey, amountStr) {
+        return _aiSwapRun(async function (signer) {
+            const from = AI_SWAP_TOKENS[fromKey];
+            const to = AI_SWAP_TOKENS[toKey];
+            let amountIn = ethers.parseUnits(String(amountStr), from.decimals);
+            if (fromKey === 'CELO') {
+                // Native CELO doubles as gas; keep a 0.01 CELO buffer so the
+                // pool's safeTransferFrom doesn't revert (mirrors swap.html).
+                const GAS_BUFFER = ethers.parseUnits('0.01', 18);
+                const bal = await signer.provider.getBalance(WALLET);
+                const maxSafe = bal > GAS_BUFFER ? bal - GAS_BUFFER : 0n;
+                if (amountIn > maxSafe) {
+                    if (maxSafe <= 0n) throw new Error('Insufficient CELO — keep at least 0.01 CELO for gas.');
+                    amountIn = maxSafe;
+                }
+            }
+            const rpc = new ethers.JsonRpcProvider(AI_SWAP_CELO_RPC);
+            const quoter = new ethers.Contract(AI_SWAP_QUOTER, AI_SWAP_QUOTER_ABI, rpc);
+            // Best of: every single-hop fee tier + two-hop via cUSD/USDT.
+            const attempts = [];
+            for (const fee of AI_SWAP_FEE_TIERS) {
+                attempts.push(
+                    quoter.quoteExactInputSingle.staticCall({
+                        tokenIn: from.address, tokenOut: to.address,
+                        amountIn, fee, sqrtPriceLimitX96: 0n
+                    }).then(([out]) => ({ amountOut: out, fee, path: null, isMulti: false })).catch(() => null)
+                );
+            }
+            for (const midKey of ['CUSD', 'USDT']) {
+                if (midKey === fromKey || midKey === toKey) continue;
+                const mid = AI_SWAP_TOKENS[midKey];
+                for (const f1 of AI_SWAP_FEE_TIERS) {
+                    for (const f2 of AI_SWAP_FEE_TIERS) {
+                        const path = _aiSwapEncodePath([from.address, mid.address, to.address], [f1, f2]);
+                        attempts.push(
+                            quoter.quoteExactInput.staticCall(path, amountIn)
+                                .then(([out]) => ({ amountOut: out, fee: f1, path, isMulti: true })).catch(() => null)
+                        );
+                    }
+                }
+            }
+            const results = await Promise.all(attempts);
+            let best = null;
+            for (const r of results) if (r && (!best || r.amountOut > best.amountOut)) best = r;
+            if (!best) throw new Error('Could not fetch a Uniswap V3 quote on Celo right now. Please try again.');
+            // Multi-hop prices drift during approve+execute; 2% floor there,
+            // 1% on single-hop (mirrors effectiveSlippage in swap.html).
+            const slippageBps = BigInt(Math.floor((best.isMulti ? 2.0 : 1.0) * 100));
+            const amountOutMin = best.amountOut * (10000n - slippageBps) / 10000n;
+            // UniversalRouter pulls input through Permit2 — needs ERC-20 -> Permit2
+            // approval, then Permit2 -> router allowance (mirrors swap.html).
+            const tokenRead = new ethers.Contract(from.address, AI_SWAP_ERC20_ABI, rpc);
+            const permit2Read = new ethers.Contract(AI_SWAP_PERMIT2, AI_SWAP_PERMIT2_ABI, rpc);
+            const [erc20Allowance, permit2Allowance] = await Promise.all([
+                tokenRead.allowance(WALLET, AI_SWAP_PERMIT2),
+                permit2Read.allowance(WALLET, from.address, AI_SWAP_UNISWAP_ROUTER)
+            ]);
+            if (erc20Allowance < amountIn) {
+                const token = new ethers.Contract(from.address, AI_SWAP_ERC20_ABI, signer);
+                const approveTx = await token.approve(AI_SWAP_PERMIT2, ethers.MaxUint256);
+                await approveTx.wait();
+            }
+            if (!_aiSwapPermit2StillValid(permit2Allowance, amountIn)) {
+                const permit2 = new ethers.Contract(AI_SWAP_PERMIT2, AI_SWAP_PERMIT2_ABI, signer);
+                const permitTx = await permit2.approve(from.address, AI_SWAP_UNISWAP_ROUTER, AI_SWAP_PERMIT2_MAX_AMOUNT, AI_SWAP_PERMIT2_MAX_EXPIRATION);
+                await permitTx.wait();
+            }
+            const router = new ethers.Contract(AI_SWAP_UNISWAP_ROUTER, AI_SWAP_ROUTER_ABI, signer);
+            const { commands, inputs, deadline } = _aiSwapBuildExecute(
+                { fromKey, toKey, fee: best.fee, path: best.path, isMulti: best.isMulti },
+                WALLET, amountIn, amountOutMin
+            );
+            const swapTx = await router.execute(commands, inputs, deadline);
+            const receipt = await swapTx.wait();
+            try { loadBalances(true); } catch (_) { /* balance refresh is best-effort */ }
+            return receipt.hash || swapTx.hash;
+        }, 'Swap (Uniswap V3)');
+    }
+    // Entry point for a confirmed chat swap: route G$ <-> cUSD to the
+    // GoodReserve, everything else to Uniswap V3 (backend computes the same
+    // route in ai_agent/service.py; recomputed here as a safety net).
+    async function _aiExecuteSwap(payload) {
+        const fromKey = _aiSwapNormalizeToken(payload.from_token);
+        const toKey = _aiSwapNormalizeToken(payload.to_token);
+        const amountStr = String(payload.amount || '').replace(/,/g, '');
+        if (!fromKey || !toKey) {
+            return _aiSwapFail({ message: '❌ Swap failed: unsupported tokens (only G$, CELO, cUSD, USDT are swappable).' });
+        }
+        if (!amountStr || parseFloat(amountStr) <= 0) {
+            return _aiSwapFail({ message: '❌ Swap failed: invalid amount.' });
+        }
+        if (fromKey === toKey) {
+            return _aiSwapFail({ message: '❌ Swap failed: pick two different tokens.' });
+        }
+        const isReservePair = [fromKey, toKey].sort().join('|') === 'CUSD|GD';
+        let route = payload.swap_route || (isReservePair ? 'goodreserve' : 'uniswap');
+        if (route === 'goodreserve') {
+            return _aiSwapReserve(fromKey, toKey, amountStr, payload.swap_direction || (toKey === 'GD' ? 'buy' : 'sell'));
+        }
+        return _aiSwapUniswap(fromKey, toKey, amountStr);
+    }
+
+
     window.GoodMarketAI.handleConfirmedAction = async function(action) {
         if (!action) return false;
         const payload = action.payload || {};
@@ -2334,11 +2594,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
 
         if (action.action_type === 'gcash_cashout') {
-            // Prefill the GCash modal and run the exact same submitGcashCashout
-            // path as the manual modal: PIN unlock (local wallet) -> sign G$
-            // transfer -> wait for receipt -> POST /api/gcash/cashout-request,
-            // so the cashout still lands in the GCash history.
-            if (typeof openModal === 'function') openModal('gcashModal');
+            // Prefill the GCash modal inputs (no modal opens — same style as
+            // send_gd: the PIN prompt IS the review surface) and run the exact
+            // same submitGcashCashout path as the manual modal: PIN unlock
+            // (local wallet) -> sign G$ transfer -> wait for receipt ->
+            // POST /api/gcash/cashout-request, so the cashout still lands in
+            // the GCash history.
             setTimeout(async function() {
                 const amountInput = document.getElementById('gcashAmount');
                 const numberInput = document.getElementById('gcashNumber');
@@ -2351,6 +2612,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (nameInput) nameInput.value = payload.gcash_name || '';
                 if (typeof submitGcashCashout === 'function') await submitGcashCashout();
             }, 150);
+            return true;
+        }
+
+        if (action.action_type === 'swap') {
+            // Chat-confirmed swap executes in-page (send-token style — no
+            // swap-page redirect, no modal). Progress/result is reported back
+            // to the chat via goodmarket:ai-tx-* events.
+            setTimeout(function() { _aiExecuteSwap(payload); }, 150);
             return true;
         }
 
