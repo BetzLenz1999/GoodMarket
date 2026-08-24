@@ -444,6 +444,9 @@
 
     // Handle start stream
     async function handleStartStream() {
+        if (typeof _gmAiProcessing === 'function') {
+            _gmAiProcessing('⏳ Stream: processing — please confirm the transaction in your wallet…', 'ai-stream');
+        }
         const receiver = document.getElementById('streamReceiver').value.trim();
         const { amount, period, periodLabel, monthlyAmount, dailyAmount } = getStreamAmountDetails();
         
@@ -533,11 +536,12 @@
                 <div style="color:var(--text-dim);font-size:0.75rem;">TX: ${txHash.slice(0, 10)}...</div>
             `;
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', {
-                detail: {
+                detail: (typeof _gmAiEventDetail === 'function' ? _gmAiEventDetail : (x) => x)({
                     txHash: txHash,
                     explorerUrl: `https://celoscan.io/tx/${txHash}`,
+                    progressKey: 'ai-stream',
                     message: `✅ G$ stream created successfully. Tx hash: ${txHash.slice(0, 10)}…${txHash.slice(-6)}`
-                }
+                })
             }));
             result.style.display = 'block';
             
@@ -550,10 +554,11 @@
             result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', {
-                detail: {
+                detail: (typeof _gmAiEventDetail === 'function' ? _gmAiEventDetail : (x) => x)({
                     error: errorMsg,
+                    progressKey: 'ai-stream',
                     message: `❌ Stream failed: ${errorMsg}`
-                }
+                })
             }));
         } finally {
             loading.style.display = 'none';
