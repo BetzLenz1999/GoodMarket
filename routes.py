@@ -703,11 +703,13 @@ def get_daily_task_status():
             actual_pending_platform = None
 
             if supabase:
-                # Check Twitter pending
+                # Check Twitter pending (ilike: session wallet may be checksummed
+                # while the Telegram bot writes lowercase rows — .eq is
+                # case-sensitive and would miss them)
                 twitter_pending_check = safe_supabase_operation(
                     lambda: supabase.table('twitter_task_log')\
                         .select('id')\
-                        .eq('wallet_address', wallet)\
+                        .ilike('wallet_address', wallet)\
                         .eq('status', 'pending')\
                         .limit(1)\
                         .execute(),
@@ -724,7 +726,7 @@ def get_daily_task_status():
                     telegram_pending_check = safe_supabase_operation(
                         lambda: supabase.table('telegram_task_log')\
                             .select('id')\
-                            .eq('wallet_address', wallet)\
+                            .ilike('wallet_address', wallet)\
                             .eq('status', 'pending')\
                             .limit(1)\
                             .execute(),
