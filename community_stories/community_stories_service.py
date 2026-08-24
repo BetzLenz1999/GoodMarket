@@ -9,6 +9,18 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+
+def _wallet_filter(query, wallet_address: str):
+    """Case-insensitive wallet_address match.
+
+    Web sessions store checksummed addresses (Web3.to_checksum_address) while
+    the Telegram bot stores lowercase — a case-sensitive .eq() made rows
+    written from one surface invisible to the other. Addresses are hex-only,
+    so ilike without wildcards is a safe case-insensitive equality.
+    """
+    return query.ilike('wallet_address', wallet_address)
+
+
 class CommunityStoriesService:
     def __init__(self):
         self.supabase = get_supabase_client()
@@ -130,9 +142,11 @@ class CommunityStoriesService:
             window_end_iso = window_end.isoformat()
 
             # Check if user has ANY submission (any status) during the current window
-            existing = self.supabase.table('community_stories_submissions')\
-                .select('submission_id, submitted_at, status')\
-                .eq('wallet_address', wallet_address)\
+            existing = _wallet_filter(
+                self.supabase.table('community_stories_submissions')\
+                    .select('submission_id, submitted_at, status'),
+                wallet_address,
+            )\
                 .gte('submitted_at', window_start_iso)\
                 .lte('submitted_at', window_end_iso)\
                 .limit(1)\
@@ -184,7 +198,9 @@ class CommunityStoriesService:
             # Create submission entry with screenshot
             submission = self.supabase.table('community_stories_submissions').insert({
                 'submission_id': submission_id,
-                'wallet_address': wallet_address,
+                # Store lowercase so bot/web rows are uniform; reads match
+                # case-insensitively via _wallet_filter.
+                'wallet_address': wallet_address.lower(),
                 'tweet_url': '#',  # Placeholder since we have screenshot instead
                 'status': 'pending',
                 'storage_path': screenshot_url  # ImgBB URL
@@ -262,7 +278,9 @@ class CommunityStoriesService:
 
             submission = self.supabase.table('community_stories_submissions').insert({
                 'submission_id': submission_id,
-                'wallet_address': wallet_address,
+                # Store lowercase so bot/web rows are uniform; reads match
+                # case-insensitively via _wallet_filter.
+                'wallet_address': wallet_address.lower(),
                 'tweet_url': tweet_url,
                 'status': 'pending'
             }).execute()
@@ -364,25 +382,28 @@ class CommunityStoriesService:
             # Update cooldown
             current_month = datetime.utcnow().strftime('%Y-%m')
 
-            existing_cooldown = self.supabase.table('community_stories_cooldowns')\
-                .select('*')\
-                .eq('wallet_address', wallet_address)\
-                .execute()
+            existing_cooldown = _wallet_filter(
+                self.supabase.table('community_stories_cooldowns').select('*'),
+                wallet_address,
+            ).execute()
 
             if existing_cooldown.data:
                 old_total = float(existing_cooldown.data[0].get('total_earned', 0))
                 old_submissions = int(existing_cooldown.data[0].get('total_submissions', 0))
 
-                self.supabase.table('community_stories_cooldowns').update({
-                    'last_reward_month': current_month,
-                    'last_reward_amount': amount,
-                    'last_reward_date': datetime.utcnow().isoformat(),
-                    'total_earned': old_total + amount,
-                    'total_submissions': old_submissions + 1
-                }).eq('wallet_address', wallet_address).execute()
+                _wallet_filter(
+                    self.supabase.table('community_stories_cooldowns').update({
+                        'last_reward_month': current_month,
+                        'last_reward_amount': amount,
+                        'last_reward_date': datetime.utcnow().isoformat(),
+                        'total_earned': old_total + amount,
+                        'total_submissions': old_submissions + 1
+                    }),
+                    wallet_address,
+                ).execute()
             else:
                 self.supabase.table('community_stories_cooldowns').insert({
-                    'wallet_address': wallet_address,
+                    'wallet_address': wallet_address.lower(),
                     'last_reward_month': current_month,
                     'last_reward_amount': amount,
                     'last_reward_date': datetime.utcnow().isoformat(),
@@ -470,9 +491,11 @@ class CommunityStoriesService:
             return {'success': False, 'error': 'Database not available', 'has_pending': False}
 
         try:
-            pending = self.supabase.table('community_stories_submissions')\
-                .select('submission_id, submitted_at, tweet_url')\
-                .eq('wallet_address', wallet_address)\
+            pending = _wallet_filter(
+                self.supabase.table('community_stories_submissions')\
+                    .select('submission_id, submitted_at, tweet_url'),
+                wallet_address,
+            )\
                 .eq('status', 'pending')\
                 .order('submitted_at', desc=True)\
                 .limit(1)\
@@ -500,16 +523,17 @@ class CommunityStoriesService:
             return {'success': False, 'error': 'Database not available'}
 
         try:
-            submissions = self.supabase.table('community_stories_submissions')\
-                .select('*')\
-                .eq('wallet_address', wallet_address)\
+            submissions = _wallet_filter(
+                self.supabase.table('community_stories_submissions').select('*'),
+                wallet_address,
+            )\
                 .order('submitted_at', desc=True)\
                 .execute()
 
-            cooldown = self.supabase.table('community_stories_cooldowns')\
-                .select('*')\
-                .eq('wallet_address', wallet_address)\
-                .execute()
+            cooldown = _wallet_filter(
+                self.supabase.table('community_stories_cooldowns').select('*'),
+                wallet_address,
+            ).execute()
 
             return {
                 'success': True,
@@ -575,7 +599,8 @@ class CommunityStoriesService:
             # Create submission entry with screenshot (ImgBB URL stored in storage_path)
             submission = self.supabase.table('community_stories_submissions').insert({
                 'submission_id': submission_id,
-                'wallet_address': wallet_address,
+                # Store lowercase so bot/web reads match case-insensitively.
+                'wallet_address': wallet_address.lower(),
                 'tweet_url': '#',  # Placeholder since this is direct upload
                 'status': 'approved',
                 'storage_path': screenshot_path,  # ImgBB URL
