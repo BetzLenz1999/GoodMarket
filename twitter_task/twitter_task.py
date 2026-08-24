@@ -7,6 +7,18 @@ from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
+
+def _wallet_filter(query, wallet_address: str):
+    """Case-insensitive wallet_address match.
+
+    Web sessions store checksummed addresses (Web3.to_checksum_address) while
+    the Telegram bot stores lowercase — a case-sensitive .eq() made rows
+    written from one surface invisible to the other. Addresses are hex-only,
+    so ilike without wildcards is a safe case-insensitive equality.
+    """
+    return query.ilike('wallet_address', wallet_address)
+
+
 class TwitterTaskService:
     def __init__(self):
         self.supabase = get_supabase_client()
@@ -275,9 +287,11 @@ class TwitterTaskService:
             logger.info(f"🔍 Checking Twitter eligibility for {wallet_address[:8]}...")
 
             # Check for pending submission (waiting for approval)
-            pending_check = self.supabase.table('twitter_task_log')\
-                .select('created_at, status')\
-                .eq('wallet_address', wallet_address)\
+            pending_check = _wallet_filter(
+                self.supabase.table('twitter_task_log')\
+                    .select('created_at, status'),
+                wallet_address,
+            )\
                 .eq('status', 'pending')\
                 .order('created_at', desc=True)\
                 .limit(1)\
@@ -301,9 +315,11 @@ class TwitterTaskService:
 
             # Check last COMPLETED claim within the cooldown window (only approved submissions trigger cooldown)
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.cooldown_hours)
-            last_claim = self.supabase.table('twitter_task_log')\
-                .select('created_at, status')\
-                .eq('wallet_address', wallet_address)\
+            last_claim = _wallet_filter(
+                self.supabase.table('twitter_task_log')\
+                    .select('created_at, status'),
+                wallet_address,
+            )\
                 .eq('status', 'completed')\
                 .gte('created_at', cutoff_time.isoformat())\
                 .order('created_at', desc=True)\
@@ -424,7 +440,7 @@ class TwitterTaskService:
                                 previous_wallet = record.get('wallet_address', 'Unknown')
                                 previous_status = record.get('status', 'pending')
 
-                                if previous_wallet == wallet_address:
+                                if str(previous_wallet).lower() == wallet_address.lower():
                                     if previous_status == 'pending':
                                         return {
                                             'success': False,
@@ -493,7 +509,12 @@ class TwitterTaskService:
                         
                         # Insert with NULL transaction_hash for pending submissions
                         result = self.supabase.table('twitter_task_log').insert({
-                            'wallet_address': wallet_address,
+                            # Store lowercase so rows written here, by the web
+                            # app (checksummed session wallet) and by the
+                            # Telegram bot (lowercase) are uniform going
+                            # forward; reads match case-insensitively via
+                            # _wallet_filter.
+                            'wallet_address': wallet_address.lower(),
                             'twitter_url': twitter_url,
                             'reward_amount': current_reward,
                             'status': 'pending',
@@ -679,10 +700,11 @@ class TwitterTaskService:
                     'can_claim_today': True
                 }
 
-            claims = self.supabase.table('twitter_task_log')\
-                .select('reward_amount')\
-                .eq('wallet_address', wallet_address)\
-                .execute()
+            claims = _wallet_filter(
+                self.supabase.table('twitter_task_log')\
+                    .select('reward_amount'),
+                wallet_address,
+            ).execute()
 
             total_earned = sum(float(c.get('reward_amount', 0)) for c in claims.data or [])
             total_claims = len(claims.data or [])
@@ -718,9 +740,11 @@ class TwitterTaskService:
 
             logger.info(f"📋 Getting Twitter task history for {wallet_address[:8]}... (limit: {limit})")
 
-            history = self.supabase.table('twitter_task_log')\
-                .select('*')\
-                .eq('wallet_address', wallet_address)\
+            history = _wallet_filter(
+                self.supabase.table('twitter_task_log')\
+                    .select('*'),
+                wallet_address,
+            )\
                 .order('created_at', desc=True)\
                 .limit(limit)\
                 .execute()
