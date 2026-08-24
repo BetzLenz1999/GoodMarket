@@ -97,14 +97,6 @@ _GCASH_MIN_GD = Decimal(os.getenv("AI_AGENT_GCASH_MIN_GD", "5000"))
 _ACTION_TTL_MINUTES = int(os.getenv("AI_AGENT_ACTION_TTL_MINUTES", "15"))
 _OPENAI_MODEL = os.getenv("AI_AGENT_OPENAI_MODEL", "gpt-5.5-mini")
 
-# The chat agent is only for GoodMarket-created accounts (local email + PIN
-# login) — WalletConnect / injected / Privy sessions get a not-eligible reply.
-_LOCAL_ONLY_REPLY = (
-    "The GoodMarket Agent is available only for GoodMarket users — those who "
-    "created their wallet using GoodMarket (email + PIN login). Please log in "
-    "with your GoodMarket account to use this feature."
-)
-
 # Local fallback storage keeps the MVP functional without requiring a new DB
 # migration. Production deployments can persist these rows in Supabase later.
 _ACTION_STORE: dict[str, dict[str, Any]] = {}
@@ -145,14 +137,9 @@ def parse_and_plan(message: str, wallet: str | None, login_method: str | None) -
             intent=_empty_intent("unknown", "No message provided."),
         )
 
-    # The agent is for GoodMarket-created (local email + PIN) accounts only —
-    # WalletConnect / injected / Privy sessions always get the same reply.
-    if (login_method or "").strip().lower() != "local":
-        return AgentResult(
-            status="not_eligible",
-            reply=_LOCAL_ONLY_REPLY,
-            intent=_empty_intent("unknown", "GoodMarket Agent requires a GoodMarket (local) account."),
-        )
+    # The agent works with every login method (local email + PIN, WalletConnect,
+    # injected wallets, Privy) — the login method is recorded on each pending
+    # action so confirm_action can tell the frontend which signer to use.
 
     # GCash cashout is a two-turn conversation: a pending cashout with missing
     # details turns the next plain reply ("09651234567 Wilbert Lenteria") into
