@@ -143,6 +143,35 @@ def get_chat_id_by_wallet(wallet_address: str) -> Optional[str]:
     return None
 
 
+def notify_user_by_wallet(wallet_address: str, text: str, parse_mode: str = "HTML") -> bool:
+    """DM the Telegram bot user linked to ``wallet_address`` (if any).
+
+    Used to tell a user their submission was approved/rejected (daily task
+    reward, GCash cashout, etc.). Never raises — a notification failure must
+    not break the admin action that triggered it, and users who never linked
+    Telegram simply get nothing.
+    """
+    try:
+        chat_id = get_chat_id_by_wallet(wallet_address)
+        if not chat_id:
+            return False
+        return send_message(str(chat_id), text, parse_mode=parse_mode)
+    except Exception as e:  # noqa: BLE001 - best-effort notify
+        logger.warning(f"⚠️ Per-user Telegram notify failed for wallet {str(wallet_address)[:10]}...: {e}")
+        return False
+
+
+def notify_user_by_wallet_async(wallet_address: str, text: str, parse_mode: str = "HTML") -> None:
+    """Fire-and-forget variant of notify_user_by_wallet (daemon thread)."""
+    import threading
+    threading.Thread(
+        target=notify_user_by_wallet,
+        args=(wallet_address, text),
+        kwargs={"parse_mode": parse_mode},
+        daemon=True,
+    ).start()
+
+
 def _fetch_all_chat_ids(strict: bool = False) -> List[str]:
     """Return de-duplicated Telegram chat_ids of every linked bot user.
 
