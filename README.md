@@ -1,297 +1,214 @@
+# GoodMarket / GoodDollar — Development Progress
 
-# GoodMarket
+Repository-specific notes for OpenHands agents.
 
-A Web3 earning platform built on the GoodDollar ecosystem. Users earn G$ tokens on the Celo network through educational quizzes, social media tasks, minigames, and community engagement.
+## Stack
+- Flask backend (Python): `routes.py`, `main.py`, `blockchain.py`, `supabase_client.py`.
+- Frontend: Jinja templates in `templates/`, vanilla JS in `static/js/`.
+- ethers.js **v6.13.4** loaded from cdnjs (swap.html, claim.html, send-link.html). p2p.html/savings.html use 6.7.0. xdc_wallet.html uses 6.13.2.
+- Celo mainnet (chainId 42220 / 0xa4ec). Public RPC: `https://forno.celo.org`.
 
+## Wallet provider model
+- `static/js/wc-bridge.js`: WalletConnect EIP-1193 bridge. Routes **wallet-scoped** methods (eth_sendTransaction, personal_sign, signTypedData*) to the WC session; routes **read-only** calls (eth_call, eth_estimateGas, eth_getBalance) directly to Celo RPC via `_celoJsonRpc` / `_celoJsonRpcWithFallback`.
+- `templates/swap.html` has its OWN inline `_celoJsonRpc` + `_wcBridgeRequest` (a second copy of the bridge logic for the swap page). **Changes to RPC error handling must be mirrored in both wc-bridge.js and swap.html.**
+- Signer resolution: `getConnectedSwapSigner()` in swap.html picks Privy / WalletConnect / injected (Trust/MetaMask) in that order based on `IS_PRIVY_LOGIN` / `PREFER_WC_SIGNING`.
 
-## Source Availability Notice
+## Local self-custodial wallet (GMLocalWallet) signing (2026-08)
+Local-wallet users (`login_method === 'local'`, session wallet created in-browser via `static/js/local-wallet.js`) must sign with the **PIN-decrypted in-app wallet** — never with an injected MetaMask/extension, which is a *different account*. When the wallet auto-locks, prompt the built-in PIN modal (`window._lwOpenUnlockModal()`), then use `GMLocalWallet.getProvider()` (an EIP-1193 provider; wrap in `new ethers.BrowserProvider(...)` + `getSigner()` when callers need a real ethers Signer, e.g. swap.html's `getConnectedSwapSigner()`).
 
-This repository is open source under the MIT License.
+Key invariants when touching signing flows:
+- **Celo only** — the in-app wallet signs Celo transactions ONLY. XDC/FUSE paths (swap bridge, wallet.html token sends, raffle) are blocked up-front with a friendly error for local logins; never call `wallet_switchEthereumChain` for the local provider (it always reports 0xa4ec).
+- **No injected fall-through** — every `_getEthProvider()`-style resolver must return null / be bypassed for local logins so a desktop MetaMask can't hijack the account ("Wrong wallet connected").
+- **No CIP-64** — MiniPay `isMiniPay()` checks return false for local logins (in-app wallet pays CELO gas); the `MPGasTopUp.isMiniPay()` preflight gates in swap.html are skipped too.
+- Pages wired: `savings.html` (reference implementation), `swap.html` (real ethers signer + Celo-only guards + no-wallet button gate), `reloadly.html` (send + signing-flow gating), `claim.html` (claim branch; also fixed `injectedProvider` block-scope bug), `static/js/p2p/p2p-wallet.js` (`getProvider()` unlock prompt, `_getInjected()`/`isMiniPay()` guards), `wallet.html` (doSend, raffle signer, claim capabilities/preflight, `_getSigningProvider`/stream signing via `signTransaction`, `_getEthProvider` local gate), `send-link.html` (send/cancel/balance), `learn_and_earn.html` (loads ethers+local-wallet.js; L&E deposit `swSendViaWallet` + NFT buy `executeBuyNFT`).
+- **ethers.js is mandatory on any page using GMLocalWallet** — `local-wallet.js` `_assertEthers()` throws "ethers.js is not loaded on this page." from PIN decrypt (`Wallet.fromEncryptedJson`) and `eth_sendTransaction`. reloadly.html was wired for local signing but never loaded ethers, so PIN unlock + G$ pay both failed while savings/swap (which load ethers) worked. Fixed 2026-08: reloadly.html now loads ethers 6.13.4 before local-wallet.js, and `_isMiniPayContext()` returns false for `isGMLocalWallet` providers (no CIP-64 feeCurrency for the in-app wallet). When wiring a NEW page for local signing, always load ethers first.
+- Tests: `tests/test_local_wallet_signing_content.py` (content, no deps).
 
-- **License status:** MIT
-- **Contributions:** Welcome via pull request
-- **Reuse/redistribution:** Permitted under the MIT License terms
+## "missing revert data" — root cause & fix (2026-08)
+ethers.js v6 throws `"missing revert data in call exception"` whenever an `eth_call` / `eth_estimateGas` reverts and the returned JSON-RPC error object has **no `data` field** (the revert bytes). Public Celo RPC nodes and mobile wallet providers (Trust, MiniPay) are inconsistent — some return `error.data`, some don't. The bridge used to forward reverts as `new Error(data.error.message)`, **dropping `error.data` and `error.code`**, which forced ethers into the opaque "missing revert data" path.
 
-## Tech Stack
+Fix layers (all in this repo):
+1. `static/js/tx-error.js` — `_decodeRevertData()` decodes `Error(string)` (0x08c379a0), `Panic(uint256)` (0x4e487b71), custom selectors. Exposes `GMTxError.{decodeRevertData, revertReasonFromError, simulateCallCelo}`. `_isReverted()` now matches `missing revert data`. **ABI offset gotcha**: string length word is at hex offset 72 (after selector[8] + offset word[64]), string bytes start at 136 — NOT 136/200.
+2. `static/js/wc-bridge.js` — `_rpcErrorFromJsonRpcError` preserves `error.code` + `error.data`; `_celoJsonRpcWithFallback` retries the next RPC URL only when `data` is absent (a revert-with-data is deterministic, no point retrying).
+3. `templates/swap.html` — inline `_celoJsonRpc` mirrors the above; `_enrichSwapError(err, simParams, ctx)` re-runs the exact failing calldata as a read-only `eth_call` against several Celo RPCs to recover the revert reason, plus an ERC-20 allowance/balance diagnostic. Wired into `startReserveSwap` (GoodReserve sell/buy) and `startSwap` (Uniswap wallet-signer path).
+4. `static/js/minipay-gas-topup.js` — balance reads (`_ethCall`, `_getCeloBalance`) now fall back to public Celo RPCs when the wallet provider fails (fixes "gas request not working when low balance"); CELO→cUSD swap decodes revert bytes via `_decodeRevertData` + `_friendlyGasSwapError`.
 
-- **Backend:** Python 3.12, Flask, Gunicorn (gthread workers)
-- **Frontend:** Server-side rendered Jinja2 templates with static assets
-- **Database:** Supabase (PostgreSQL)
-- **Blockchain:** Web3.py, Celo network, GoodDollar (G$) contracts
-- **WalletConnect:** Node.js sidecar service (`wc_service.js`) using `@walletconnect/sign-client`
-- **Package Manager (Python):** uv (with `uv.lock` and `pyproject.toml`)
-- **Package Manager (Node):** npm (`package.json`)
+## Reloadly refund gas-park (2026-08)
+When a Reloadly fulfillment fails, the backend refunds G$ via the `REFUND_KEY` wallet. If that wallet has **no CELO gas**, the refund used to hard-fail with a scary "contact support" message. Now:
+- `reloadly/service.py` `refund_gd()` does a preflight CELO balance check + matches `insufficient funds`/gas errors, returning `error_type: "insufficient_gas"`.
+  - **Gas budget: fixed 250k (PR #169 estimate-based preflight REVERTED 2026-08):** the preflight demands `REFUND_GAS_LIMIT=250000 × gas_price` CELO and the tx is built with `gas: 250000`. The estimate-based preflight from PR #169 (live `estimate_gas`, fallback 80k, cap 150k) was reverted after it broke refunds in production (refund txs reverting / orders hard-failing after the merge). If this is ever re-attempted, the cap/fallback must be ≥ the true gas cost of the deployed G$ token's transfer, and it must be verified against the production RPC.
+  - **G$ balance preflight (2026-08 follow-up):** a refund wallet with CELO but **no G$** used to send a transfer that reverted on-chain → hard `refund_failed` forever even after admin refilled gas. `refund_gd` now checks `balanceOf(refund_wallet) < amount_wei` first and returns `error_type: "insufficient_balance"` with the exact G$ shortfall. Routes park it as `pending_refund` exactly like gas (auto-retry succeeds once the admin tops up G$); the friendly message reads "topped up by the admin" (covers gas AND balance); refund_retry releases both error types back to `pending_refund`.
+  - **Receipt-timeout double-refund hazard (2026-08 follow-up):** `wait_for_transaction_receipt(timeout=60)` raising `TimeExhausted` AFTER `send_raw_transaction` used to hard-fail the order as `refund_failed` — but the refund tx was already broadcast and could still confirm, so any manual re-send would DOUBLE-refund. Now `_wait_for_receipt_patient` polls for 60s tolerating RPC hiccups and returns None instead of raising; unconfirmed refunds return `error_type: "submitted_unconfirmed"` WITH `tx_hash`, routes park them as `pending_refund` keeping `refund_tx_hash`, and `run_refund_retry_once` checks the prior tx's on-chain receipt (`check_refund_tx_status`: confirmed → refunded, reverted → refund_failed, pending → stay parked) BEFORE any re-send. Hard failures now include the sanitized refund reason in the "contact support" message (URLs stripped) so support can see why; `refund_error` column keeps the full text.
+- `reloadly/routes.py` `_process_refund_failure()` (used by both `api_confirm_order` and `api_detect_payment`) parks the order as **`pending_refund`** with a friendly "automatic refund within a few hours once the refund wallet is refilled with gas by the admin" message, instead of `refund_failed`.
+- `reloadly/refund_retry.py` — env-gated (`RELOADLY_REFUND_RETRY_ENABLED`) background thread (same pattern as `ubi_reminder.py`) that retries `refund_gd` for `pending_refund` orders every `RELOADLY_REFUND_RETRY_INTERVAL_SEC` (default 600s). Succeeds **automatically** once gas is refilled; gas-stalled orders stay `pending_refund`, non-gas failures escalate to `refund_failed`.
+  - **Concurrency-safe** via `claim_order_for_refund()` (CAS): atomically flips `pending_refund` -> `refunding` (PostgREST `update(...).eq("id",X).eq("status","pending_refund")`); only the winner sends a refund. Prevents double-refund across gunicorn workers / scheduler-vs-manual endpoint. Gas-stall releases back to `pending_refund`; success -> `refunded`; other failure -> `refund_failed`.
+- Wired in `main.py` right after the Reloadly Store init block.
+- Frontend `templates/reloadly.html` handles `pending_refund` status (info toast, blue pill, friendly copy).
+- Tests: `tests/test_reloadly_refund_gas_content.py` (content, no deps).
 
-## Project Layout
+## AI chat agent — transaction-hash lookup
+`ai_agent/` is the chat-box agent (`/api/ai-agent/chat`). It classifies a message into a safe action preview (send/stream/swap/etc.) and never signs.
+- **NEW: `lookup_transaction` action** — read-only tx-hash lookup. When a user asks "where is my tx hash" / "my Learn & Earn tx" / "reloadly txid" etc., the agent queries the user's own rows across feature tables and replies with the hash + amount + status + Celoscan link. No signing, no fund movement.
+- `ai_agent/tx_lookup.py` — `lookup_transactions(wallet, feature)` queries (per feature): `learnearn_log` (+ `learn_earn_streams`), `reloadly_orders`, `referral_rewards_log`, `twitter_task_log`, `trustpilot_task_log`. supabase is imported **lazily** inside `_query_one` so the module imports/tests without supabase installed.
+- Wallet-form gotcha: Learn & Earn quiz logs store the wallet **masked** (`0xabcd…1234`) OR full lowercase (depends on writer version) — `_build_wallet_filter` matches both via `or_`. Other tables store lowercase.
+- `_is_onchain_hash()` filters to real Celo tx hashes (0x + 64 hex) so Reloadly's numeric `reloadly_transaction_id` and `queued:...` stream placeholders don't get a bogus explorer link.
+- Keyword detection is **rules-based** (`is_tx_lookup_request` + `detect_feature`) so it works even without `OPENAI_API_KEY`; the OpenAI classifier is also taught the action via `lookup_feature`.
+- Tests: `tests/test_ai_agent_tx_lookup_content.py` (functional via importlib + text-based wiring, no deps).
 
-| Path | Description |
-|------|-------------|
-| `main.py` | Flask app entry point, initializes all services and blueprints |
-| `routes.py` | Core API routes and auth decorators |
-| `blockchain.py` | Blockchain logic (UBI claims, G$ balances) |
-| `config.py` | Global configuration and reward settings |
-| `supabase_client.py` | Database connection and utilities |
-| `gunicorn.conf.py` | Gunicorn server configuration (port 5000, 0.0.0.0) |
-| `wc_service.js` | Node.js WalletConnect service (runs on port 3001) |
-| `learn_and_earn/` | Learn & Earn quiz module |
-| `minigames/` | Minigames module |
-| `twitter_task/` | Twitter social task module |
-| `telegram_task/` | Telegram social task module |
-| `discourse_task/` | Discourse forum task module |
-| `savings/` | G$ Savings module (time-locked deposits, sponsor reward pool) |
-| `contracts/GDSavings.sol` | Smart contract for savings — deployed to Celo Mainnet |
-| `contracts/deploy_savings_contract.py` | Deployment script using SAVING_KEY |
-| `community_stories/` | Community stories module |
-| `jumble/` | Jumble word game module |
-| `price_prediction/` | Price prediction module |
-| `referral_program/` | Referral program module |
-| `contracts/` | Solidity smart contracts and deployment scripts |
-| `static/` | Static assets (JS bundles, icons, manifest) |
-| `templates/` | Jinja2 HTML templates |
+## AI chat agent — send/stream + keyword parsing + local wallet (2026-08)
+Send/stream execution is frontend-side: after `/api/ai-agent/actions/<id>/confirm`, `static/js/ai-agent.js` `continueWalletFlow` calls `window.GoodMarketAI.handleConfirmedAction` (defined in wallet.html; other pages redirect to `/wallet?ai_action=<id>` where `openAiActionFromUrl` replays it). wallet.html routes to `doSend()` (send) / `handleStartStream()` (stream), so **all login methods — including `local` (GMLocalWallet PIN unlock via `_getSigningProvider`/`doSend` local gates) — sign end-to-end**.
+- **Local signing mode:** `confirm_action` now returns `signing_mode: "local"` for `login_method == "local"` (`walletconnect`/`wallet` otherwise); ai-agent.js shows a "Signing: In-app GoodMarket wallet (PIN unlock)" row on the review card.
+- **Keyword-based parsing (any phrasing, English+Tagalog):** `_parse_with_rules` triggers send on send/transfer/padala/padalhan substrings; recipient prefixes are to/kay/ni/si/sa/para kay/para sa/@ (`_send_recipient_candidate`) with a `_RECIPIENT_STOP_WORDS` guard (araw/buwan/day/month/…) so time words never become usernames. Bare recipients with no prefix are NOT invented — they land in `missing_fields`. Stream daily rate accepts per day/daily/kada araw/bawat araw/araw-araw (`_stream_daily_amount`). The OpenAI prompt is told to classify Taglish by keywords; rules fallback needs no OPENAI_API_KEY.
+- **Stream-period bug fixed:** wallet.html's AI stream handler must set `streamPeriod` to `/ day` before `handleStartStream()` — the modal defaults to `/ month`, which silently created a 30x smaller stream from the agent's per-day rate.
+- **Wallet-page-only widget (2026-08):** the `{% include "_ai_agent.html" %}` widget lives ONLY in `templates/wallet.html` -- it was removed from homepage/swap/reloadly. reloadly.html keeps `openAiReloadlyActionFromUrl` (no widget needed) so mobile_load actions confirmed from the wallet chat still replay via `/reloadly/?ai_action=<id>`.
+- **Local-login-only gate (2026-08):** `parse_and_plan` hard-gates on `login_method == "local"` -- WalletConnect / injected / Privy sessions always get the `not_eligible` reply (`_LOCAL_ONLY_REPLY`: "available only for GoodMarket users ... email + PIN login"). The widget only ships on wallet.html, so the gate is the enforcement point.
+- **Quick command buttons (2026-08):** `_ai_agent.html` shows exactly TWO quick commands — `💸 Cashout` (`data-gm-ai-command="cashout"` — auto-starts the GCash cashout request flow) and `💰 Send Money` (`data-gm-ai-command="Send Money"` — auto-starts send_gd; bot asks for receiver + amount). All old FAQ buttons (What is GoodMarket?/GoodDollar?/How to Send Tokens/etc.) are removed. ai-agent.js keeps the `data-gm-ai-command` click handler; commands are plain messages run through the normal parse flow.
+- **GCash cashout via chat (2026-08):** `gcash_cashout` action -- "cashout 5,000 G$" (any order, e.g. "Mag cashout ng 5,000 G$") -> bot asks "Please reply your GCash mobile # and full name registered on GCash" -> user replies "09651234567 Wilbert Lenteria" (name and 11-digit `09xxxxxxxxx` number in ANY order) -> review card -> confirm -> wallet.html `handleConfirmedAction` prefills `gcashAmount/gcashNumber/gcashName` and calls the SAME `submitGcashCashout()` as the modal (PIN unlock -> sign -> receipt wait -> POST /api/gcash/cashout-request), so the row lands in GCash history exactly like the manual flow.
+  - Two-turn state: `_PENDING_GCASH` (in-memory per-wallet like `_ACTION_STORE`) stores partially-filled amount/number/name; a follow-up with no command keyword merges missing fields (freshly-typed values win). `cancel` aborts.
+  - Parsing helpers: `_gcash_number_candidate` (`^09\d{9}$`), `_gcash_amount_candidate` (phone stripped FIRST so the 11-digit number is never read as the amount), `_gcash_name_candidate` (stopwords removed incl. "G$" via lookarounds -- `\b` after `$` never matches). Full name = >= 2 words. Minimum = `_GCASH_MIN_GD` (default 5000, matches the app-wide floor).
+  - tx-lookup guard: `_supplement_intent_from_message` only flips unknown/help -> gcash_cashout on keywords, so "where is my gcash tx hash" stays `lookup_transaction`.
+- **No send amount cap + CELO sends (2026-08):** the old `_MAX_SEND_GD` (default 100, env `AI_AGENT_MAX_SEND_GD`) hard cap on `send_gd` was REMOVED -- any positive amount is accepted (balance is enforced on-chain at signing). `_MAX_STREAM_GD_PER_DAY`/`_MAX_MOBILE_LOAD_FIAT` caps still exist. `_normalise_send_token`/`_send_token_candidate` now recognize `celo` -> `CELO` (alongside G$/cUSD/USDT); wallet.html `handleConfirmedAction` maps `{cusd:'CUSD', usdt:'USDT', celo:'CELO'}` onto the send-modal token chips (XDC/XDC G$ stay wallet-page-only).
+- Tests: `tests/test_ai_agent_send_stream_content.py` (functional importlib + content wiring, no deps).
 
-## Workflow
+## Telegram broadcast — durable delivery (2026-08)
+Admin broadcasts (`/api/admin/broadcast-message`) push to Telegram bot users. The web dashboard inbox reads the broadcast row directly so it always works, but the Telegram push used to drop silently.
 
-- **Start application:** `uv run gunicorn --config gunicorn.conf.py main:app`
-- Runs on port **5000** (0.0.0.0)
-- WalletConnect sidecar runs on port **3001** (started automatically by main.py if `WALLETCONNECT_PROJECT_ID` is set)
+- **Root cause:** the push ran as a fire-and-forget daemon thread spawned inside the admin HTTP request (`telegram_notify.broadcast_message_async`). Under gunicorn (`max_requests=500` recycling + `graceful_timeout`), that thread was killed mid-broadcast, so many users never received the message and the admin endpoint returned `success:true` regardless — no signal that delivery failed.
+- **Fix — durable per-recipient queue + scheduler** (same pattern as `ubi_reminder.py` / `reloadly/refund_retry.py`):
+  1. `sql/telegram_broadcast_deliveries.sql` — adds `telegram_broadcast_deliveries` (one row per recipient: `status` pending|sending|sent|failed|blocked, `attempts`, `last_error`, `delivered_at`) + aggregate columns on `admin_broadcast_messages` (`tg_status`, `tg_total`, `tg_sent`, `tg_failed`, `tg_queued_at`, `tg_delivered_at`). Run this migration in Supabase before enabling the scheduler.
+  2. `telegram_notify.py` — `queue_broadcast_deliveries(broadcast_id, ...)` upserts one row per chat_id (`ON CONFLICT broadcast_id,telegram_chat_id` = idempotent re-queue); `deliver_broadcast_once(broadcast_id)` drains a batch with a **CAS claim** (`update(...).eq('status','pending')` → only rows we won the flip are sent) so two workers/scheduler runs can't double-send. `classify_send_error` splits Telegram failures into `blocked` (403/chat-not-found — permanent, never retry), `rate_limited` (429), `retryable` (5xx/network); transient failures stay `pending` and retry until `_MAX_RETRY_ATTEMPTS` (default 5) then escalate to `failed`. `send_message` signature unchanged so `ubi_reminder` is unaffected.
+     - **Silent-failure guards (2026-08 follow-up):** `broadcast_message_async` only takes the durable path when `broadcast_delivery.is_delivery_enabled()` — with the scheduler off, queueing rows would deliver to nobody, so it uses the legacy best-effort direct send instead. `queue_broadcast_deliveries` **raises** on hard failures (DB down, token missing, upsert/stamp failed = migration not applied) instead of returning a success-looking summary, so the caller falls back to legacy. `_fetch_all_chat_ids(strict=True)` raises on query failure so an unreadable table can't masquerade as "no Telegram users".
+     - **Stale-claim reclaim:** a worker killed mid-batch (the very gunicorn recycle this fix targets) leaves rows in `sending`; `deliver_broadcast_once` first runs `_reclaim_stale_sending` (flips `sending` rows with `updated_at` older than `_STALE_CLAIM_SECONDS`, default 300, back to `pending`) so they're redelivered instead of sticking the broadcast at `partially_sent` forever. The CAS claim now stamps `updated_at` so staleness is measurable.
+  3. `broadcast_delivery.py` — env-gated scheduler (`TELEGRAM_BROADCAST_DELIVERY_ENABLED`, default off). Polls every `TELEGRAM_BROADCAST_DELIVERY_INTERVAL_SEC` (default 30) for broadcasts with `tg_status IN (pending, partially_sent)` and drains a batch each; a `wake_broadcast_delivery()` event triggers near-immediate delivery when a fresh broadcast is queued. If the tg_* schema is missing, `_fetch_due_broadcasts` logs migration instructions once and latches `_schema_missing` instead of erroring every interval.
+  4. `routes.py` `send_broadcast_message` passes the freshly-inserted `broadcast_id` to `broadcast_message_async`; `get_broadcast_messages` returns the `tg_*` columns via `select('*')`.
+  5. `main.py` starts the scheduler right after the UBI reminder block.
+  6. `templates/admin_dashboard.html` — new "Telegram Delivery" column (`formatTelegramDelivery`) shows `✅ Delivered (sent/total)` / `⏳ Sending…` / `⏳ Queued` / `⚠️ Finished · N failed`; auto-refreshes the table every 15s while any broadcast is still delivering.
+- **To enable:** run the SQL migration, then set `TELEGRAM_BROADCAST_DELIVERY_ENABLED=1` (and `TELEGRAM_BOT_TOKEN`). Without either, the admin broadcast degrades to the legacy best-effort direct send — Telegram users still get the message, just without durability/per-recipient tracking.
+- **Diagnostics (2026-08 follow-up):** `GET /api/admin/telegram-diagnostics` (admin-only) runs `telegram_notify.get_broadcast_diagnostics()` — never-raises health check of every link (bot token, DB, service-role key, recipient count from `telegram_wallet_sessions`, deliveries-table + tg_* column probes, scheduler enabled) with human `hints`. The admin dashboard "🩺 Check Telegram Delivery Health" button renders it. `send_broadcast_message` response now includes `telegram_recipients` + `telegram_delivery_mode` (`durable_queued`|`legacy_best_effort`) + `telegram_warning` when 0 recipients — the #1 silent failure is "no Telegram bot users" (users must /start the bot AND save a wallet; only then do they appear in `telegram_wallet_sessions`). `count_broadcast_recipients()` returns -1 for "couldn't read" vs 0 for "no users".
+- Tests: `tests/test_broadcast_delivery_content.py` (error classification, idempotent queue, CAS claim, aggregate status, retry cap, scheduler wiring, routes wiring, dashboard rendering — no deps, stubs `requests`/`supabase`). Run with `python -m unittest tests.test_broadcast_delivery_content`.
 
-## Required Environment Variables / Secrets
+## Daily Telegram appreciation reward (2026-08)
+Every day at **10:00 AM Philippine time (02:00 UTC — PH has no DST, so the UTC slot is stable)**, every Telegram bot user with a linked wallet gets a small G$ appreciation token (default **10 G$**) from the `DAILYTASK_KEY` wallet, plus a Telegram thank-you message (English default: "🎁 You received an appreciation token from GoodMarket! …" — full-template override via `TELEGRAM_DAILY_REWARD_MESSAGE` with `{amount}`/`{explorer_url}` placeholders, substituted with `str.replace` so stray braces can't raise).
+- **Module:** `telegram_daily_reward.py` (root, same scheduler pattern as `ubi_reminder.py`): env-gated `TELEGRAM_DAILY_REWARD_ENABLED` (default off), daemon thread, wired in `main.py` right after the UBI reminder block. All heavy imports (web3 / eth_account / supabase / telegram_notify) are **lazy inside functions** so the module imports/tests with no deps.
+- **Durable log:** `sql/telegram_daily_reward.sql` → `telegram_daily_reward_log`, one row per wallet per UTC day, `UNIQUE (wallet_address, payout_date)` is the hard no-double-pay guarantee. Run the migration in Supabase before enabling. Recipients come from `telegram_wallet_sessions`, **deduped by wallet** (most recent `last_seen_at` wins) so a wallet linked to two Telegram accounts is paid once.
+- **Seeding is idempotent:** each pass upserts `pending` rows `ON CONFLICT DO NOTHING`; CAS claim (`update(...).eq("id",X).eq("status","pending")` → `sending`) means only one worker sends. Stale `sending` rows (worker killed mid-send) are reclaimed after `TELEGRAM_DAILY_REWARD_STALE_CLAIM_SECONDS` (default 600) with any `tx_hash` PRESERVED.
+- **Disbursement:** direct G$ ERC-20 transfer signed by `DAILYTASK_KEY` (telegram_task pattern, no contract). **Fixed `REWARD_GAS_LIMIT = 250000`** — NOT estimate-based (Reloadly PR #169 lesson). CELO gas + G$ `balanceOf` preflights → `insufficient_gas`/`insufficient_balance` rows stay `pending` forever (never `failed`) and auto-retry after an admin top-up.
+- **Double-pay protection (Reloadly/GCash lessons):** `_wait_for_receipt_patient` returns None instead of raising → `submitted_unconfirmed` keeps `tx_hash` on the row; the next pass runs `check_reward_tx_status` (confirmed → `sent` + message, pending → wait, reverted → clear hash and resend) BEFORE any re-send.
+- **Message is post-confirmation:** `_notify_user` sends only after the tx confirms; a Telegram send failure never changes the `sent` outcome (funds already moved).
+- **Retry semantics:** generic errors retry until `TELEGRAM_DAILY_REWARD_MAX_RETRY_ATTEMPTS` (default 5) → `failed`. After the day's first pass, later passes only run while `pending` rows remain (`_has_pending_rows`). `run_daily_reward_once()` is the manual/test entry point; within a pass, already-processed row ids are skipped so released `retry` rows don't spin until the next poll.
+- Env knobs: `TELEGRAM_DAILY_REWARD_AMOUNT_GD` (10), `_UTC_HOUR` (2), `_UTC_MINUTE` (0), `_POLL_SECONDS` (300), `_MAX_USERS` (500), `_SEND_DELAY_SEC` (1.0), `_RECEIPT_TIMEOUT_SEC` (60). Documented in `.env.example`.
+- Tests: `tests/test_telegram_daily_reward_content.py` (27 tests, no deps — defaults, English message, gas-error matching, full `_process_row` state machine, CAS/SQL/wiring content). Run with `python -m unittest tests.test_telegram_daily_reward_content`.
 
-The app gracefully degrades when these are missing, but full functionality requires:
+## GCash Cashout (2026-08)
+Users cash out G$ → PHP via GCash. 100 G$ = ₱1.00, minimum 5,000 G$ (₱50), Philippines-only.
+- **Flow:** `templates/wallet.html` `gcashModal` → user fills amount/number/name → signs G$ transfer to `GCASH_ADDRESS` (uses the standard signer routing — local/injected/WC) → `POST /api/gcash/cashout-request` verifies the tx **on-chain** (Transfer event: from=user, to=GCASH_ADDRESS, exact amount) then stores a `pending` row. One pending request per user.
+- **Backend:** `gcash/` package (routes.py + service.py + refund_retry.py), blueprint `url_prefix=/api/gcash`. Admin endpoints: `GET /admin/requests`, `POST /admin/requests/<id>/approve` (manual GCash send), `POST .../reject` (auto-refund via `GCASH_KEY`).
+- **Auto-refund:** `gcash/refund_retry.py` — env-gated (`GCASH_AUTO_REFUND_ENABLED`, interval `GCASH_AUTO_REFUND_INTERVAL_SEC` default 300s). Requests still `pending` after 24h are CAS-claimed (`pending`→`refunding`) and refunded. Gas preflight uses the **fixed `_REFUND_GAS_LIMIT = 250_000`** budget (like reloadly's reverted fix), NOT the old estimate-based (fallback 80k / cap 150k) pattern that made admin rejects look successful while the refund tx ran out of gas. The scheduler also re-claims stranded `refunding` rows (worker died mid-refund) after the retry cutoff.
+- **Reject-refund robustness (2026-08 follow-up):** "reject succeeds but refund fails" had three causes, all fixed in `gcash/service.py send_refund`: (1) estimate-based gas preflight replaced with fixed 250k (reloadly PR #169 lesson — it was reverted there for breaking refunds); (2) added G$ `balanceOf` preflight → `error_type: insufficient_balance` with the exact shortfall (previously the transfer reverted on-chain); (3) the whole body is wrapped in try/except so it **never raises** — callers CAS-claim the row first (`pending`→`refunding`), and a raise used to strand it in `refunding` with no retry path (admin retry only accepts `refund_failed`; scheduler only read `pending`/`refund_failed`). `_is_insufficient_gas_error` now matches the full reloadly pattern list.
+- **Refund-success visibility (2026-08 follow-up):** successful refunds must link Celoscan everywhere — `admin_reject` response includes full `tx_hash`; the dashboard `rejected`/`refunded` rows render "Refund tx ↗" (previously only `refund_failed` linked the hash); reject/retry alerts append the Celoscan URL; wallet.html history shows `refunding`/`refund_failed` progress rows with the link.
+- **Env vars:** `GCASH_ADDRESS` (receives user G$), `GCASH_KEY` (signs refunds — needs CELO gas), `GCASH_AUTO_REFUND_ENABLED`.
+- **DB:** `sql/gcash_cashout.sql` — `gcash_cashout_requests` (statuses: pending/refunding/approved/rejected/refunded/refund_failed; `tx_hash` UNIQUE prevents reuse). Run in Supabase before enabling.
+- **Admin UI:** `templates/admin_dashboard.html` "GCash Cashout" section — filter by status, approve/reject buttons, elapsed-time badge for pending.
+- **Approve = proof required:** approving opens `gcashApproveModal` — admin must enter the GCash **reference #** and upload a **receipt screenshot** (uploaded to ImgBB via `object_storage_client.upload_to_imgbb`, same helper as developer profiles/p2p). `admin_approve` takes multipart FormData (`reference_number`, `receipt_image`, optional `note`; JSON fallback), stores `reference_number` + `receipt_image_url` on the row, default note "✅ Successful — GCash payment sent."
+- **User history:** inside the cashout modal (`/api/gcash/my-requests`) — approved rows show "✅ SUCCESSFUL · GCash sent! Ref #: … · View receipt ↗"; rejected/refunded rows link the refund tx on Celoscan.
+- **On-chain confirmation race (2026-08 follow-up):** the backend used to look up the tx receipt exactly once, right after broadcast → "Transaction not found on-chain" even though the G$ had left the user's wallet. Now the frontend `_gcashWaitForReceipt(provider, txHash, 36)` (~90s, same poll pattern as `minipay-gas-topup.js`) waits for the receipt before POSTing, and `verify_payment_tx` polls again (`GCASH_RECEIPT_LOOKUP_ATTEMPTS` × `GCASH_RECEIPT_LOOKUP_INTERVAL_SEC`, default 8×2.5s) as the safety net. Timeout tells the user to NOT resubmit (would double-send) and to contact support with the tx hash; a reverted receipt aborts cleanly.
+- **Locked local-wallet dead button (2026-08 follow-up):** `_lwUnlockIfNeeded`/`_lwIsNeeded` were declared inside the claim IIFE in wallet.html — callers outside it (`submitGcashCashout`, `doSend`, raffle signer) got undefined → PIN prompt never opened and the button looked dead. Claim worked because it lives inside the same IIFE. Fixed by exposing both on window after their declarations; `submitGcashCashout`'s unlock catch now surfaces non-cancel errors instead of silently returning. **Any new page/modal calling the unlock helpers must rely on the window-exposed globals.**
+- **"Could not decode transfer event from transaction." — root cause & fix (2026-08 follow-up):** `gcash/service.py`'s `ERC20_ABI` had only the `transfer`/`balanceOf` *functions* — no Transfer **event** — so `token.events.Transfer()` raised on EVERY legitimate cashout and the blanket `except` returned "Could not decode transfer event…" even though the user's G$ had reached `GCASH_ADDRESS` (funds stuck, no record). Fixed:
+  - `verify_payment_tx` now decodes Transfer logs **manually by topic** (`TRANSFER_TOPIC`, `decode_gd_transfers` — same ABI-free pattern as reloadly/learn_and_earn) and returns a **3-tuple** `(ok, error, transfer)`; `transfer` (actual received amount) is non-None whenever G$ reached the cashout address, even on amount mismatch.
+  - **Auto-refund safety net:** when verification fails but funds arrived, `submit_cashout` calls `auto_refund_failed_cashout()` — records the row (actual received amount), CAS-claims, and refunds the exact received amount immediately. Duplicate tx_hash → 409 (idempotent, no double-refund). Refund failure parks the row `refund_failed` with a friendly "safe — will be refunded" message.
+  - **Refund robustness (reloadly lessons applied):** `send_refund` uses `_wait_for_receipt_patient` (returns None instead of raising on receipt timeout) → `submitted_unconfirmed` WITH `tx_hash`; `process_claimed_refund()` checks any prior broadcast refund tx on-chain (`check_refund_tx_status`: confirmed→refunded, pending→stay parked, reverted→re-send) BEFORE re-sending — no double-refund.
+  - **refund_failed is retryable:** the auto-refund scheduler `_fetch_refundable` also picks `refund_failed` rows older than `GCASH_REFUND_FAILED_RETRY_AFTER_SEC` (default 3600s), and admins get `POST /api/gcash/admin/requests/<id>/retry-refund` + a "🔁 Retry Refund" button on refund_failed rows in the dashboard.
+  - **SQL migration MUST be re-run:** `sql/gcash_cashout.sql` relaxes `amount_gd` CHECK from `>= 5000` to `> 0` (auto-refund rows record the actual received amount, which can be below the minimum; the 5,000 min is still app-enforced for new cashouts).
+- Tests: `tests/test_gcash_cashout_content.py`.
 
-- `SUPABASE_URL` — Supabase project URL
-- `SUPABASE_ANON_KEY` — Supabase API key
-- `SUPABASE_SERVICE_ROLE_KEY` — Supabase service-role key (server-side only). Required to upload P2P payment-proof attachments to the private `payment-proofs` Storage bucket.
-- `SECRET_KEY` — Flask session secret key
-- `WALLETCONNECT_PROJECT_ID` — WalletConnect project ID
-- `CELO_RPC_URL` — Celo RPC endpoint (defaults to `https://forno.celo.org`)
-- `GOODDOLLAR_CONTRACT` — GoodDollar token contract address
-- `MERCHANT_ADDRESS` — Merchant wallet address for minigames
-- `GAMES_KEY` — Private key for games blockchain transactions
-- `COMMUNITY_KEY` — Private key for community stories rewards
-- `PRODUCTION_DOMAIN` — Production domain (defaults to `https://goodmarket.live`)
+## Username setup prompt after local login (2026-08)
+After ANY successful local login (create OR unlock), users with no username land on a username-setup step (`#lwUsernameStep` in `templates/homepage.html`) BEFORE redirecting to `/wallet`. The gate is **data-driven, not account-age-driven**: `_lwCompleteLogin(data)` (async) fetches `GET /api/user/username` and shows the step only when `username` is null — so older accounts created before this flow get prompted on their next login too. A failed lookup must NOT block login (the fetch is wrapped in try/catch and falls through to the normal redirect). The step posts to the existing `POST /api/user/username` (`@auth_required` — session already exists post-login), validates `^[A-Za-z0-9_]{3,24}$` client-side (same rule as the backend), caches `sessionStorage['username']`, then redirects. A "Skip for now" link (`skipLocalWalletUsername`) redirects without saving — skippers get prompted again next login. The wallet page picks the username up automatically via `loadPortfolioCardholder()` → `GET /api/user/username`. `showLocalWalletPanel`/`_lwRenderPhraseStep` must hide `lwUsernameStep` when resetting steps. Tests: `tests/test_local_wallet_username_setup_content.py` (no deps).
 
-### Learn & Earn Streaming Payouts (optional)
+## Local wallet PIN — 8 digits for new wallets, 6-or-8 for unlock (2026-08)
+New wallets are created with **8-digit PINs**; legacy wallets keep their **6-digit** PINs and must unlock forever. The rule is split in `static/js/local-wallet.js`:
+- `_normalizePin` (unlock/decrypt, lenient): `/^(?:\d{6}|\d{8})$/` — NEVER tighten this to 8-only, it would brick every legacy account (the digit rule is client-side; ethers decrypts with any string).
+- `_normalizeNewPin` (create only, strict): exactly 8 digits + `_isWeakPin` blocklist (all-same-digit, repeated halves like 12341234, 2-digit repeats like 12121212/34343434, straight runs like 12345678/87654321, static `_WEAK_PINS` list). Birthday-style PINs (07161999) are ALLOWED. `create()` uses this; exported as `GMLocalWallet.normalizeNewPin`.
+- `GMLocalWallet.pinStrength(pin)` returns `'empty'|'typing'|'weak'|'strong'` for the live meter; `_isWeakPin` only judges all-digit input (incomplete typing is never "weak"). homepage.html `lwPinStrengthHint()` renders it under `#lwPin` (create mode ONLY — unlock mode hides it so legacy 6-digit PINs never show "weak"); hidden on mode switch and after `_lwCompleteLogin`.
+- `templates/homepage.html` `submitLocalWallet` validates per mode: create → `normalizeNewPin`, unlock → `normalizePin`; `#lwPinLabel` flips "8-digit PIN" / "PIN (6 or 8 digits)" in `setLocalWalletMode`.
+- Unlock modals (`local-wallet.js` `_lwInjectModal`, `templates/wallet.html` `#lwUnlockModal` + `static/js/wallet-main.js` `_lwUnlockSubmit`) accept 6-or-8, `maxlength="8"`, copy says "Enter your PIN" (no digit count).
+- The PIN is never stored anywhere (no hash, no server copy) — the scrypt keystore itself is the verifier; a wrong PIN simply fails decryption.
+- Tests: `tests/test_local_wallet_content.py` (`test_js_pin_rules_and_email_normalized`, `test_js_create_uses_strict_new_pin_rule`, `test_js_weak_pin_blocklist`, `test_js_unlock_modal_accepts_legacy_and_new_pins`, `test_homepage_create_validates_strict_unlock_lenient`, `test_homepage_pin_inputs_allow_8_digits`).
 
-Learn & Earn supports paying quiz rewards as a Superfluid stream over a configurable duration instead of as a single instant transfer. The flow is off by default and falls back to the legacy instant transfer automatically when any prerequisite is missing, so leaving these env vars unset keeps the current behaviour intact.
+## Local wallet unlock fix (2026-08)
+The unlock modal (`_lwOpenUnlockModal` in `static/js/local-wallet.js`) used to show a blanket "Unlock failed." for every error — a correct PIN could still fail when the cached keystore belonged to a different wallet (address mismatch) or when the device had no local copy (server keystore only). Fixed:
+- **Specific error messages:** `describeUnlockError()` maps the decrypt error ("Incorrect PIN or corrupted wallet backup.") to "Wrong PIN.", surfaces "No wallet found on this device…" and "Cached wallet belongs to a different address…" instead of the misleading blanket text.
+- **Server-keystore fallback:** when no local keystore exists, the modal calls `/api/local-wallet/keystore?email=…` (public endpoint — the keystore is encrypted and useless without the PIN) and tries to unlock with that copy before failing. The login page (`templates/homepage.html` `_lwCompleteLogin`) persists the email in `sessionStorage['lw_session_email']` + `window.GMLocalWalletEmail` so `_getSessionEmail()` can find it.
+- **Stale-keystore cleanup:** on address mismatch, `clearLocalKeystore()` removes the wrong cached copy so the next login re-caches the correct one.
+- **GCash nav:** the "GCash Cashout" button moved from the Wallet bottom-sheet to the bottom navigation bar, directly after "News" (`templates/wallet.html`).
+- **Hidden PIN prompt / "walang nangyayari" (2026-08 follow-up):** every `.modal-overlay` in wallet.html shares `z-index: 200`, and `lwUnlockModal` sits EARLIER in the DOM than sendModal/receiveModal/gcashModal/settingsModal/streamModal — so the PIN unlock sheet opened INVISIBLE behind the triggering modal and the awaiting flow (e.g. `submitGcashCashout`) hung forever with zero visible feedback. Fixed with `#lwUnlockModal { z-index: 400; }`; the unlock modal must always out-stack any feature modal. Claim worked because claimModal precedes lwUnlockModal in the DOM. Also: unlock-cancel in `submitGcashCashout` now returns quietly instead of re-throwing into an unhandled rejection.
+- Tests: `tests/test_local_wallet_unlock_fix_content.py` (12 tests, no deps).
 
-- `LEARN_EARN_PAYOUT_MODE` — `instant` (default) or one of `stream` / `stream_1day` / `streaming` / `stream_payout` to enable streaming. When set to a streaming alias, the quiz submit path queues a row in `learn_earn_streams` instead of sending G$ directly.
-- `LEARN_EARN_STREAM_DURATION_SECONDS` — Stream duration. Default `86400` (1 day).
-- `LEARN_EARN_STREAM_TOKEN_ADDRESS` — Address of the GoodDollar SuperToken (Superfluid-compatible wrapper) on Celo. Required.
-- `GOODDOLLAR_SUPERTOKEN_ADDRESS` — Alternate name accepted for the SuperToken address above (the first one set wins).
-- `SUPERFLUID_HOST_ADDRESS` — Superfluid Host contract on Celo. Required.
-- `SUPERFLUID_CFA_V1_ADDRESS` — Superfluid Constant Flow Agreement v1 contract on Celo. Required.
-- `LEARN_EARN_STREAM_SCHEDULER_ENABLED` — Force the in-process stream worker on (`1`) or off (`0`). Defaults to ON whenever `LEARN_EARN_PAYOUT_MODE` is a streaming alias.
-- `LEARN_EARN_STREAM_WORKER_INTERVAL_SECONDS` — How often the in-process worker wakes up. Default `120` (2 min). Minimum `15`.
-- `LEARN_EARN_STREAM_WORKER_START_BATCH` — Max `pending_start` rows processed per cycle. Default `50`.
-- `LEARN_EARN_STREAM_WORKER_STOP_BATCH` — Max due `active`/`pending_stop` rows stopped per cycle. Default `100`.
-- `LEARN_EARN_STREAM_WORKER_BOOT_DELAY_SECONDS` — How long each worker waits before its first cycle on boot. Default `20`.
-- `LEARN_EARN_STREAM_WORKER_TOKEN` — Bearer token for `POST /learn-earn/process-streams`. Only needed if you want to trigger the worker manually from an external cron or ops shell; the in-process scheduler does not use it.
+## Referral program — local-wallet gate + auto-disbursement (2026-08)
+Rewards: referrer 1000 G$, referee 500 G$. Referrals are **recorded ONLY** when the referee creates a brand-new account with the **local (email + PIN) wallet** on the homepage — `POST /api/local-wallet/register` is the single place `record_referral()` is called. The referral code box exists only on that create form (`#lwReferralCode` in `templates/homepage.html`); the Privy box was removed and the legacy `templates/login.html` referral input was deleted. Wallet logins (`/verify-identity`, `/verify-ubi`) **ignore** any referral_code and reply with a `referral_warning` explaining the local-wallet requirement. The **referrer can use ANY provider** (injected / WalletConnect / Privy / local) — only the referee's signup method matters.
+- **Auto-disburse triggers:** after face verification (`/fv-callback` in main.py), on wallet login when already verified (`/verify-identity`, `/verify-ubi`), and on confirmed UBI claim (`/api/claims/v2/confirm` in routes.py). All go through the shared helper `ReferralService.auto_disburse_pending_referral(wallet, source=...)` (+ `_async` fire-and-forget variant) which **CAS-claims** the referral row (`claim_pending_referral_for_disbursement`) before disbursing — concurrent triggers / multi-worker gunicorn can never double-pay. `process_referral_disbursement`'s per-leg reward-log duplicate checks are the second layer.
+- **Gas/balance robustness:** `referral_program/blockchain.py` `disburse_referral_reward` preflights the REFERRAL_KEY wallet's G$ balance AND CELO gas (dynamic `estimate_gas` ×1.3, fallback 250k); low balance or gas returns `pending: True` + `insufficient_balance`/`insufficient_gas` so the referral queues as `pending_disbursed` instead of `failed`. `get_referral_wallet_balance()` also returns `celo_balance`/`celo_balance_wei`; `/api/admin/referral/key-balance` exposes them + `has_gas`.
+- **Background reconciler:** `referral_program/referral_reconciler.py` (same pattern as ubi_reminder), env-gated `REFERRAL_RECONCILER_ENABLED` (default ON), `REFERRAL_RECONCILER_INTERVAL_SEC` (900), `REFERRAL_RECONCILER_STUCK_HOURS` (1). Each tick runs `reconcile_stuck_referrals()` (re-checks old `pending_face_verification` rows) + `process_pending_disbursements()` (retries queued legs after a top-up). Wired in main.py with the other schedulers.
+- **Admin dashboard:** referral page explains the auto flow; REFERRAL_KEY status shows a CELO gas card + low-G$/no-gas alerts; pending list shows per-row `error_message`; approve/retry handles the queued (`result.pending`) response; `REFERRAL_RETRYABLE_STATUSES` = pending_face_verification, disbursing, failed, pending_disbursed.
+- **Origin-aware referral links (2026-08 follow-up, e.g. vercel.app domain):** `referral_program/referral_service.py` `build_referral_link(code)` builds the share link from `flask.request.host_url` when inside a request, falling back to `BASE_URL` (reconciler/schedulers). Used by `/api/referral/my-code` fast path + all `referral_link` fields. Browser templates double-check with a regex origin rewrite: `referralLinkOnCurrentOrigin` (dashboard.html), `withCurrentOrigin` (`_claim_celebration.html`, incl. its localStorage cache). When touching share links use the helper, not `f"{BASE_URL}/..."`.
+- Tests: `tests/test_referral_local_wallet_gate_content.py` (33 tests, no deps).
 
-Before flipping `LEARN_EARN_PAYOUT_MODE` to streaming, apply the migration in `sql/learn_earn_streaming_payouts.sql` to your Supabase project. If the table is missing the quiz submit path will log a warning and fall back to instant rewards automatically — users will not see an error, but no streaming will happen until the table exists.
+## Daily voucher — GoodMarket-users-only gate (2026-08)
+The daily voucher (`/api/voucher/claim` in routes.py, banner in `templates/wallet.html`) is claimable ONLY by GoodMarket-created accounts — sessions with `login_method == "local"` (the in-app wallet from `static/js/local-wallet.js`). WalletConnect / injected MetaMask / MiniPay / Privy logins get 403 `{not_eligible: true}` from the backend (checked BEFORE the claim mark) plus a client-side fail-fast in `claimDailyVoucher()` showing a "🚫 Not Eligible" modal. Banner copy updated accordingly (no longer "for everyone"). Tests: `tests/test_voucher_local_gate_content.py` (no deps).
 
-## Admin Feature Visibility Controls
+## Daily voucher — failed attempts don't consume the voucher (2026-08)
+`/api/voucher/claim` previously marked the daily voucher `is_claimed=true` the moment a user tapped the button — so a failed on-chain attempt consumed the voucher. Now the claim endpoint only returns the link; `/api/voucher/confirm` is the ONLY place that marks `is_claimed` (CAS on `is_claimed = False`), after the on-chain withdraw succeeds. Frontend mirrors this: `claimDailyVoucher()` no longer hides the banner on POST success; `voucherDappClaim()` / `wcExecuteClaim()` hide it only after their `/api/voucher/confirm` POST. Also: `voucherDappClaim()` routes `login_method == 'local'` through `GMLocalWallet.getProvider()` after `_lwUnlockIfNeeded()`, and `#lwUnlockModal` z-index is 100000 so the PIN modal out-stacks `voucherResultModal` (inline z-index 99999).
 
-Admins can show or hide the `/swap` and `/wallet` pages from the admin dashboard under the **Feature Visibility** section. When hidden, users visiting those pages are shown a friendly "Feature Unavailable" page instead.
+## Wallet page — "Soft Sunrise" light theme (2026-08)
+`templates/wallet.html` was re-skinned from dark navy to a modern light theme (RewardJoy-style: warm cream canvas `#f7f4ef`, white cards, soft orange accent `#f97316`/`#ea580c`).
+- **How it's built:** a "Soft Sunrise" override section appended at the END of the main `<style>` block — original dark rules are untouched, the override wins by cascade order. It redefines all `:root` variables (`--accent-rgb: 249,115,22`, `--gold`/`--gold-deep` → orange, `--green: #16a34a`, `--text: #292524`, `--card-border: #e9e2d6`, `--card-soft`) plus per-component overrides (balance-card keeps a colored hero gradient — sunrise orange; UBI orb, claim box, tabs, token/tx lists, modals, forms, bottom nav, raffle, savings, alerts).
+- **Inline-style migration:** many modals/JS templates had hardcoded dark inline styles (`color:#fff`, `rgba(255,255,255,0.0x)` panels, `#00e676`/`#ff7070`/`#fde68a`/`#a78bfa` status text) — these were swapped in-place to light-theme equivalents (`var(--text)`, `var(--card-border)`, `#16a34a`/`#dc2626`/`#92400e`/`#7c3aed`, `rgba(67,56,43,…)` neutrals). When adding new markup/JS HTML to wallet.html, use the CSS variables, not white-on-dark literals. The voucher celebration modal (`voucherResultModal`) intentionally keeps its dark gradient card as a spotlight modal.
+- **Spinner gotcha:** `.spinner` is orange by default (light surfaces); `.btn-primary .spinner` overrides to white for the orange buttons.
+- **JS status colors:** `setStatus(..., color)` calls now pass light-readable colors (`#d97706` warnings, `#7c3aed` info, `#15803d` success).
+- Verified by rendering the template with jinja2 (stub `url_for`) + browser screenshots of page + every modal. All 149 wallet content tests pass; the 6 `test_ubi_reminder_content.py` failures are pre-existing on main (need `requests`).
 
-- Settings stored in the `maintenance_settings` Supabase table using `feature_name` values `swap_feature` and `wallet_feature`.
-- Public API: `GET /api/feature-visibility` — returns `{ swap_visible, wallet_visible }`.
-- Admin API: `GET/POST /api/admin/feature-visibility` — reads/updates settings (admin auth required).
-- New template: `templates/feature_unavailable.html` — shown when a feature is hidden.
+## Local-wallet UX copy — "Log in" / "Sign this transaction" (2026-08, PR #200)
+User-facing copy avoids the word "Unlock": the homepage Get Started toggle says **"Log in with email + PIN"** (submit: "Log in to my account"), and every local-wallet PIN prompt says **"Sign this transaction" / "Sign & Continue" / "Signing…"** — the prompt almost always precedes a tx signature, and "unlock" read like a re-login. `window._lwOpenUnlockModal(opts)` in `static/js/local-wallet.js` accepts optional copy overrides (`{title, subtitle, submitLabel, busyLabel}`) for future message-signing (non-tx) prompts; defaults are tx-signing. `templates/wallet.html` has its own richer modal with the same copy. Internal identifiers (`setLocalWalletMode('unlock')`, `isUnlock`, `lwUnlockModal` ids, `unlockWithKeystore`) intentionally kept — code-only.
 
-## Daily Voucher Feature
+## Wallet page — modal stacking / hidden-modal dead buttons (2026-08)
+All `.modal-overlay` modals in `templates/wallet.html` share `z-index: 200`, and the bottom nav (`.wallet-bottom-nav`) is `z-index: 1200` — so the nav stays tappable while a modal is open, and a second modal triggered from it (via `bnGo` → `openModal`) stacks by DOM order. If the new modal is EARLIER in the DOM than the open one (e.g. `sendModal` vs `gcashModal`), it opens invisibly behind it — dead button, zero feedback. Fix: `openModal(id)` closes any other open `.modal-overlay` first, EXCEPT `lwUnlockModal` (the PIN prompt, z-index 100000, stacked deliberately over the triggering modal — closing it would strand the awaiting sign flow). New modals opened on top of an existing flow must bypass `openModal` (direct `classList.add('open')`), like `lwUnlockModal`/`savingsPopupModal` do. Tests: `tests/test_wallet_modal_stacking_content.py` (no deps).
 
-A daily payment link voucher that appears on the wallet page every day at **2PM PHT** (UTC+8) and disappears the moment someone claims it.
+## Wallet page — load performance (2026-08)
+Wallet page slowness was NOT the animations or dead code per se — the two big costs were: (1) the **Privy SDK** (React + `@privy-io/react-auth` via esm.sh module-graph waterfall, several hundred KB of 3rd-party requests) loading on EVERY page load even though every consumer guards on `IS_PRIVY_LOGIN`, and (2) the ~500 KB `wallet.html` (~88 KB CSS + ~345 KB inline JS) being served `no-cache, no-store` (see `main.py` `_add_cache_headers`) so it is re-downloaded and re-parsed on every visit — heavy for low-end phones.
+- **Privy SDK is now Jinja-gated**: `{% if (login_method or '')|lower == 'privy' %}` wraps `privyWalletMount` + the `<script type="module">` esm.sh imports in wallet.html. All `GMPrivy*` consumers (`_walletGetPrivyProviderIfPreferred` etc.) fast-path on `IS_PRIVY_LOGIN`, so non-Privy sessions never miss the globals. If a NEW Privy consumer is added, it must guard the same way.
+- **Inline JS extracted to versioned static bundles (immutable-cached):** the five inline `<script>` blocks (~345 KB) now live in `static/js/wallet-main.js` (270 KB, main logic), `wallet-streams.js` (Superfluid P2P), `wallet-voucher.js` (daily voucher), `wallet-lazyload.js` (idle ethers/QR preload), `wallet-bottomnav.js` (bottom sheets), all loaded via `url_for(..., v=ASSET_VERSION)` so the 1-year immutable `/static/` cache applies. Per-request Jinja values (`wallet`, `login_method`, `privy_wallet_client_type`, `gd_token_address`, `raffle_contract_address`, `walletconnect_project_id`, `ASSET_VERSION`) are passed through a tiny inline `window.GM_WALLET_BOOT = {...|tojson}` object right before `wallet-main.js`. wallet.html is now ~152 KB (was ~505 KB); repeat visits only re-download that, not the JS. **Never re-inline big scripts into wallet.html** (a size-budget test guards this); add new wallet JS to the appropriate bundle. Content tests read the effective page via `tests/wallet_page_src.py` (`append_wallet_bundles`/`read_wallet_page`) — if a new bundle is added, append it to `WALLET_EXTRACTED_JS` there.
+- **Paint-heavy animations fixed:** never animate `box-shadow` or `left`/`top` in `@keyframes` (full repaint/layout every frame). `claimPulse`/`claimIconPulse`/`voucherPulse`/`ubiClaimEmberPulse`/`heroOrbPulse` were replaced with opacity-only pseudo-element glows (`claimIconGlow`, `voucherGlow`, `ubiClaimEmberGlow` on `#ubiClaimBtn.is-hot::before`) or removed; the voucher shine sweep uses `translateX` (475% of the 40%-wide strip == old -60%→130% left travel). Remaining cheap loops: `claimHalo`, `claimBadgeFloat`, `sparkleAnim`, `claimBoxGlow`, `spin`, `heroOrbHalo`, `ubiClaimHeatShift` (background-position shimmer on the small claim button — deliberate). A `prefers-reduced-motion: reduce` block (two places: after the Plasma Ember CSS and at the end of the Soft Sunrise override) disables all decorative loops (spinners keep spinning — they signal in-flight work).
+- **Dead code removed:** `FUSE_PRIVY_CHAIN` (never in `GM_PRIVY_SUPPORTED_CHAINS`), the `loadFuseBalances` no-op stub + its 3 call sites (Fuse is no longer a displayed token; `fuseBal`/`fuseGdBal` stay 0 for the still-reachable `/api/fuse/prepare-send` path), and 264 cascade-dead CSS declarations (~12 KB, mostly the pre-override dark-theme colors — e.g. the entire base `:root` dark variable block) that the Soft Sunrise override re-declares with the same selector+property+at-rule context. The dedup was done with a verified one-off script (tinycss2; winner-per-key cascade equality check) — only exact same-selector/same-property/same-context duplicates with no `!important` were removed, so layout-only base rules remain. When adding override styles, prefer editing the surviving base rule if it's the ONLY remaining definition (the override section is for re-skins, not duplicates).
+- Tests: `tests/test_wallet_load_perf_content.py` (no deps).
 
-### How it works
-1. **Admin** goes to Admin Dashboard → **Daily Voucher** → pastes the payment link URL → clicks Save.
-2. At 2PM PHT, a golden animated banner appears on every logged-in user's wallet page with a **"Claim GoodMarket Voucher"** button.
-3. The **first user** to click the button claims it — the banner immediately disappears for everyone.
-4. The admin can Reset the claim status to make it claimable again if needed.
+## Wallet tx history — Celo was silently empty (2026-08)
+Wallet history (`/api/wallet/transaction-history` -> `get_comprehensive_tx_history` in blockchain.py) showed ONLY XDC txs. Root cause: `forno.celo.org` rejects `eth_getLogs` spanning >5000 blocks ("query exceeds range"), and `_get_logs_full` used 10000-block chunks whose errors were silently dropped — so the entire Celo scan (G$/cUSD/USDT/USDC sends, receives, swaps AND the G$ UBI claim, classified from the Transfer event whose sender is the UBI proxy) returned nothing and only the XDC merge survived.
+- Same root cause also silently broke `has_recent_ubi_claim` (its single-shot 7-day getLogs always errored -> "no recent claim"); both its Transfer and UBI-event scans now route through `_get_logs_full`.
+- Fix layers: `_get_logs_full` clamps chunks to `GETLOGS_MAX_CHUNK` (env, default 4000) and retries any errored chunk via `_get_logs_range_adaptive` (halves the range on "range/limit/exceed" errors, fails over across `_celo_rpc_urls()` on transient errors like forno's -32011 "no backend healthy"); the batch POST itself also fails over to `CELO_RPC_FALLBACKS` (env-overridable: forno, ankr, drpc). UBI claims need no extra scan — they arrive as G$ Transfer events from UBI_PROXY and classify to `claim` / "G$ UBI Claim" once fetching works.
+- Tests: `tests/test_tx_history_celo_content.py` (content + functional via stubbed requests/web3, no deps). Run with `python -m unittest tests.test_tx_history_celo_content`.
 
-### Database table required
-Run `create_daily_voucher_table.sql` in your Supabase SQL Editor to create the `daily_voucher` table before using this feature.
+## Wallet tx history — 120s timeout / "Loading transactions..." forever (2026-08 follow-up)
+After the Celo fix landed, the history endpoint went from fast-but-empty to >120s (gunicorn `timeout = 120` in gunicorn.conf.py kills the worker → frontend spinner never resolves). Measured causes: (1) `_format_timestamp` was called **per raw log** (~500 sequential `eth_getBlockByNumber` round-trips); (2) 8 per-token scans × 61 chunks fired ~500 getLogs at forno, which **throttled concurrent 25-item batches to 130+s each**; (3) the scans themselves ran serially (~85s). Fixes in `get_comprehensive_tx_history`: the 4 tokens are queried as ONE `eth_getLogs` address **array** per direction (2 scans instead of 8, token resolved from `log.address` via `addr_to_token`); sent/received scans + XDC fetch run in a ThreadPoolExecutor(3); timestamps are filled AFTER dedupe/trim via `_format_timestamps_batch` (one batched `eth_getBlockByNumber` per ≤50 blocks, falls back to the approx block-offset time); the swap-detection `eth_getTransactionByHash` batch fails over across `_celo_rpc_urls()`. `has_recent_ubi_claim` runs its 4 scans in a pool too. Cold fetch for a busy wallet: **~12s** (was 145s). Frontend `loadHistory` (wallet-main.js) has a 90s `AbortController` guard so a stalled request shows a retry message instead of spinning forever. Perf guards live in `tests/test_tx_history_celo_content.py` (`TestHistoryPerformanceGuards`).
 
-### API endpoints
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/voucher/daily` | User | Returns active voucher if after 2PM PHT |
-| POST | `/api/voucher/claim` | User | Claims the voucher (first-come-first-served) |
-| GET | `/api/admin/voucher` | Admin | Gets today's voucher status |
-| POST | `/api/admin/voucher` | Admin | Sets/updates the voucher link |
-| POST | `/api/admin/voucher/reset` | Admin | Resets claim status |
+## Send-link — fresh links flipping to "claimed" via RPC lag (2026-08, PR #222)
+Payment links on `/send-link` showed "✅ Claimed" seconds after sending. Root cause: `renderHistory()` in `templates/send-link.html` persisted `claimed` (localStorage + DB PATCH) the moment `otp.hasPayment(paymentId)` returned false — but forno is load-balanced and the node answering the `eth_call` can lag behind the node that served the deposit receipt, answering `hasPayment=false` for a registered payment. It also mislabelled **cancelled** links as claimed (false is the end state of BOTH exits).
+- **OTP escrow contract facts (Celo, `0xB27D247f5C2a61D2Cb6b6E67FEE51d839447e97d`):** deposits via G$ `transferAndCall` (G$ is an ERC1967 proxy — check the impl bytecode, not the proxy's). `payments(paymentId)` returns `(bool hasPayment, uint256 paymentAmount, address paymentSender)` and KEEPS sender/amount after settlement — only the bool flips — so `paymentSender == 0` provably means "deposit not visible to this node" (RPC lag), never a real claim. Withdraw event topic0 `0x39ca68a9f5d8038e871ef25a6622a56579cda4a6eedf63813574d23652e94048`, topics = (sender, receiver, **paymentId indexed**), amount in data; deposit event `0x6c9f23ee…`; `cancel()` emits NO withdraw event, so "settled + no withdraw event from deposit block to head" ⇒ cancelled.
+- **Fix:** read `payments()` instead of bare `hasPayment` (zero-sender → keep `active`, persist nothing); once settled, `_classifySettledPayment()` scans the withdraw event (topic3-filtered) from the deposit block (via `p.txHash`) in `GETLOGS_CHUNK=4000` chunks (forno rejects >5000) with a `SETTLE_SCAN_MAX_BLOCKS=500000` budget (~5.8 days at 1s blocks); undetermined → fallback `claimed` (common case; cancels self-persist `cancelled` from the cancelling device). Backend `/api/payment-links` is a dumb store — status is only ever set by the frontend, so all classification lives in send-link.html.
+- Tests: `tests/test_send_link_settlement_content.py` (content, no deps).
 
-## UBI claim + gas fallback flow
+## Testing
+- `tests/test_revert_data_handling.py` — content/behavior tests locking in the fix. Run with `python -m pytest tests/test_revert_data_handling.py`.
+- `tests/test_local_wallet_signing_content.py` — content tests locking in GMLocalWallet (local self-custodial) signing routing across swap/reloadly/claim/p2p/wallet/send-link/learn_and_earn. No deps; run with `python -m pytest tests/test_local_wallet_signing_content.py`.
+- `tests/test_gcash_cashout_content.py` — content tests for the GCash cashout feature (SQL, gcash/ package, wallet.html modal, admin dashboard, main.py wiring). No deps; run with `python -m pytest tests/test_gcash_cashout_content.py`.
+- `tests/test_ubi_reminder_content.py` — content tests for the Telegram UBI reminder (message builders + per-wallet processing). Run with `python -m unittest tests.test_ubi_reminder_content`.
+- `tests/test_wallet_load_perf_content.py` — content tests locking in the wallet load-performance fixes (Privy SDK Jinja gate, no box-shadow/`left` keyframe animations, Fuse dead code removal, JS bundle extraction + boot config, CSS dedup). No deps; run with `python -m pytest tests/test_wallet_load_perf_content.py`.
+- `tests/wallet_page_src.py` — shared helper, NOT a test file: wallet.html content tests must read the template plus the extracted `static/js/wallet-*.js` bundles (`append_wallet_bundles` / `read_wallet_page`).
+- `tests/test_ai_agent_tx_lookup_content.py` — functional (loads `ai_agent/tx_lookup.py` via importlib, no deps) + text-based wiring tests for the agent tx-hash lookup. Run with `python -m pytest tests/test_ai_agent_tx_lookup_content.py`.
+- `tests/test_broadcast_delivery_content.py` — durable Telegram broadcast delivery (error classification, queue, CAS claim, aggregates, retry cap, scheduler, routes, dashboard). Run with `python -m unittest tests.test_broadcast_delivery_content`.
+- `tests/test_referral_local_wallet_gate_content.py` — referral program revision (local-wallet-only recording, shared auto-disburse helper + CAS, gas preflight/queue, reconciler, admin dashboard, frontend gating). Run with `python -m pytest tests/test_referral_local_wallet_gate_content.py`.
+- `tests/test_send_link_settlement_content.py` — send-link settlement-status fix (payments()-struct lag guard, withdraw-event claimed/cancelled classification, getLogs chunking). No deps; run with `python -m pytest tests/test_send_link_settlement_content.py`.
+- Many tests need `flask` / `requests` (not installed in the base env). Content tests (`test_*_content.py`) run without deps.
+- JS syntax: `node --check static/js/<file>.js`. For template inline JS, strip Jinja `{{ }}`/`{% %}` first (see tests for the regex approach).
 
-The wallet claim flow now performs a safe sequence before sending `claim()`:
-
-1. **Entitlement check** (`GET /api/ubi-entitlement`)  
-   - Checks identity whitelist first (`isWhitelisted`).  
-   - If verified, checks UBI entitlement (`checkEntitlement(wallet)`).  
-   - Returns `is_verified`, `can_claim`, `entitlement`, `entitlement_formatted`, and `reason` when blocked.
-2. **Gas readiness check** (`POST /api/faucet/status`)  
-   - Estimates claim gas reserve (`eth_estimateGas * eth_gasPrice` with buffer).  
-   - Compares required reserve vs CELO wallet balance.
-3. **Faucet attempt** (`POST /api/faucet/gas`)  
-   - Calls GoodDollar faucet API first.  
-   - Falls back to on-chain top-up if API fails.
-4. **On-chain fallback** (`POST /api/faucet/onchain`)  
-   - Uses `GAMES_KEY` server-side to call faucet `topWallet(address)`.
-5. **Balance poll + claim tx**  
-   - Frontend waits for CELO balance increase, then prompts user to approve `claim()`.
-
-### Sequence diagram
-
-```mermaid
-sequenceDiagram
-    participant FE as wallet.html
-    participant BE as Flask API
-    participant CH as Celo/GoodDollar
-
-    FE->>BE: GET /api/ubi-entitlement
-    BE->>CH: isWhitelisted + checkEntitlement
-    CH-->>BE: eligibility/entitlement
-    BE-->>FE: can_claim + entitlement
-
-    FE->>BE: POST /api/faucet/status
-    BE->>CH: estimateGas + gasPrice + getBalance
-    CH-->>BE: gas readiness
-    BE-->>FE: gas_ready?
-
-    alt gas insufficient
-      FE->>BE: POST /api/faucet/gas
-      BE->>CH: GoodServer API topWallet
-      alt API fails/declines
-        BE->>CH: POST /api/faucet/onchain (GAMES_KEY signs tx)
-      end
-      FE->>BE: poll /api/faucet/status
-      BE->>CH: getBalance
-      CH-->>BE: updated balance
-      BE-->>FE: gas_ready=true
-    end
-
-    FE->>CH: claim() tx (user approves in wallet)
-```
-
-### Basic test checklist
-
-- Happy path: verified wallet + enough CELO → direct claim prompt.
-- Happy path: verified wallet + low CELO → faucet API top-up → claim succeeds.
-- Fallback path: faucet API fails → on-chain fallback tx via `GAMES_KEY` succeeds.
-- Failure: wrong connected wallet → user gets actionable wallet mismatch error.
-- Failure: not verified / no entitlement → claim button disabled with clear reason.
-- Failure: faucet unavailable or timeout → clear retry/support message.
-- Failure: user rejects signature or tx → cancellation message shown.
-- Duplicate protection: repeated refill attempts within 30 minutes are blocked.
-
-## Deployment
-
-### Replit Autoscale
-Configured for **autoscale** deployment. Run command: `gunicorn --config gunicorn.conf.py main:app`
-
-The WalletConnect sidecar (`wc_service.js`) is started automatically by the Flask app at runtime if `WALLETCONNECT_PROJECT_ID` is set — no separate process needed in deployment.
-
-### Vercel
-- `vercel.json` is configured to deploy the Flask app using `@vercel/python`
-- `.vercelignore` excludes large/unnecessary files (node_modules, .pythonlibs, uv.lock, etc.)
-- `requirements.txt` contains all Python dependencies for Vercel to install
-- WalletConnect sidecar is gracefully skipped on Vercel (Node.js subprocess not available in serverless Python runtime; browser-side WalletConnect fallback is used)
-- All environment variables must be set in the Vercel project dashboard
-
-**Required Vercel Environment Variables:**
-| Variable | Description |
-|----------|-------------|
-| `SECRET_KEY` | Flask session secret key |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (server-side only; uploads P2P payment proofs) |
-| `WALLETCONNECT_PROJECT_ID` | WalletConnect project ID |
-| `CELO_RPC_URL` | Celo RPC endpoint (default: `https://forno.celo.org`) |
-| `GOODDOLLAR_CONTRACT` | GoodDollar token contract address |
-| `LEARN_WALLET_PRIVATE_KEY` | Private key for Learn & Earn reward disbursement |
-| `LEARN_EARN_CONTRACT_ADDRESS` | Learn & Earn smart contract address |
-| `DAILY_TASK_CONTRACT_ADDRESS` | Daily Task smart contract address (legacy — no longer used at runtime; kept for the historical deploy script) |
-| `DAILYTASK_KEY` | Private key for the wallet that pays Twitter / Telegram daily-task rewards via direct G$ ERC-20 transfers |
-| `COMMUNITY_KEY` | Private key for community stories rewards |
-| `GAMES_KEY` | Private key for minigame transactions |
-| `REFERRAL_KEY` | Private key for referral rewards |
-| `DISCOURSE_TASK_KEY` | Private key for Discourse task rewards |
-| `IMGBB_API_KEY` | ImgBB API key for image uploads |
-| `PRODUCTION_DOMAIN` | Production domain (e.g. `https://goodmarket.live`) |
-| `PAYMENT_LINK_ENC_KEY` | Encryption key for payment links |
-| `CELOSCAN_API_KEY` | Celoscan API key (optional) |
-| `TELEGRAM_BOT_TOKEN` | Bot token from BotFather (required for Telegram bot routes) |
-| `TELEGRAM_WEB_APP_URL` | Public base URL opened by Telegram Mini App buttons (e.g. `https://good-market-community.vercel.app`) |
-| `TELEGRAM_WEBHOOK_SECRET_TOKEN` | Optional shared secret for validating Telegram webhook calls |
-
-## Savings v6 — Weekly / Monthly Rewards
-
-The G$ Savings vault source is being prepared as **GDSavings v6** to simplify
-the UX to only two lock periods: Weekly (7 days) and Monthly (30 days).
-
-### What changed vs. v4
-
-| | **v4** (previous) | **v6** (prepared) |
-|---|---|---|
-| Lock periods | Fixed ladder: 1, 30, 60, …, 330, 365 days | Weekly (7d) or Monthly (30d) |
-| Tokens accepted | G$, CELO, cUSD | G$, CELO, cUSD, **USDT** (6-decimal, native USD₮ on Celo) |
-| Monthly rewards | 1 day → +30 G$ / 30d → +500 G$ / 365d → +20,000 G$ | **1,000–4,999 G$ → 50 G$; 5,000–9,999 G$ → 250 G$; 10,000–49,999 G$ → 500 G$; 50,000–99,999 G$ → 2,500 G$; 100,000+ G$ → 10,000 G$** |
-| Weekly rewards | — | **Monthly reward / 4**, rounded down |
-| Top-up rules | Inherits original unlock date | Inherits original unlock date (unchanged) |
-| Early withdrawal | Not allowed | Not allowed (unchanged) |
-
-The v6 contract will become the runtime savings contract once it is
-redeployed. Legacy v2/v4 support has been removed from the Savings UI/backend,
-so new deploys and all user flows are being aligned to v6.
-
-### Per-token deposit limits
-
-| Token | Decimals | Min deposit | Max deposit |
-|-------|----------|-------------|-------------|
-| G$    | 18 | 1,000 | 10,000,000 |
-| CELO  | 18 | 1 | 100,000 |
-| cUSD  | 18 | 1 | 1,000,000 |
-| USDT  | **6**  | 1 | 1,000,000 |
-
-`100k G$ equivalent` = 100,000 G$ / 100 CELO / 100 cUSD / 100 USDT  
-`1M G$ equivalent`  = 1,000,000 G$ / 1,000 CELO / 1,000 cUSD / 1,000 USDT
-
-### Deploying v6
-
-Run the deployment script with `SAVING_KEY` set to the deployer wallet's
-private key. The USDT address defaults to native Tether on Celo
-(`0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e`); override `USDT_TOKEN_ADDRESS`
-to deploy against a different USDT contract.
-
-```bash
-uv run python contracts/deploy_savings_contract.py
-```
-
-The script writes the new contract address + ABI to
-`contracts/savings_deployment_info.json`. After a successful deploy:
-
-1. Update `SAVINGS_CONTRACT_ADDRESS` in the deployment environment.
-   If unset, the app defaults to the custom-duration savings vault
-   `0x56Ae711E89389F324237a307132b2F397f5868Fd`. Keep previous vaults
-   withdrawable by setting `LEGACY_V5_CONTRACT_ADDRESS`; if unset, the app
-   defaults the legacy withdraw-only vault to
-   `0x772feE25Fe03B1B18b7A916fEE237333Ec2f217e`.
-2. Set `USDT_TOKEN_ADDRESS` to match the address used at deploy time
-   (defaults match the script).
-3. If the new deploy block differs from the previous value (65917286),
-   update `SAVINGS_DEPLOYMENT_BLOCK` in `templates/savings.html` so the
-   on-chain history reconstruction doesn't scan unnecessary blocks.
-
-## Replit Setup Notes
-
-- `pyproject.toml` was created during Replit import to enable `uv sync` for Python dependency management
-- `package.json` was created during Replit import for Node.js WalletConnect dependencies
-- Workflow: "Start application" runs on port 5000 (webview)
-
-## Telegram Bot Integration Notes
-
-- Webhook endpoint: `POST /telegram/webhook`
-- Setup endpoint: `GET /telegram/setup-webhook` (registers webhook with Telegram)
-- Status endpoint: `GET /telegram/webhook-info`
-- Use a **base domain only** for `TELEGRAM_WEB_APP_URL` / `PRODUCTION_DOMAIN` (do not include `/wallet` path).  
-  Example ✅ `https://good-market-community.vercel.app`  
-  Example ❌ `https://good-market-community.vercel.app/wallet`
+## Conventions
+- No build step for frontend JS — edit files directly, bump `?v={{ ASSET_VERSION }}` is handled by template caching.
+- Comments explain *why*, not *what*. Existing style uses section banners (── / ═══).
