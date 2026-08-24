@@ -34,6 +34,8 @@ _WALLET_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _TELEGRAM_LEARN_EARN_SESSIONS = {}
 _TELEGRAM_COMMUNITY_STORIES_SESSIONS = {}
 _TELEGRAM_TRUSTPILOT_SESSIONS = {}
+_TELEGRAM_DAILY_TASK_SESSIONS = {}
+_TELEGRAM_DAILY_TASK_SESSION_TTL_SECONDS = int(os.getenv("TELEGRAM_DAILY_TASK_SESSION_TTL_SECONDS", "900"))
 _TELEGRAM_LEARN_EARN_LOCK = threading.RLock()
 _TELEGRAM_TIMER_UPDATE_SECONDS = int(os.getenv("TELEGRAM_TIMER_UPDATE_SECONDS", "10"))
 _TELEGRAM_MIN_LEARN_EARN_CONTRACT_BALANCE_GD = float(
@@ -296,6 +298,10 @@ def _learn_earn_keyboard(telegram_user_id, wallet: str | None = None):
         keyboard.append([{
             "text": "⭐ Trustpilot Review",
             "callback_data": "trustpilot_task",
+        }])
+        keyboard.append([{
+            "text": "📅 Daily Task",
+            "callback_data": "daily_task",
         }])
         keyboard.append([{"text": "📰 News", "callback_data": "news_latest"}])
         keyboard.append([{"text": "💰 Check balance", "callback_data": "check_balance"}])
@@ -1079,6 +1085,7 @@ def handle_help(chat_id, telegram_user=None):
         "/earn — Start Learn &amp; Earn in this chat\n"
         "/stories — Community Stories instructions, status, and submission\n"
         "/trustpilot — Submit a Trustpilot review to earn G$\n"
+        "/dailytask — Complete the Daily Task (Twitter/Telegram) to earn G$\n"
         "/news — Latest GoodMarket news\n"
         "/wallet — Show your saved wallet\n"
         "/balance — Check your Celo wallet balances\n"
@@ -1501,31 +1508,50 @@ def handle_trustpilot_task(chat_id, telegram_user):
             submissions = stats.get("submissions", [])
             
             if has_completed:
-                # Task already completed - show simple message
+                # Task already completed - show clear message
                 text = (
                     "✅ <b>Task Completed!</b>\n\n"
                     "You have already completed this task.\n"
                     "Your review has been approved and reward disbursed.\n\n"
                     f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n\n"
+                    "💡 Tap 📊 Status or 🏆 Rewards for more info."
                 )
                 keyboard = _trustpilot_keyboard("completed")
             elif submissions:
                 latest = submissions[0]
                 status = latest.get("status", "unknown")
+                review_url = latest.get("review_url", "N/A")
+                submitted_at = latest.get("created_at", "")
+                decline_reason = latest.get("decline_reason", "")
+                
+                # Format submission date
+                if submitted_at:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(submitted_at.replace("Z", "+00:00"))
+                        submitted_at = dt.strftime("%Y-%m-%d %H:%M UTC")
+                    except:
+                        pass
+                
                 if status == "pending":
                     text = (
                         "⏳ <b>Submission Under Review</b>\n\n"
                         "Your Trustpilot review is pending admin approval.\n"
                         "You will receive your reward once approved.\n\n"
+                        f"📎 Your URL: <code>{review_url}</code>\n"
+                        f"📅 Submitted: {submitted_at}\n\n"
                         f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                        f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n\n"
+                        "⚠️ Please wait for admin approval (usually 24-48 hours).n"
+                        "Do NOT submit another review while this is pending."
                     )
+                    keyboard = _trustpilot_keyboard("pending")
                 elif status == "declined":
-                    # Show instructions again for declined users
                     text = (
                         "❌ <b>Submission Declined</b>\n\n"
                         "Your previous submission was declined.\n"
+                        f"📝 Reason: {decline_reason or 'No reason provided'}\n\n"
                         "You may submit a new review URL.\n\n"
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         "📋 <b>Instructions</b>\n"
@@ -1536,7 +1562,7 @@ def handle_trustpilot_task(chat_id, telegram_user):
                         "━━━━━━━━━━━━━━━━━━━━\n"
                         "⚠️ <b>IMPORTANT NOTICE</b>\n"
                         "━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "• Your review MUST be based on your REAL personal experience with GoodDollar\n"
+                        "• Your review MUST be based on your REAL personal experience\n"
                         "• Fake or dishonest reviews will be rejected\n"
                         "• Reviews must follow Trustpilot's community guidelines\n"
                         "• You can only complete this task ONCE\n"
@@ -1545,10 +1571,12 @@ def handle_trustpilot_task(chat_id, telegram_user):
                         f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
                         f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
                     )
-                    keyboard = _trustpilot_keyboard()
+                    keyboard = _trustpilot_keyboard("declined")
                 else:
                     text = (
                         f"ℹ️ <b>Status: {status.upper()}</b>\n\n"
+                        f"📎 Your URL: <code>{review_url}</code>\n"
+                        f"📅 Submitted: {submitted_at}\n\n"
                         f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
                         f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
                     )
@@ -1557,32 +1585,32 @@ def handle_trustpilot_task(chat_id, telegram_user):
                 # First time user - show full instructions
                 text = (
                     "⭐ <b>Trustpilot Review Task</b>\n\n"
+                    "Earn <b>1,000 G$</b> by leaving a genuine review on Trustpilot!\n\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "📋 <b>Instructions</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
                     "1️⃣ Go to <a href='https://www.trustpilot.com/review/gooddollar.org'>Trustpilot GoodDollar page</a> and write a genuine review based on your personal experience\n\n"
                     "2️⃣ Copy your review URL from the browser address bar\n\n"
-                    "3️⃣ Paste it here to submit\n\n"
+                    "3️⃣ Tap ⭐ Submit Review URL below to submit\n\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     "⚠️ <b>IMPORTANT NOTICE</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    "• Your review MUST be based on your REAL personal experience with GoodDollar\n"
+                    "• Your review MUST be based on your REAL personal experience\n"
                     "• Fake or dishonest reviews will be rejected\n"
                     "• Reviews must follow Trustpilot's community guidelines\n"
-                    "• You can only complete this task ONCE\n"
-                    "• After approval, you cannot submit another review\n\n"
+                    "• You can only complete this task ONCE\n\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
-                    f"Total earned: <b>{_format_gd_amount(total_earned)}</b>"
+                    f"Reward: <b>1,000 G$</b>"
                 )
                 keyboard = _trustpilot_keyboard()
         else:
             text = "⚠️ Could not load Trustpilot task status. Please try again later."
-            keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
+            keyboard = _trustpilot_keyboard()
     except Exception as exc:
         logger.error("❌ Telegram Trustpilot task failed: %s", exc)
         text = "⚠️ Trustpilot task could not be loaded. Please try again later."
-        keyboard = _learn_earn_keyboard(telegram_user_id, saved_wallet)
+        keyboard = _trustpilot_keyboard()
     
     send_message(chat_id, text, keyboard)
 
@@ -1769,19 +1797,42 @@ def handle_trustpilot_rewards(chat_id, telegram_user):
             summary = history.get("summary", {})
             total_earned = summary.get("total_earned", 0)
             transactions = history.get("transactions", [])
+            total_count = summary.get("total_count", 0)
             
             text = (
                 "🏆 <b>Your Trustpilot Review Rewards</b>\n\n"
                 f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
                 f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n"
-                f"Submissions: <b>{summary.get('transaction_count', 0)}</b>\n"
+                f"Total submissions: <b>{total_count}</b>\n"
             )
             
             if transactions:
-                text += "\n<b>Recent Activity:</b>\n"
+                text += "\n<b>📋 Submission History:</b>\n"
+                text += "━━━━━━━━━━━━━━━━━━━━\n"
                 for tx in transactions[:5]:
-                    status_emoji = "✅" if tx.get("status") == "approved" else ("⏳" if tx.get("status") == "pending" else "❌")
-                    text += f"{status_emoji} {tx.get('status', 'unknown').upper()} - {_format_gd_amount(tx.get('reward_amount', 0))}\n"
+                    status = tx.get("status", "unknown")
+                    status_emoji = "✅" if status == "approved" else ("⏳" if status == "pending" else "❌")
+                    
+                    # Format date
+                    created_at = tx.get("created_at", "")
+                    if created_at:
+                        try:
+                            from datetime import datetime
+                            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                            created_at = dt.strftime("%Y-%m-%d")
+                        except:
+                            pass
+                    
+                    text += f"\n{status_emoji} <b>{status.upper()}</b>\n"
+                    text += f"   💰 {_format_gd_amount(tx.get('reward_amount', 0))}\n"
+                    text += f"   📅 {created_at}\n"
+                    
+                    if tx.get("tx_hash"):
+                        explorer_url = f"https://celoscan.io/tx/{tx.get('tx_hash')}"
+                        text += f"   🔗 <a href='{explorer_url}'>View TX</a>\n"
+            else:
+                text += "\nNo submission history yet.\n"
+                text += "Tap ⭐ Submit Review URL to earn 1,000 G$!"
         else:
             text = "⚠️ Could not load reward history. Please try again later."
     except Exception as exc:
@@ -1789,6 +1840,435 @@ def handle_trustpilot_rewards(chat_id, telegram_user):
         text = "⚠️ Reward history could not be loaded. Please try again later."
     
     send_message(chat_id, text, _trustpilot_keyboard())
+
+
+# ═══ Daily Task (Twitter / Telegram) ═════════════════════════════════════
+# Mirrors the web app daily task (dashboard.html modal + /api/daily-task/*):
+# the user picks ONE platform, posts the custom message, and submits the post
+# URL. Submissions go through the SAME twitter_task_service /
+# telegram_task_service into the SAME twitter_task_log / telegram_task_log
+# tables keyed by the SAME saved wallet — so the admin dashboard
+# approve/decline flow, the shared 72h cooldown, and the web app history all
+# apply identically whether the user submits from the bot or the web app.
+
+_DAILY_TASK_PLATFORMS = ("twitter", "telegram")
+_DAILY_TASK_PLATFORM_LABELS = {"twitter": "Twitter/X", "telegram": "Telegram"}
+
+
+def _daily_task_services():
+    """Return the same (twitter, telegram) task services the web app uses."""
+    from twitter_task.twitter_task import twitter_task_service
+    from telegram_task.telegram_task import telegram_task_service
+    return twitter_task_service, telegram_task_service
+
+
+def _daily_task_keyboard(state: str = "ready"):
+    """Inline buttons for the Daily Task flow.
+
+    Platform buttons only appear while the wallet can submit right now — the
+    same gating as the web modal, which blocks claiming during a pending
+    review or the shared 72h cooldown.
+    """
+    keyboard = [[
+        {"text": "📊 Status", "callback_data": "daily_task_status"},
+        {"text": "📋 History", "callback_data": "daily_task_history"},
+    ]]
+    if state == "ready":
+        keyboard.insert(0, [
+            {"text": "🐦 Post on Twitter/X", "callback_data": "daily_task_twitter"},
+            {"text": "📱 Post on Telegram", "callback_data": "daily_task_telegram"},
+        ])
+    return {"inline_keyboard": keyboard}
+
+
+def _get_daily_task_unified_status(wallet: str) -> dict:
+    """Unified daily task status — mirrors /api/daily-task/status in routes.py.
+
+    Pending submissions AND the 72h cooldown are shared across platforms: a
+    pending row or cooldown on EITHER platform blocks BOTH, exactly like the
+    web app.
+    """
+    twitter_service, telegram_service = _daily_task_services()
+
+    twitter_status = _run_async(twitter_service.check_eligibility(wallet)) or {}
+    telegram_status = _run_async(telegram_service.check_eligibility(wallet)) or {}
+
+    # Direct DB check for pending rows on BOTH platforms (real-time, no cache),
+    # same as the web app's status endpoint.
+    actual_pending = False
+    pending_platform = None
+    try:
+        supabase = get_supabase_admin_client() or get_supabase_client()
+    except Exception:
+        supabase = None
+    if supabase:
+        try:
+            twitter_pending = supabase.table("twitter_task_log")\
+                .select("id")\
+                .eq("wallet_address", wallet)\
+                .eq("status", "pending")\
+                .limit(1)\
+                .execute()
+            if twitter_pending.data:
+                actual_pending = True
+                pending_platform = "Twitter"
+            if not actual_pending:
+                telegram_pending = supabase.table("telegram_task_log")\
+                    .select("id")\
+                    .eq("wallet_address", wallet)\
+                    .eq("status", "pending")\
+                    .limit(1)\
+                    .execute()
+                if telegram_pending.data:
+                    actual_pending = True
+                    pending_platform = "Telegram"
+        except Exception as exc:
+            logger.error(f"❌ Daily task pending check failed: {exc}")
+
+    next_claim_time = None
+    if not actual_pending and (
+        not twitter_status.get("can_claim") or not telegram_status.get("can_claim")
+    ):
+        possible = [
+            t for t in (
+                twitter_status.get("next_claim_time"),
+                telegram_status.get("next_claim_time"),
+            ) if t
+        ]
+        if possible:
+            next_claim_time = min(possible)
+
+    time_remaining_seconds = 0
+    if next_claim_time:
+        try:
+            next_claim_dt = datetime.fromisoformat(next_claim_time.replace("Z", "+00:00"))
+            time_remaining_seconds = max(
+                0, int((next_claim_dt - datetime.now(timezone.utc)).total_seconds())
+            )
+        except Exception:
+            time_remaining_seconds = 0
+
+    reward_amount = twitter_status.get("reward_amount") or telegram_status.get("reward_amount")
+    if reward_amount is None:
+        try:
+            reward_amount = telegram_service.get_task_reward()
+        except Exception:
+            reward_amount = 100.0
+
+    can_claim = (
+        twitter_status.get("can_claim", False)
+        and telegram_status.get("can_claim", False)
+        and not actual_pending
+    )
+
+    return {
+        "can_claim": can_claim,
+        "has_pending_submission": actual_pending,
+        "pending_platform": pending_platform,
+        "next_claim_time": next_claim_time,
+        "time_remaining_seconds": time_remaining_seconds,
+        "reward_amount": reward_amount,
+    }
+
+
+def _daily_task_format_remaining(seconds: int) -> str:
+    """Human-friendly remaining cooldown, e.g. '2d 4h 15m'."""
+    seconds = max(0, int(seconds or 0))
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes = seconds // 60
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or not parts:
+        parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def _daily_task_status_message(wallet: str, status: dict) -> tuple:
+    """Render the Daily Task status text and its keyboard state.
+
+    Returns (text, keyboard_state) where keyboard_state is one of
+    "ready" | "pending" | "cooldown" — the same three states the web app
+    daily task card shows on the dashboard.
+    """
+    reward = _format_gd_amount(status.get("reward_amount") or 0)
+    header = (
+        "📅 <b>Daily Task</b>\n\n"
+        f"Post once every 72 hours on <b>Twitter/X</b> or <b>Telegram</b> to earn <b>{reward}</b>!\n"
+        f"Wallet: <code>{_mask_wallet(wallet)}</code>\n\n"
+    )
+    if status.get("has_pending_submission"):
+        platform = status.get("pending_platform") or "Twitter/Telegram"
+        return (
+            header + (
+                "⏳ <b>Submission under review</b>\n\n"
+                f"Your {html.escape(str(platform))} submission is waiting for admin approval "
+                "in the admin dashboard.\n"
+                "Your reward will be sent automatically once approved.\n\n"
+                "⚠️ You can only have ONE daily task submission at a time — the "
+                "cooldown is shared across both platforms."
+            ),
+            "pending",
+        )
+    if not status.get("can_claim"):
+        remaining = _daily_task_format_remaining(status.get("time_remaining_seconds"))
+        next_time = status.get("next_claim_time") or ""
+        if next_time:
+            try:
+                next_time = datetime.fromisoformat(
+                    str(next_time).replace("Z", "+00:00")
+                ).strftime("%Y-%m-%d %H:%M UTC")
+            except Exception:
+                pass
+        return (
+            header + (
+                "⏰ <b>Cooldown active</b>\n\n"
+                "You already completed this cycle's daily task. The 72-hour cooldown "
+                "is shared across Twitter and Telegram.\n\n"
+                f"⏳ Time remaining: <b>{html.escape(remaining)}</b>\n"
+                f"🗓 Next claim: <code>{html.escape(str(next_time))}</code>"
+            ),
+            "cooldown",
+        )
+    return (
+        header + (
+            "✅ <b>You can claim today's daily task!</b>\n\n"
+            "Choose ONE platform below, post the custom message, then paste your "
+            "post link here.\n\n"
+            "⚠️ One submission per 72 hours — the cooldown is shared across "
+            "Twitter and Telegram."
+        ),
+        "ready",
+    )
+
+
+def handle_daily_task(chat_id, telegram_user):
+    """Show the Daily Task status + platform picker (mirrors the web app modal)."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "📅 Please save your wallet with /start first.")
+        return
+
+    _TELEGRAM_DAILY_TASK_SESSIONS.pop(str(telegram_user_id), None)
+    try:
+        status = _get_daily_task_unified_status(saved_wallet)
+        text, keyboard_state = _daily_task_status_message(saved_wallet, status)
+    except Exception as exc:
+        logger.error(f"❌ Daily task status failed: {exc}")
+        text = "⚠️ Could not load daily task status. Please try again later."
+        keyboard_state = "cooldown"
+    send_message(chat_id, text, _daily_task_keyboard(keyboard_state))
+
+
+def handle_daily_task_platform(chat_id, telegram_user, platform: str):
+    """Show the custom message for the chosen platform and await the post URL."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "📅 Please save your wallet with /start first.")
+        return
+    if platform not in _DAILY_TASK_PLATFORMS:
+        handle_daily_task(chat_id, telegram_user)
+        return
+
+    try:
+        status = _get_daily_task_unified_status(saved_wallet)
+        if not status.get("can_claim"):
+            text, keyboard_state = _daily_task_status_message(saved_wallet, status)
+            send_message(chat_id, text, _daily_task_keyboard(keyboard_state))
+            return
+
+        twitter_service, telegram_service = _daily_task_services()
+        service = twitter_service if platform == "twitter" else telegram_service
+        custom_message = service.get_custom_message_for_user(saved_wallet)
+        reward = _format_gd_amount(status.get("reward_amount") or 0)
+        platform_label = _DAILY_TASK_PLATFORM_LABELS[platform]
+        example_url = (
+            "https://x.com/username/status/1234567890"
+            if platform == "twitter"
+            else "https://t.me/GoodDollarX/123456"
+        )
+
+        _TELEGRAM_DAILY_TASK_SESSIONS[str(telegram_user_id)] = {
+            "chat_id": chat_id,
+            "wallet": saved_wallet,
+            "platform": platform,
+            "awaiting": "post_url",
+            "created_at": time.time(),
+        }
+
+        text = (
+            f"📅 <b>Daily Task — {platform_label}</b>\n\n"
+            f"1️⃣ Post this message on {platform_label}:\n\n"
+            f"<pre>{html.escape(custom_message)}</pre>\n\n"
+            "2️⃣ Copy the link of your published post\n"
+            "3️⃣ Paste the link here to submit for review\n\n"
+            f"Example: <code>{example_url}</code>\n\n"
+            f"Reward: <b>{reward}</b> after admin approval."
+        )
+        keyboard = {"inline_keyboard": [[
+            {"text": "🔙 Platform picker", "callback_data": "daily_task"},
+            {"text": "❌ Cancel", "callback_data": "daily_task_cancel"},
+        ]]}
+        send_message(chat_id, text, keyboard)
+    except Exception as exc:
+        logger.error(f"❌ Daily task platform prompt failed: {exc}")
+        send_message(
+            chat_id,
+            "⚠️ Could not start the daily task. Please try again later.",
+            _daily_task_keyboard("cooldown"),
+        )
+
+
+def handle_daily_task_cancel(chat_id, telegram_user):
+    """Cancel an in-progress daily task URL submission."""
+    _TELEGRAM_DAILY_TASK_SESSIONS.pop(str(telegram_user.get("id")), None)
+    handle_daily_task(chat_id, telegram_user)
+
+
+def handle_daily_task_text(chat_id, telegram_user, text) -> bool:
+    """Submit the pending daily task post URL. Returns True if handled."""
+    telegram_user_id = str(telegram_user.get("id"))
+    session_data = _TELEGRAM_DAILY_TASK_SESSIONS.get(telegram_user_id)
+    if not session_data or session_data.get("awaiting") != "post_url":
+        return False
+
+    wallet = _normalize_wallet(session_data.get("wallet") or "")
+    platform = session_data.get("platform")
+    expired = (
+        time.time() - float(session_data.get("created_at") or 0)
+    ) > _TELEGRAM_DAILY_TASK_SESSION_TTL_SECONDS
+    if not wallet or platform not in _DAILY_TASK_PLATFORMS or expired:
+        _TELEGRAM_DAILY_TASK_SESSIONS.pop(telegram_user_id, None)
+        send_message(
+            chat_id,
+            "⚠️ Your Daily Task session expired. Please start again with /dailytask.",
+            _daily_task_keyboard("cooldown"),
+        )
+        return True
+
+    post_url = (text or "").strip()
+
+    try:
+        # Shared-cooldown gate — same as the web UI: a pending submission or
+        # cooldown on EITHER platform blocks a new submission on BOTH.
+        status = _get_daily_task_unified_status(wallet)
+        if not status.get("can_claim"):
+            _TELEGRAM_DAILY_TASK_SESSIONS.pop(telegram_user_id, None)
+            message, keyboard_state = _daily_task_status_message(wallet, status)
+            send_message(chat_id, message, _daily_task_keyboard(keyboard_state))
+            return True
+
+        twitter_service, telegram_service = _daily_task_services()
+        service = twitter_service if platform == "twitter" else telegram_service
+        result = _run_async(service.claim_task_reward(wallet, post_url))
+        _TELEGRAM_DAILY_TASK_SESSIONS.pop(telegram_user_id, None)
+
+        if result.get("success"):
+            send_message(
+                chat_id,
+                "✅ <b>Daily task submitted!</b>\n\n"
+                "Your post is now <b>pending admin approval</b> in the admin dashboard.\n"
+                "Your reward will be sent automatically once approved.\n\n"
+                "⏳ Approval usually takes 24-48 hours. The 72-hour cooldown "
+                "starts now — your web app dashboard shows the same status "
+                "for this wallet.",
+                _daily_task_keyboard("pending"),
+            )
+        else:
+            error = result.get("error") or "Submission failed."
+            send_message(
+                chat_id,
+                "⚠️ <b>Submission failed</b>\n\n"
+                f"{html.escape(str(error))}\n\n"
+                "Use /dailytask to try again.",
+                _daily_task_keyboard("ready"),
+            )
+    except Exception as exc:
+        logger.error(f"❌ Daily task submission failed: {exc}")
+        _TELEGRAM_DAILY_TASK_SESSIONS.pop(telegram_user_id, None)
+        send_message(
+            chat_id,
+            "⚠️ Submission failed. Please try again with /dailytask.",
+            _daily_task_keyboard("cooldown"),
+        )
+    return True
+
+
+def handle_daily_task_history(chat_id, telegram_user):
+    """Show combined Twitter + Telegram daily task history (mirrors /api/daily-task/history)."""
+    telegram_user_id = telegram_user.get("id")
+    saved_wallet = _get_saved_wallet(telegram_user_id)
+    if not saved_wallet:
+        send_message(chat_id, "📅 Please save your wallet with /start first.")
+        return
+
+    try:
+        twitter_service, telegram_service = _daily_task_services()
+        transactions = []
+        for service, platform in (
+            (twitter_service, "twitter"),
+            (telegram_service, "telegram"),
+        ):
+            history = service.get_transaction_history(saved_wallet, 50)
+            if history.get("success") and history.get("transactions"):
+                for tx in history["transactions"]:
+                    tx = dict(tx)
+                    tx["platform"] = platform
+                    transactions.append(tx)
+
+        transactions.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        total_earned = sum(float(tx.get("reward_amount", 0) or 0) for tx in transactions)
+
+        text = (
+            "📋 <b>Daily Task History</b>\n\n"
+            f"Wallet: <code>{_mask_wallet(saved_wallet)}</code>\n"
+            f"Total earned: <b>{_format_gd_amount(total_earned)}</b>\n"
+            f"Total submissions: <b>{len(transactions)}</b>\n"
+        )
+
+        if transactions:
+            text += "\n<b>Recent submissions:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+            for tx in transactions[:5]:
+                status_value = str(tx.get("status", "unknown")).lower()
+                status_emoji = (
+                    "✅" if status_value in ("completed", "approved")
+                    else ("⏳" if status_value == "pending" else "❌")
+                )
+                platform_label = _DAILY_TASK_PLATFORM_LABELS.get(tx.get("platform"), tx.get("platform", ""))
+                created_at = tx.get("created_at", "")
+                if created_at:
+                    try:
+                        created_at = datetime.fromisoformat(
+                            str(created_at).replace("Z", "+00:00")
+                        ).strftime("%Y-%m-%d")
+                    except Exception:
+                        pass
+
+                text += (
+                    f"\n{status_emoji} <b>{html.escape(str(platform_label))}</b> — {html.escape(status_value.upper())}\n"
+                    f"   💰 {_format_gd_amount(tx.get('reward_amount', 0))}\n"
+                    f"   📅 {html.escape(str(created_at))}\n"
+                )
+                if tx.get("rejection_reason") and status_value == "rejected":
+                    text += f"   📝 {html.escape(str(tx.get('rejection_reason')))}\n"
+                if tx.get("explorer_url"):
+                    text += f"   🔗 <a href='{html.escape(str(tx.get('explorer_url')))}'>View TX</a>\n"
+        else:
+            text += "\nNo submissions yet. Use /dailytask to start today's task!"
+
+        send_message(chat_id, text, _daily_task_keyboard("cooldown"))
+    except Exception as exc:
+        logger.error(f"❌ Daily task history failed: {exc}")
+        send_message(
+            chat_id,
+            "⚠️ Could not load daily task history. Please try again later.",
+            _daily_task_keyboard("cooldown"),
+        )
 
 
 def handle_wallet(chat_id, telegram_user):
@@ -1993,9 +2473,13 @@ def webhook():
                 handle_change_wallet(chat_id)
             elif text.startswith("/trustpilot"):
                 handle_trustpilot_task(chat_id, telegram_user)
+            elif text.startswith("/dailytask"):
+                handle_daily_task(chat_id, telegram_user)
             elif handle_trustpilot_text(chat_id, telegram_user, text):
                 pass
             elif handle_community_stories_text(chat_id, telegram_user, text):
+                pass
+            elif handle_daily_task_text(chat_id, telegram_user, text):
                 pass
             else:
                 handle_wallet_text(chat_id, telegram_user, text)
@@ -2041,6 +2525,16 @@ def webhook():
                     handle_trustpilot_task(callback_chat_id, callback_user)
                 elif callback_data == "trustpilot_rewards":
                     handle_trustpilot_rewards(callback_chat_id, callback_user)
+                elif callback_data in ("daily_task", "daily_task_status"):
+                    handle_daily_task(callback_chat_id, callback_user)
+                elif callback_data == "daily_task_twitter":
+                    handle_daily_task_platform(callback_chat_id, callback_user, "twitter")
+                elif callback_data == "daily_task_telegram":
+                    handle_daily_task_platform(callback_chat_id, callback_user, "telegram")
+                elif callback_data == "daily_task_history":
+                    handle_daily_task_history(callback_chat_id, callback_user)
+                elif callback_data == "daily_task_cancel":
+                    handle_daily_task_cancel(callback_chat_id, callback_user)
                 elif callback_data.startswith("news_"):
                     handle_news_callback(callback_chat_id, callback_data)
                 elif callback_data == "show_wallet":
