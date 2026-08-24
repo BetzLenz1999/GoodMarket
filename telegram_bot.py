@@ -1902,10 +1902,12 @@ def _get_daily_task_unified_status(wallet: str) -> dict:
     except Exception:
         supabase = None
     if supabase:
+        # ilike: the web app may have written rows with a checksummed wallet
+        # while the bot wallet is lowercase — .eq is case-sensitive.
         try:
             twitter_pending = supabase.table("twitter_task_log")\
                 .select("id")\
-                .eq("wallet_address", wallet)\
+                .ilike("wallet_address", wallet)\
                 .eq("status", "pending")\
                 .limit(1)\
                 .execute()
@@ -1915,7 +1917,7 @@ def _get_daily_task_unified_status(wallet: str) -> dict:
             if not actual_pending:
                 telegram_pending = supabase.table("telegram_task_log")\
                     .select("id")\
-                    .eq("wallet_address", wallet)\
+                    .ilike("wallet_address", wallet)\
                     .eq("status", "pending")\
                     .limit(1)\
                     .execute()
