@@ -13,17 +13,32 @@ REFEREE_REWARD = 500.0
 BASE_URL = os.getenv('BASE_URL', 'https://goodmarket.live')
 
 
+def _origin_base() -> str:
+    """Current request origin (scheme + host) with BASE_URL fallback for
+    background contexts (reconciler, schedulers, twisted message pools)."""
+    try:
+        # flask.request is only active inside a request; fall back to BASE_URL
+        from flask import request
+        return request.host_url.rstrip('/')
+    except Exception:
+        pass
+    return BASE_URL
+
+
 def build_referral_link(code: str) -> str:
     """Build a referral link on the domain the requesting client actually used
     (e.g. good-market-community.vercel.app vs goodmarket.live). Background
     contexts (reconciler, schedulers) fall back to BASE_URL."""
-    base = BASE_URL
-    try:
-        from flask import request
-        base = request.host_url.rstrip('/')
-    except Exception:
-        pass
-    return f"{base}/?ref={code}"
+    return f"{_origin_base()}/?ref={code}"
+
+
+def current_origin_domain() -> str:
+    """Current request domain WITHOUT scheme (e.g. 'goodmarket.live',
+    'good-market-community.vercel.app'). Used to re-anchor hardcoded
+    'goodmarket.live' text (task message pools) to the origin actually in
+    use. Falls back to BASE_URL's domain off-request."""
+    base = _origin_base()
+    return base.split('://', 1)[-1]
 
 
 def _get_supabase():
