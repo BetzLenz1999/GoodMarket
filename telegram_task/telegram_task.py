@@ -1,9 +1,11 @@
 import os
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from supabase_client import get_supabase_client
 from cache_utils import supabase_cache
+from referral_program.referral_service import current_origin_domain
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +277,18 @@ class TelegramTaskService:
         ) % len(self.custom_messages)
 
         logger.info(f"📅 Message index {message_index} for user: {wallet_address[:8]}... (Day: {day_of_year}, Hour: {hour_of_day}, 1000 unique messages available)")
-        return self.custom_messages[message_index]
+
+        message = self.custom_messages[message_index]
+
+        # Re-anchor hardcoded 'goodmarket.live' (any case) to the origin the
+        # requesting client actually used; fallback is referral_service BASE_URL.
+        try:
+            domain = current_origin_domain()
+            if domain != 'goodmarket.live':
+                message = re.sub(r'goodmarket\.live', lambda _: domain, message, flags=re.IGNORECASE)
+        except Exception as anchor_err:
+            logger.warning(f"⚠️ Could not re-anchor message domain: {anchor_err}")
+        return message
 
     def _validate_telegram_url(self, telegram_url: str) -> Dict[str, Any]:
         """Validate Telegram post URL and verify post existence via Telegram Bot API"""
