@@ -34,6 +34,21 @@
     return false;
   }
 
+  function signingLabel(loginMethod) {
+    switch (String(loginMethod || '').toLowerCase()) {
+      case 'local':
+        return 'In-app GoodMarket wallet (PIN unlock)';
+      case 'walletconnect':
+      case 'manual':
+      case 'manual_address':
+        return 'WalletConnect session';
+      case 'privy':
+        return 'Privy embedded wallet';
+      default:
+        return 'Connected wallet (MetaMask / Trust / MiniPay)';
+    }
+  }
+
   function renderActionCard(action) {
     const card = el('div', 'gm-ai-card');
     const title = el('strong', '', 'Review before signing');
@@ -46,7 +61,7 @@
       ['To', payload.recipient_username ? ('@' + payload.recipient_username + ' (' + payload.recipient + ')') : (payload.recipient || payload.to_token || payload.phone)],
       ['GCash #', payload.gcash_number],
       ['GCash Name', payload.gcash_name],
-      ['Signing', action.login_method === 'local' ? 'In-app GoodMarket wallet (PIN unlock)' : null],
+      ['Signing', signingLabel(action.login_method)],
       ['Status', action.status]
     ].filter(function (row) { return row[1]; });
     rows.forEach(function (row) {
