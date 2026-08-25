@@ -2015,14 +2015,12 @@ def dashboard():
     if not wallet or not verified:
         return redirect(url_for("routes.index"))
 
-    # Check on-chain Face Verification (GoodDollar Identity contract)
-    try:
-        from blockchain import is_identity_verified
-        fv_result = is_identity_verified(wallet)
-        if not fv_result.get("verified", False):
-            return redirect(url_for("routes.wallet_page") + "?fv_required=1")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not check FV status for dashboard access: {e}")
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
 
     # Check if user is admin
     is_admin_user = is_admin(wallet)
@@ -4664,6 +4662,39 @@ def approve_daily_task():
                     action_type=f"approve_{platform}_task",
                     action_details={"submission_id": submission_id}
                 )
+                # Tell the user (if they linked the Telegram bot) their daily
+                # task was approved and the reward is on the way. The approve
+                # result doesn't carry the wallet, so fetch the submission row.
+                try:
+                    import html as _html
+                    from telegram_notify import notify_user_by_wallet_async
+                    task_table = 'telegram_task_log' if platform == 'telegram' else 'twitter_task_log'
+                    supabase = get_supabase_admin_client() or get_supabase_client()
+                    sub_row = safe_supabase_operation(
+                        lambda: supabase.table(task_table)
+                            .select('wallet_address,reward_amount')
+                            .eq('id', submission_id)
+                            .limit(1)
+                            .execute(),
+                        fallback_result=None,
+                        operation_name="fetch approved daily-task submission for notify"
+                    )
+                    sub_data = (sub_row.data[0] if sub_row and sub_row.data else {}) or {}
+                    user_wallet = (sub_data.get('wallet_address') or '').strip()
+                    if user_wallet:
+                        reward = sub_data.get('reward_amount') or ''
+                        tx_hash = result.get('tx_hash') or ''
+                        reward_line = f"🎁 Reward: <b>{reward} G$</b>\n" if reward else ""
+                        tx_line = f"🔗 Tx: https://celoscan.io/tx/{_html.escape(tx_hash)}\n" if tx_hash else ""
+                        notify_user_by_wallet_async(
+                            user_wallet,
+                            f"✅ <b>Daily Task Approved!</b>\n\n"
+                            f"Your {platform.title()} daily task submission was approved.\n"
+                            f"{reward_line}{tx_line}\n"
+                            "Keep it up! 💛"
+                        )
+                except Exception as notify_err:  # noqa: BLE001 - notify is best-effort
+                    logger.warning(f"⚠️ Daily-task approve notify failed for #{submission_id}: {notify_err}")
 
             return jsonify(result) if result else jsonify({"success": False, "error": "Failed to process approval"}), 500
         finally:
@@ -4715,6 +4746,35 @@ def reject_daily_task():
                     action_type=f"reject_{platform}_task",
                     action_details={"submission_id": submission_id, "reason": reason}
                 )
+                # Tell the user their daily task was rejected (they can
+                # resubmit immediately). Fetch the row for the wallet — the
+                # reject result doesn't carry it.
+                try:
+                    import html as _html
+                    from telegram_notify import notify_user_by_wallet_async
+                    task_table = 'telegram_task_log' if platform == 'telegram' else 'twitter_task_log'
+                    supabase = get_supabase_admin_client() or get_supabase_client()
+                    sub_row = safe_supabase_operation(
+                        lambda: supabase.table(task_table)
+                            .select('wallet_address')
+                            .eq('id', submission_id)
+                            .limit(1)
+                            .execute(),
+                        fallback_result=None,
+                        operation_name="fetch rejected daily-task submission for notify"
+                    )
+                    sub_data = (sub_row.data[0] if sub_row and sub_row.data else {}) or {}
+                    user_wallet = (sub_data.get('wallet_address') or '').strip()
+                    if user_wallet:
+                        reason_line = f"\n📝 Reason: {_html.escape(reason)}" if reason else ""
+                        notify_user_by_wallet_async(
+                            user_wallet,
+                            f"❌ <b>Daily Task Rejected</b>\n\n"
+                            f"Your {platform.title()} daily task submission was rejected.{reason_line}\n\n"
+                            "You can submit a new post right away."
+                        )
+                except Exception as notify_err:  # noqa: BLE001 - notify is best-effort
+                    logger.warning(f"⚠️ Daily-task reject notify failed for #{submission_id}: {notify_err}")
 
             return jsonify(result) if result else jsonify({"success": False, "error": "Failed to process rejection"}), 500
         finally:
@@ -6074,6 +6134,14 @@ def learn_earn_page():
         return redirect(url_for("routes.index"))
 
     wallet = session.get("wallet")
+
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     is_admin_user = False
     try:
         from supabase_client import is_admin
@@ -7218,6 +7286,14 @@ def swap_page():
     wallet = session.get("wallet")
     if not wallet or not session.get("verified"):
         return redirect(url_for("routes.index"))
+
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     reserve_visible = False
     try:
         supabase = get_supabase_client()
