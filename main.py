@@ -1013,6 +1013,13 @@ def dashboard():
     if not wallet or not session.get("verified"):
         return redirect("/")
 
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     # Track page view and get dashboard data
     analytics.track_page_view(wallet, "dashboard")
     dashboard_data = analytics.get_dashboard_stats(wallet)
