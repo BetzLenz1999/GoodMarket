@@ -30,6 +30,7 @@ SUPPORTED_ACTIONS = {
     "stream_gd",
     "mobile_load",
     "swap",
+    "bridge",
     "claim",
     "gcash_cashout",
     "transaction_history",
@@ -57,6 +58,7 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
         "to_token": {"type": "string"},
         "flow_rate_per_day": {"type": "string"},
         "flow_rate_per_month": {"type": "string"},
+        "bridge_direction": {"type": "string"},
         "lookup_feature": {"type": "string"},
         "requires_confirmation": {"type": "boolean"},
         "requires_signature": {"type": "boolean"},
@@ -80,6 +82,7 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
         "to_token",
         "flow_rate_per_day",
         "flow_rate_per_month",
+        "bridge_direction",
         "lookup_feature",
         "requires_confirmation",
         "requires_signature",
@@ -89,11 +92,14 @@ AI_ACTION_SCHEMA: dict[str, Any] = {
     ],
 }
 
-_VALUE_ACTIONS = {"send_gd", "stream_gd", "mobile_load", "swap", "claim", "gcash_cashout"}
+_VALUE_ACTIONS = {"send_gd", "stream_gd", "mobile_load", "swap", "bridge", "claim", "gcash_cashout"}
 _MAX_STREAM_GD_PER_DAY = Decimal(os.getenv("AI_AGENT_MAX_STREAM_GD_PER_DAY", "100"))
 _MAX_MOBILE_LOAD_FIAT = Decimal(os.getenv("AI_AGENT_MAX_MOBILE_LOAD_FIAT", "100"))
 # Must match the app-wide GCash cashout minimum (5,000 G$ = PHP 50).
 _GCASH_MIN_GD = Decimal(os.getenv("AI_AGENT_GCASH_MIN_GD", "5000"))
+# App-side minimum bridge amount — same gate as the /swap bridge tab
+# (CELO_TO_XDC_UI_MIN_AMOUNT_GD / XDC_TO_CELO_UI_MIN_AMOUNT_GD there).
+_BRIDGE_MIN_GD = Decimal(os.getenv("AI_AGENT_BRIDGE_MIN_GD", "2000"))
 _ACTION_TTL_MINUTES = int(os.getenv("AI_AGENT_ACTION_TTL_MINUTES", "15"))
 _OPENAI_MODEL = os.getenv("AI_AGENT_OPENAI_MODEL", "gpt-5.5-mini")
 
@@ -208,6 +214,8 @@ def parse_and_plan(message: str, wallet: str | None, login_method: str | None) -
             reply = _gcash_missing_reply(intent)
         elif intent["action"] == "swap":
             reply = _swap_missing_reply(intent)
+        elif intent["action"] == "bridge":
+            reply = _bridge_missing_reply(intent)
         else:
             reply = _missing_details_reply(intent)
         return AgentResult(
@@ -277,9 +285,10 @@ def _parse_with_openai(message: str) -> dict[str, Any] | None:
         "'Mag-stream ng 5 G$ kada araw kay @user' = stream_gd with flow_rate_per_day). "
         "Never invent recipients, usernames, phone numbers, or amounts. For send_gd, accept either an EVM wallet address or a GoodMarket username as the recipient and preserve supported token symbols G$, GD, cUSD, USDT, or CELO; any positive amount is allowed. For stream_gd, extract the receiver and the G$ flow amount; use flow_rate_per_day when the user says per day/daily/kada araw/bawat araw, otherwise place the numeric value in amount. Value-moving actions require confirmation and signature. "
         "For gcash_cashout (cash out G$ to a GCash account), extract the G$ amount, put an 11-digit Philippine mobile number (09xxxxxxxxx) in gcash_number, and the GCash-registered full name in gcash_name; the number and name may appear in any order and without labels. "
-        "For swap, set from_token to the token the user holds and to_token to the token they want, keeping the token symbols (G$, GD, CELO, cUSD, USDT); supported tokens are G$, CELO, cUSD, USDT. "
+        "For swap, set from_token to the token the user holds and to_token to the token they want, keeping the token symbols; Celo pairs support G$, CELO, cUSD, USDT, and the XDC pair supports native XDC <-> G$ on XDC (set the symbol to 'XDC' or 'G$ XDC'). "
+        "For bridge (move G$ between the Celo and XDC networks), extract the G$ amount and set bridge_direction to 'celo_to_xdc' when the destination is XDC, or 'xdc_to_celo' when the destination is Celo. The token is always G$. "
         "For lookup_transaction (read-only, no signature), set lookup_feature to one of learn_earn, reloadly, referral, twitter, trustpilot when the user names a feature, otherwise empty string. lookup_transaction is for questions about a transaction hash / tx id / 'where is my tx'. "
-        "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, claim, gcash_cashout, transaction_history, lookup_transaction, help, unknown.\n\n"
+        "Supported actions: check_balance, send_gd, stream_gd, mobile_load, swap, bridge, claim, gcash_cashout, transaction_history, lookup_transaction, help, unknown.\n\n"
         f"User message: {message}"
     )
     body = {
@@ -358,9 +367,22 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
             confidence=0.85,
         )
         return intent
+    if _BRIDGE_KEYWORD_RE.search(message):
+        amount = _first_amount(message)
+        intent.update(
+            action="bridge",
+            summary="Prepare a G$ bridge preview (Celo <-> XDC).",
+            amount=amount or "",
+            bridge_direction=_bridge_direction_candidate(message) or "",
+            token="G$",
+            requires_confirmation=True,
+            requires_signature=True,
+            confidence=0.75,
+        )
+        return intent
     if any(word in lower for word in ["swap", "palit", "exchange"]):
         amount = _first_amount(message)
-        tokens = re.findall(r"(?<!\w)(g\$|gd|gooddollar|celo|cusd|usdt|usdc|xdc)(?!\w)", lower)
+        tokens = _swap_token_candidates(message)
         from_token = _normalise_swap_token(tokens[0]) if tokens else ""
         to_token = _normalise_swap_token(tokens[1]) if len(tokens) > 1 else ""
         intent.update(
@@ -427,7 +449,7 @@ def _parse_with_rules(message: str) -> dict[str, Any]:
 
 def _normalise_intent(intent: dict[str, Any]) -> dict[str, Any]:
     normalised = _empty_intent(intent.get("action") if intent.get("action") in SUPPORTED_ACTIONS else "unknown", intent.get("summary") or "")
-    normalised.update({k: str(intent.get(k) or "").strip() for k in ["token", "amount", "fiat_amount", "fiat_currency", "recipient", "recipient_username", "phone", "gcash_number", "gcash_name", "from_token", "to_token", "flow_rate_per_day", "flow_rate_per_month", "lookup_feature", "safety_note"]})
+    normalised.update({k: str(intent.get(k) or "").strip() for k in ["token", "amount", "fiat_amount", "fiat_currency", "recipient", "recipient_username", "phone", "gcash_number", "gcash_name", "from_token", "to_token", "flow_rate_per_day", "flow_rate_per_month", "bridge_direction", "lookup_feature", "safety_note"]})
     normalised["requires_confirmation"] = bool(intent.get("requires_confirmation"))
     normalised["requires_signature"] = bool(intent.get("requires_signature"))
     try:
@@ -461,11 +483,19 @@ def _supplement_intent_from_message(intent: dict[str, Any], message: str) -> Non
         if amount and not intent.get("fiat_amount"):
             intent["fiat_amount"] = amount
     elif intent["action"] == "swap":
-        tokens = re.findall(r"(?<!\w)(g\$|gd|gooddollar|celo|cusd|usdt|usdc|xdc)(?!\w)", message.lower())
+        tokens = _swap_token_candidates(message)
         if tokens and not intent.get("from_token"):
             intent["from_token"] = _normalise_swap_token(tokens[0]) or ""
         if len(tokens) > 1 and not intent.get("to_token"):
             intent["to_token"] = _normalise_swap_token(tokens[1]) or ""
+        amount = _first_amount(message)
+        if amount and not intent.get("amount"):
+            intent["amount"] = amount
+    elif intent["action"] == "bridge":
+        intent["token"] = "G$"
+        direction = _bridge_direction_candidate(message)
+        if direction and not intent.get("bridge_direction"):
+            intent["bridge_direction"] = direction
         amount = _first_amount(message)
         if amount and not intent.get("amount"):
             intent["amount"] = amount
@@ -576,6 +606,19 @@ def _apply_safety_policy(intent: dict[str, Any], wallet: str | None) -> None:
                     intent["swap_direction"] = direction
         intent["requires_confirmation"] = True
         intent["requires_signature"] = True
+    elif action == "bridge":
+        intent["token"] = "G$"
+        direction = _normalise_bridge_direction(intent.get("bridge_direction"))
+        if direction:
+            intent["bridge_direction"] = direction
+        else:
+            intent["missing_fields"].append("bridge_direction (celo_to_xdc or xdc_to_celo)")
+        if not _valid_decimal(intent["amount"]):
+            intent["missing_fields"].append("amount")
+        elif Decimal(intent["amount"]) < _BRIDGE_MIN_GD:
+            intent["missing_fields"].append(f"minimum_bridge_amount_is_{_BRIDGE_MIN_GD}_G$")
+        intent["requires_confirmation"] = True
+        intent["requires_signature"] = True
     elif action == "claim":
         intent["requires_confirmation"] = True
         intent["requires_signature"] = True
@@ -624,6 +667,7 @@ def _empty_intent(action: str, summary: str) -> dict[str, Any]:
         "to_token": "",
         "flow_rate_per_day": "",
         "flow_rate_per_month": "",
+        "bridge_direction": "",
         "lookup_feature": "",
         "requires_confirmation": False,
         "requires_signature": False,
@@ -642,12 +686,32 @@ def _swap_missing_reply(intent: dict[str, Any]) -> str:
     missing = set(intent.get("missing_fields", []))
     if "supported_pair" in missing:
         return (
-            "I can only swap G$, CELO, cUSD, and USDT on Celo. "
-            "G$ and cUSD go through the GoodReserve; other pairs go through Uniswap V3."
+            "I can swap G$, CELO, cUSD, and USDT on Celo "
+            "(G$ <-> cUSD via the GoodReserve, other pairs via Uniswap V3), "
+            "and native XDC <-> G$ on XDC via XSwap — "
+            "e.g. 'swap 5 XDC to G$ XDC' or 'swap 100 G$ on XDC to XDC'."
         )
     if "different_tokens" in missing:
         return "Please pick two different tokens to swap, e.g. 'swap 1000 G$ to cusd'."
-    return "Please tell me the amount and both tokens, e.g. 'swap 1000 G$ to cusd' or 'swap 50 cusd to celo'."
+    return (
+        "Please tell me the amount and both tokens, e.g. 'swap 1000 G$ to cusd', "
+        "'swap 50 cusd to celo', 'swap 5 XDC to G$ XDC', or 'swap 100 G$ on XDC to XDC'."
+    )
+
+
+def _bridge_missing_reply(intent: dict[str, Any]) -> str:
+    missing = " ".join(intent.get("missing_fields", []))
+    if "minimum_bridge_amount" in missing:
+        return (
+            f"The minimum G$ bridge amount is {_BRIDGE_MIN_GD:,} G$ per transfer, "
+            "e.g. 'bridge 2,000 G$ to xdc' o 'bridge 5,000 G$ to celo'. "
+            f"(You entered below {_BRIDGE_MIN_GD:,} G$.)"
+        )
+    return (
+        "I can bridge G$ between the Celo and XDC networks. "
+        "Please tell me the amount and destination chain, e.g. "
+        "'bridge 2,000 G$ to xdc' (Celo → XDC) o 'bridge 5,000 G$ to celo' (XDC → Celo)."
+    )
 
 
 def _gcash_missing_reply(intent: dict[str, Any]) -> str:
@@ -766,6 +830,8 @@ def _welcome_help_reply() -> str:
         "• send 1 USDT to @bebet or 0x wallet\n"
         "• send 0.5 CELO to @bebet or 0x wallet\n"
         "• stream 5 G$ per day to @bebet or 0x wallet\n"
+        "• swap 1000 G$ to cusd · swap 5 XDC to G$ XDC · swap 100 G$ on XDC to XDC\n"
+        "• bridge 2,000 G$ to xdc (Celo → XDC) · bridge 5,000 G$ to celo (XDC → Celo)\n"
         "• cashout 5,000 G$ (GCash cash-out — I'll ask for your GCash # and full name)\n"
         "• load 09653870395 20\n"
         "• my transaction hash / my Learn & Earn tx hash / my Reloadly tx\n"
@@ -782,28 +848,84 @@ def _normalise_send_token(value: str | None) -> str | None:
 
 # Same token set the /swap page exposes: G$ <-> cUSD runs through the
 # GoodReserve (Mento) bonding curve; any other supported pair routes through
-# Uniswap V3 on Celo. XDC/USDC have no executable path on the swap page.
+# Uniswap V3 on Celo. The G$-on-XDC <-> native XDC pair (XSwap V2 router on
+# the XDC chain) is the one XDC-side executable pair. USDC has no executable
+# path anywhere.
 _SWAP_TOKENS = ("GD", "cUSD", "CELO", "USDT")
+
+# The single token key for G$ bridged onto the XDC chain (the "G$ on XDC"
+# token on xdc_wallet.html). The frontend XSwap engine maps it to the
+# XDC_GD_TOKEN contract address.
+_XSWAP_GD_KEY = "GDX"
+_XSWAP_NATIVE_KEY = "XDC"
 
 
 def _normalise_swap_token(value: str | None) -> str | None:
-    token = (value or "").strip().lower().replace(" ", "")
+    token = (value or "").strip().lower()
+    # G$-on-XDC has readable multi-word aliases ("g$ xdc", "g$ on xdc",
+    # "xdg$" …) — the alias lookup must run BEFORE the whitespace is stripped
+    # (same reason g'\b\w\b$'-style word boundaries fail on "g\$").
     aliases = {
         "g$": "GD", "gd": "GD", "gooddollar": "GD",
+        "g$ xdc": _XSWAP_GD_KEY, "g$ on xdc": _XSWAP_GD_KEY,
+        "gd xdc": _XSWAP_GD_KEY, "xdg": _XSWAP_GD_KEY, "xdg$": _XSWAP_GD_KEY,
+        "gooddollar xdc": _XSWAP_GD_KEY,
+        "gdx": _XSWAP_GD_KEY,  # re-normalisation pass in _apply_safety_policy
         "cusd": "cUSD", "celo-dollar": "cUSD",
         "celo": "CELO", "usdt": "USDT", "tether": "USDT",
-        "usdc": "USDC", "xdc": "XDC",
+        "usdc": "USDC", "xdc": _XSWAP_NATIVE_KEY,
     }
     return aliases.get(token)
 
 
+# Two-word token names scan order matters: longest alias first so "g$ xdc"
+# wins over plain "g$" inside the regex alternation.
+_SWAP_TOKEN_REGEX = re.compile(
+    r"(?<!\w)(g\$\s?(?:on\s)?xdc|gd\s+xdc|gooddollar\s+xdc|xdg\$?|gdx|"
+    r"g\$|gd|gooddollar|celo|cusd|usdt|usdc|xdc)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _swap_token_candidates(text: str) -> list[str]:
+    """Raw swap-token mentions in order (multi-word aliases preserved)."""
+    return _SWAP_TOKEN_REGEX.findall(text or "")
+
+
 def _resolve_swap_route(from_token: str, to_token: str) -> tuple[str | None, str]:
-    """Return (route, direction) — goodreserve direction: buy = cUSD -> G$."""
+    """Return (route, reserve_direction) — goodreserve direction: buy = cUSD -> G$."""
     if {from_token, to_token} == {"GD", "cUSD"}:
         return "goodreserve", "buy" if to_token == "GD" else "sell"
+    if {from_token, to_token} == {_XSWAP_GD_KEY, _XSWAP_NATIVE_KEY}:
+        return "xswap", ""
     if from_token in _SWAP_TOKENS and to_token in _SWAP_TOKENS:
         return "uniswap", ""
     return None, ""
+
+
+# Bridge: move G$ between the Celo and XDC chains through the GoodDollar
+# MessagePassingBridge — the only supported bridge token.
+_BRIDGE_KEYWORD_RE = re.compile(r"(?i)\b(bridge|ibridge|bridge-in|lipat)\b")
+_BRIDGE_DIRECTIONS = ("celo_to_xdc", "xdc_to_celo")
+
+
+def _bridge_direction_candidate(text: str) -> str | None:
+    """Detect the chain the user is sending TO (destination chain)."""
+    lower = (text or "").lower()
+    if re.search(r"\b(to|papunta ng?|sa|into)\s+xdc\b", lower):
+        return "celo_to_xdc"
+    if re.search(r"\bto\s+celo\b", lower) or re.search(r"\bsa\s+celo\b", lower):
+        return "xdc_to_celo"
+    # Phrased order also works: "bridge xdc to celo" / "bridge celo to xdc".
+    chains = re.findall(r"(?<!\w)(celo|xdc)(?!\w)", lower)
+    if len(chains) >= 2:
+        return "celo_to_xdc" if chains[1] == "xdc" else "xdc_to_celo"
+    return None
+
+
+def _normalise_bridge_direction(value: str | None) -> str | None:
+    direction = (value or "").strip().lower().replace("-", "_")
+    return direction if direction in _BRIDGE_DIRECTIONS else None
 
 def _send_token_candidate(text: str) -> str | None:
     match = re.search(r"(?<!\w)(g\$|gd|gooddollar|cusd|celo-dollar|usdt|tether|celo)(?!\w)", text, re.IGNORECASE)
@@ -816,7 +938,7 @@ _GCASH_CANCEL_RE = re.compile(r"(?i)\b(cancel|itigil|huwag|hwag|wag)\b")
 # Any of these means the follow-up message is a NEW command, not GCash details.
 _COMMAND_KEYWORD_RE = re.compile(
     r"(?i)\b(cash\s*out|cashout|gcash|send|transfer|padala|padalhan|stream|load|topup|"
-    r"swap|palit|exchange|claim|balance|balanse|history|transactions|magkano)\b"
+    r"swap|bridge|ibridge|palit|exchange|claim|balance|balanse|history|transactions|magkano)\b"
 )
 # Words that never belong to a person's name in a cashout message. Lookarounds
 # (not \b) so "G$" — which ends in a non-word char — is matched too.
