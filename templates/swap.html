@@ -6051,6 +6051,19 @@
                     if (warmed) {
                         ep = warmed.provider;
                         from = _normalizeAddrXdcToCelo(warmed.address);
+                    } else if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
+                        // In-app wallet: page-load warming may have returned
+                        // null (locked). Resolve + prompt PIN unlock here.
+                        ep = await _swapGetLocalWalletProvider();
+                        if (!ep) throw new Error('No Web3 wallet found.');
+                        const switched = await ensureXDCNetwork(ep);
+                        if (!switched) throw new Error('Could not switch to XDC network.');
+                        const accounts = await ep.request({ method: 'eth_requestAccounts' });
+                        from = accounts[0] ? _normalizeAddrXdcToCelo(accounts[0]) : null;
+                        if (!from) throw new Error('No wallet account found.');
+                        if (WALLET_ADDRESS && from.toLowerCase() !== _normalizeAddrXdcToCelo(WALLET_ADDRESS).toLowerCase()) {
+                            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+                        }
                     } else {
                         // Fallback to legacy flow if pre-warming failed
                         ep = await _awaitEthProvider();
