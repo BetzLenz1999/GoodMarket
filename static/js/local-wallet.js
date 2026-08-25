@@ -15,9 +15,10 @@
  *   getActiveAddress()                -> checksummed address or null
  *   exportMnemonic(pin)               -> 12 words after PIN re-auth
  *   lock()                            -> zero out decrypted key material
- *   getProvider()                     -> EIP-1193-style provider for the
- *                                        signer chain (signs locally, reads
- *                                        go straight to the Celo RPC)
+ *   getProvider()                     -> EIP-1193-style provider covering the
+ *                                        signer chains the app supports
+ *                                        (Celo + XDC): signs locally, read
+ *                                        calls go straight to the chain RPC.
  *
  * localStorage keeps the keystore for fast same-device unlocks. It is NOT
  * the source of truth — the server copy is.
@@ -46,12 +47,34 @@
         return value;
     }
 
-    var CELO_RPC_URLS = [
-        'https://forno.celo.org',
-        'https://rpc.ankr.com/celo',
-        'https://celo-mainnet.public.blastapi.io'
-    ];
-    var CELO_CHAIN_ID = 42220;
+    // Chains the in-app wallet can sign on. EVM keys are chain-agnostic;
+    // the restriction to these two is a product choice — the app only has
+    // Celo + XDC features (claim/send/swap bridge) so no other chain is ever
+    // offered to the user (and an injected MetaMask is never prompted).
+    var SUPPORTED_CHAINS = {
+        celo: {
+            hex: '0xa4ec',
+            id: 42220,
+            label: 'Celo Mainnet',
+            rpcs: [
+                'https://forno.celo.org',
+                'https://rpc.ankr.com/celo',
+                'https://celo-mainnet.public.blastapi.io'
+            ]
+        },
+        xdc: {
+            hex: '0x32',
+            id: 50,
+            label: 'XDC Network',
+            rpcs: [
+                'https://earpc.xinfin.network',
+                'https://rpc.ankr.com/xdc',
+                'https://erpc.xdcrpc.com'
+            ]
+        }
+    };
+    var _activeChainKey = 'celo';
+    var _rpcIndexes = {};
 
     var _activeWallet = null;   // ethers.Wallet while unlocked (memory only)
     var _unlockTimer = null;
@@ -216,6 +239,9 @@
         _unlockTimer = null;
         // Drop every reference to the decrypted key material.
         _activeWallet = null;
+        // Reset the chain so the next session starts on Celo, the app's
+        // primary network.
+        _activeChainKey = 'celo';
     }
 
     function _lockedError() {
@@ -229,13 +255,29 @@
         return _activeWallet;
     }
 
-    // ── Celo JSON-RPC (read-only calls go straight to the RPC) ─────────
+    // ── Chain JSON-RPC (read-only calls go straight to the RPC) ────────
 
-    var _rpcIdx = 0;
-    async function _celoJsonRpc(method, params) {
+    function _chainKeyForId(chainId) {
+        if (chainId == null) return null;
+        var hex = typeof chainId === 'number'
+            ? '0x' + chainId.toString(16)
+            : String(chainId).toLowerCase();
+        var keys = Object.keys(SUPPORTED_CHAINS);
+        for (var i = 0; i < keys.length; i++) {
+            if (SUPPORTED_CHAINS[keys[i]].hex === hex) return keys[i];
+        }
+        return null;
+    }
+
+    function _activeChain() {
+        return SUPPORTED_CHAINS[_activeChainKey];
+    }
+
+    async function _chainJsonRpc(chain, method, params) {
         var lastErr = null;
-        for (var i = 0; i < CELO_RPC_URLS.length; i++) {
-            var url = CELO_RPC_URLS[(_rpcIdx + i) % CELO_RPC_URLS.length];
+        var idx = _rpcIndexes[chain.label] || 0;
+        for (var i = 0; i < chain.rpcs.length; i++) {
+            var url = chain.rpcs[(idx + i) % chain.rpcs.length];
             try {
                 var resp = await fetch(url, {
                     method: 'POST',
@@ -249,7 +291,7 @@
                     err.data = data.error.data; // keep revert bytes for tx-error.js decoding
                     throw err;
                 }
-                _rpcIdx = (_rpcIdx + i) % CELO_RPC_URLS.length;
+                _rpcIndexes[chain.label] = (idx + i) % chain.rpcs.length;
                 return data.result;
             } catch (e) {
                 lastErr = e;
@@ -258,10 +300,17 @@
                 if (e && e.data) throw e;
             }
         }
-        throw lastErr || new Error('All Celo RPC endpoints failed.');
+        throw lastErr || new Error('All ' + chain.label + ' RPC endpoints failed.');
     }
 
-    // ── EIP-1193-style provider for the signer chain ────────────────────
+    // ── EIP-1193-style provider (Celo + XDC signer) ─────────────────────
+
+    function supportedChainLabels() {
+        var labels = Object.keys(SUPPORTED_CHAINS).map(function (k) {
+            return SUPPORTED_CHAINS[k].label.split(' ')[0]; // 'Celo', 'XDC'
+        });
+        return labels.join(' and ') + ' only.';
+    }
 
     async function _handleRequest(args) {
         var method = args.method;
@@ -269,19 +318,30 @@
 
         switch (method) {
             case 'eth_chainId':
-                return '0x' + CELO_CHAIN_ID.toString(16);
+                return _activeChain().hex;
             case 'net_version':
-                return String(CELO_CHAIN_ID);
-            // Claim code may request a chain switch defensively; this wallet is
-            // hard-pinned to Celo so the switch is always a no-op success.
-            case 'wallet_switchEthereumChain':
-                if (params[0] && params[0].chainId &&
-                    params[0].chainId.toLowerCase() !== '0x' + CELO_CHAIN_ID.toString(16)) {
-                    throw new Error('This wallet only supports Celo Mainnet.');
+                return String(_activeChain().id);
+            // The wallet supports a fixed registry of chains; a switch to
+            // one of them just moves the active pointer (no user prompt —
+            // the app gates which chains features may use).
+            case 'wallet_switchEthereumChain': {
+                var switchKey = _chainKeyForId(params[0] && params[0].chainId);
+                if (!switchKey) {
+                    throw new Error('The in-app GoodMarket wallet supports ' + supportedChainLabels());
+                }
+                _activeChainKey = switchKey;
+                return null;
+            }
+            // Claim/send helpers may "defensively" add the chain when a
+            // switch reports 4902. Known chains are already registered —
+            // success is a no-op.
+            case 'wallet_addEthereumChain': {
+                var addKey = _chainKeyForId(params[0] && params[0].chainId);
+                if (!addKey) {
+                    throw new Error('The in-app GoodMarket wallet supports ' + supportedChainLabels());
                 }
                 return null;
-            case 'wallet_addEthereumChain':
-                return null;
+            }
             case 'eth_accounts':
             case 'eth_requestAccounts': {
                 return [_requireUnlocked().address];
@@ -298,7 +358,17 @@
             case 'eth_sendTransaction': {
                 var wallet1 = _requireUnlocked();
                 var tx = Object.assign({}, params[0]);
-                var provider = new ethers.JsonRpcProvider(CELO_RPC_URLS[0], CELO_CHAIN_ID);
+                // Route by the tx's own chainId when present (the swap bridge
+                // sets it explicitly), else by the active chain.
+                var txChainKey = _chainKeyForId(tx.chainId) || _activeChainKey;
+                delete tx.chainId;
+                var chain = txChainKey === _activeChainKey
+                    ? _activeChain()
+                    : (SUPPORTED_CHAINS[txChainKey] || null);
+                if (!chain) {
+                    throw new Error('The in-app GoodMarket wallet supports ' + supportedChainLabels());
+                }
+                var provider = new ethers.JsonRpcProvider(chain.rpcs[0], chain.id);
                 var signer = wallet1.connect(provider);
                 var sent = await signer.sendTransaction(tx);
                 return sent.hash;
@@ -315,8 +385,9 @@
             }
             default:
                 // Everything else (eth_call, eth_estimateGas, eth_getBalance,
-                // eth_getTransactionReceipt, ...) is read-only — straight to Celo.
-                return _celoJsonRpc(method, params);
+                // eth_getTransactionReceipt, ...) is read-only — straight to
+                // the active chain's RPC.
+                return _chainJsonRpc(_activeChain(), method, params);
         }
     }
 
