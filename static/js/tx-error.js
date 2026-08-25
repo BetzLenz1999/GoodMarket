@@ -217,7 +217,7 @@
         return s.length > n ? s.slice(0, n - 1).trim() + "…" : s;
     }
 
-    function format(err) {
+    function format(err, opts) {
         if (err == null) return "Unknown error";
         if (typeof err === "string") return _truncate(_stripEthersBoilerplate(err)) || "Unknown error";
 
@@ -233,6 +233,12 @@
         var msg = info.msg || "";
         var joined = info.joined || "";
         var code = info.code;
+        // Most GoodMarket flows are Celo-side, so CELO is the default native
+        // gas token. XDC-bound flows (chat bridge, XSwap) pass
+        // { nativeSymbol: 'XDC' } — otherwise a genuine "insufficient funds
+        // for gas" on XDC gets mislabeled as a CELO problem (the wallet's raw
+        // message only says "gas", never the chain).
+        var nativeSymbol = (opts && typeof opts.nativeSymbol === "string" && opts.nativeSymbol) || "CELO";
 
         if (_isUserRejection(code, joined)) return "Transaction cancelled in your wallet.";
         if (_isUnsupportedRpcMethod(joined)) return "Your wallet couldn't process this request. Please retry, or reconnect WalletConnect from the homepage.";
@@ -242,7 +248,7 @@
             return "WalletConnect session is not active. Please reconnect and try again.";
         }
         if (_isInsufficientFunds(joined)) {
-            if (/celo|gas/i.test(joined)) return "Insufficient CELO for gas fees. Please top up CELO and try again.";
+            if (/celo|gas|xdc/i.test(joined)) return "Insufficient " + nativeSymbol + " for gas fees. Please top up " + nativeSymbol + " and try again.";
             return "Insufficient balance for this transaction.";
         }
         if (_isAllowanceIssue(joined)) return "Token approval is missing or too low. Please re-approve and try again.";
