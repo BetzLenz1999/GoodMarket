@@ -2729,6 +2729,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', { detail: _gmAiEventDetail(detail) }));
         return false;
     }
+    // XDC-side variant of _aiSwapErrMsg — GMTxError.format defaults to CELO
+    // for gas errors, which mislabels a genuine insufficient-XDC failure.
+    function _aiXdcErrMsg(err) {
+        if (window.GMTxError && GMTxError.format) return GMTxError.format(err, { nativeSymbol: 'XDC' });
+        return (err && err.message) || 'Unknown error';
+    }
     function _aiXdcSuccess(detail) {
         detail.progressKey = detail.progressKey || 'ai-xdc';
         window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', { detail: _gmAiEventDetail(detail) }));
@@ -2740,29 +2746,43 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     // Switch (or add) XDC mainnet on an EIP-1193 provider — mirrors
     // swap.html's ensureXDCNetwork. The local in-app wallet switches its
     // SUPPORTED_CHAINS pointer with no prompt.
+    //
+    // Why the add → re-switch → verify dance: some wallets (Trust, older
+    // MetaMask mobile builds) accept wallet_addEthereumChain but DON'T
+    // auto-switch, and injected wallets ignore the chainId inside
+    // eth_sendTransaction params — they always sign on the CURRENT chain.
+    // Without the re-switch + verification, an XDC-bound tx was broadcast on
+    // Celo and surfaced as the misleading "insufficient CELO for gas fees".
+    const AI_XDC_NETWORK_PARAMS = {
+        chainId: AI_XDC_CHAIN_HEX,
+        chainName: 'XDC Network',
+        rpcUrls: ['https://earpc.xinfin.network', 'https://rpc.ankr.com/xdc', 'https://erpc.xdcrpc.com'],
+        nativeCurrency: { name: 'XDC', symbol: 'XDC', decimals: 18 },
+        blockExplorerUrls: ['https://xdcscan.com']
+    };
     async function _aiEnsureXdcChain(ep) {
         try {
             const chainId = await ep.request({ method: 'eth_chainId' });
             if (parseInt(chainId, 16) === AI_XDC_CHAIN_ID) return true;
             try {
                 await ep.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: AI_XDC_CHAIN_HEX }] });
-                return true;
             } catch (switchErr) {
                 if (switchErr && (switchErr.code === 4902 || switchErr.code === -32603)) {
-                    await ep.request({
-                        method: 'wallet_addEthereumChain',
-                        params: [{
-                            chainId: AI_XDC_CHAIN_HEX,
-                            chainName: 'XDC Network',
-                            rpcUrls: ['https://earpc.xinfin.network', 'https://rpc.ankr.com/xdc', 'https://erpc.xdcrpc.com'],
-                            nativeCurrency: { name: 'XDC', symbol: 'XDC', decimals: 18 },
-                            blockExplorerUrls: ['https://xdcscan.com']
-                        }]
-                    });
-                    return true;
+                    await ep.request({ method: 'wallet_addEthereumChain', params: [AI_XDC_NETWORK_PARAMS] });
+                    // No auto-switch guarantee after add — switch again.
+                    await ep.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: AI_XDC_CHAIN_HEX }] });
+                } else {
+                    throw switchErr;
                 }
-                throw switchErr;
             }
+            // Verify where the wallet actually landed; a silent no-switch
+            // must fail here, not at eth_sendTransaction.
+            for (let i = 0; i < 5; i++) {
+                const cur = await ep.request({ method: 'eth_chainId' }).catch(function () { return null; });
+                if (parseInt(cur, 16) === AI_XDC_CHAIN_ID) return true;
+                await new Promise(function (r) { setTimeout(r, 400); });
+            }
+            return false;
         } catch (_) {
             return false;
         }
@@ -2799,7 +2819,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             throw new Error('No wallet detected. Please connect your GoodMarket wallet via MetaMask, Trust Wallet, or WalletConnect.');
         }
         const switched = await _aiEnsureXdcChain(ep);
-        if (!switched) throw new Error('Could not switch your wallet to the XDC network.');
+        if (!switched) throw new Error('Could not switch your wallet to the XDC network — open your wallet app, switch to "XDC Network" manually, then retry.');
         const accounts = await ep.request({ method: 'eth_requestAccounts' });
         const address = accounts && accounts[0];
         if (!address) throw new Error('No wallet account available.');
@@ -3003,7 +3023,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             });
         } catch (err) {
             if (err && err._gmCancelled) return _aiXdcFail({ progressKey: progressKey, message: label + ' cancelled.' });
-            return _aiXdcFail({ progressKey: progressKey, error: _aiSwapErrMsg(err), message: '❌ ' + label + ' failed: ' + _aiSwapErrMsg(err) });
+            return _aiXdcFail({ progressKey: progressKey, error: _aiXdcErrMsg(err), message: '❌ ' + label + ' failed: ' + _aiXdcErrMsg(err) });
         }
     }
     // Entry point for a confirmed chat bridge. Token is always G$ — only the
