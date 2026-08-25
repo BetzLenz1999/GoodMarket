@@ -372,16 +372,15 @@
             throw new Error('No wallet connected. Please connect your wallet.');
         }
         
-        // The in-app local wallet always reports Celo (0xa4ec) — asking it to
-        // switch chains is both pointless and unsupported.
-        const isLocalProvider = !!provider.isGMLocalWallet;
-
+        // The in-app local wallet supports Celo & XDC — a stream (Celo
+        // Superfluid) after an XDC claim could otherwise estimate/broadcast
+        // on the wrong chain, so the Celo switch runs for it too (no-op).
         try {
             // First check current chain
             const chainId = await provider.request({ method: 'eth_chainId' });
             const currentChainId = parseInt(chainId, 16);
 
-            if (currentChainId !== 42220 && !isLocalProvider) {
+            if (currentChainId !== 42220) {
                 // Try to switch to Celo
                 try {
                     await provider.request({
