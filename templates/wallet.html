@@ -3268,7 +3268,12 @@
         "gdTokenAddress": {{ gd_token_address|default('', true)|tojson }},
         "raffleContractAddress": {{ raffle_contract_address|default('', true)|tojson }},
         "walletConnectProjectId": {{ walletconnect_project_id|default('', true)|tojson }},
-        "assetVersion": {{ ASSET_VERSION|default('', true)|tojson }}
+        "assetVersion": {{ ASSET_VERSION|default('', true)|tojson }},
+        "bridgeContract": {{ bridge_contract|default('', true)|tojson }},
+        "celoGdTokenContract": {{ celo_gd_token_contract|default('', true)|tojson }},
+        "xdcGdTokenContract": {{ xdc_gd_token_contract|default('', true)|tojson }},
+        "xdcChainId": {{ xdc_chain_id|default(50, true)|tojson }},
+        "celoChainId": {{ celo_chain_id|default(42220, true)|tojson }}
     };
     </script>
     <script src="{{ url_for('static', filename='js/wallet-main.js', v=ASSET_VERSION) }}"></script>
