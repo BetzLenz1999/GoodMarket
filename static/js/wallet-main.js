@@ -1786,6 +1786,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     async function doSend() {
         clearAlert('sendAlert');
+        _gmAiProcessing('⏳ Send: processing — please confirm the transaction in your wallet…', 'ai-send');
         // Local wallets: prompt for PIN if the wallet has auto-locked.
         if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined' && !GMLocalWallet.isUnlocked()) {
             await _lwUnlockIfNeeded().catch(function (e) {
@@ -1993,11 +1994,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             showAlert('sendAlert', 'alert-success',
                 `✅ Transaction sent! <a style="color:var(--blue);" href="${explorerUrl}" target="_blank" rel="noopener">View ↗</a>`);
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', {
-                detail: {
+                detail: _gmAiEventDetail({
                     txHash,
                     explorerUrl,
+                    progressKey: 'ai-send',
                     message: `✅ Send successful. Tx hash: ${txHash.slice(0, 10)}…${txHash.slice(-6)}`
-                }
+                })
             }));
             document.getElementById('sendTo').value = '';
             document.getElementById('sendAmount').value = '';
@@ -2010,10 +2012,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const msg = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.message || 'Transaction failed');
             showAlert('sendAlert', 'alert-error', '❌ ' + msg);
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', {
-                detail: {
+                detail: _gmAiEventDetail({
                     error: msg,
+                    progressKey: 'ai-send',
                     message: `❌ Send failed: ${msg}`
-                }
+                })
             }));
         } finally {
             btn.disabled = false;
@@ -2125,6 +2128,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     async function submitGcashCashout() {
         clearAlert('gcashAlert');
+        _gmAiProcessing('⏳ GCash cashout: processing — please confirm the G$ transfer in your wallet…', 'ai-gcash');
         const btn = document.getElementById('gcashSubmitBtn');
 
         // Local wallets: prompt for PIN if locked. A cancelled unlock aborts
@@ -2275,16 +2279,24 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             setTimeout(() => loadBalances(true), 3000);
 
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', {
-                detail: {
+                detail: _gmAiEventDetail({
                     txHash,
                     explorerUrl: 'https://celoscan.io/tx/' + txHash,
+                    progressKey: 'ai-gcash',
                     message: '✅ GCash cashout request submitted. ' + amount.toLocaleString() + ' G$ sent.'
-                }
+                })
             }));
 
         } catch (err) {
             const msg = (window.GMTxError && GMTxError.format) ? GMTxError.format(err) : (err.message || 'Transaction failed');
             showAlert('gcashAlert', 'alert-error', '❌ ' + msg);
+            window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', {
+                detail: _gmAiEventDetail({
+                    error: msg,
+                    progressKey: 'ai-gcash',
+                    message: '❌ GCash cashout failed: ' + msg
+                })
+            }));
         } finally {
             btn.disabled = false;
             btn.textContent = 'Submit Cashout Request';
@@ -2292,11 +2304,41 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     }
 
     window.GoodMarketAI = window.GoodMarketAI || {};
-    // ── AI chat swap engine (Celo, in-app wallet signing) ───────────────────
+    // Tag the tx flow the chat agent just kicked off: its id rides on a
+    // beacon element so the manual flows (doSend / submitGcashCashout /
+    // handleStartStream), which know nothing about chat actions, can attach
+    // it to their goodmarket:ai-tx-* events — letting the widget update the
+    // right review card and dismiss its progress messages.
+    function _gmAiSetCurrentAction(action) {
+        window._gmAiCurrentAction = action || null;
+        let beacon = document.getElementById('gm-ai-current-action');
+        if (!beacon) {
+            beacon = document.createElement('div');
+            beacon.id = 'gm-ai-current-action';
+            beacon.hidden = true;
+            document.body.appendChild(beacon);
+        }
+        beacon.dataset.actionId = (action && action.id) || '';
+        beacon.dataset.actionType = (action && action.action_type) || '';
+    }
+    function _gmAiEventDetail(extra) {
+        const beacon = document.getElementById('gm-ai-current-action');
+        return Object.assign({
+            actionId: (beacon && beacon.dataset.actionId) || null,
+            actionType: (beacon && beacon.dataset.actionType) || null
+        }, extra || {});
+    }
+    function _gmAiProcessing(message, progressKey) {
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-processing', {
+            detail: _gmAiEventDetail({ message: message, progressKey: progressKey || null })
+        }));
+    }
+    // ── AI chat swap engine (Celo) ───────────────────────────────────────────
     // Minimal port of templates/swap.html's execution path so a confirmed
     // chat swap signs in-page (send-token style — no swap-page redirect, no
-    // modal). The ai_agent chat gate accepts local logins only, so the in-app
-    // wallet (GMLocalWallet, PIN-unlocked) is the only signer resolved here.
+    // modal). The signer is resolved per login method (in-app wallet for local
+    // logins, WalletConnect / Privy / injected otherwise) — same routing as
+    // swap.html's getConnectedSwapSigner().
     const AI_SWAP_TOKENS = {
         GD:   { symbol: 'G$',   address: '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A', decimals: 18 },
         CELO: { symbol: 'CELO', address: '0x471EcE3750Da237f93B8E339c536989b8978a438', decimals: 18 },
@@ -2331,11 +2373,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     const AI_SWAP_CELO_RPC = 'https://forno.celo.org';
 
     function _aiSwapFail(detail) {
-        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', { detail }));
+        detail.progressKey = detail.progressKey || 'ai-swap';
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', { detail: _gmAiEventDetail(detail) }));
         return false;
     }
     function _aiSwapSuccess(detail) {
-        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', { detail }));
+        detail.progressKey = detail.progressKey || 'ai-swap';
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', { detail: _gmAiEventDetail(detail) }));
         return true;
     }
     function _aiSwapErrMsg(err) {
@@ -2378,23 +2422,89 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         const now = Math.floor(Date.now() / 1000);
         return allowance && allowance.amount >= amountIn && Number(allowance.expiration) > now + 20 * 60;
     }
-    // Local-only gate: the in-app wallet signs; never an injected/WC provider.
-    async function _aiSwapResolveSigner() {
-        if ((LOGIN_METHOD || '').toLowerCase() !== 'local' || typeof GMLocalWallet === 'undefined') {
-            throw new Error('Chat swap is available for GoodMarket (local) accounts only.');
+    // Ensure an injected/Privy provider is on Celo before signing (mirrors
+    // swap.html). WC and the in-app wallet always report Celo, so they skip it.
+    async function _aiSwapEnsureCeloChain(eip1193) {
+        const chainHex = await eip1193.request({ method: 'eth_chainId' }).catch(() => null);
+        if (parseInt(chainHex, 16) === 42220) return;
+        try {
+            await eip1193.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xa4ec' }] });
+        } catch (switchErr) {
+            await eip1193.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                    chainId: '0xa4ec',
+                    chainName: 'Celo Mainnet',
+                    nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+                    rpcUrls: ['https://forno.celo.org'],
+                    blockExplorerUrls: ['https://celoscan.io']
+                }]
+            });
         }
-        const provider = new ethers.BrowserProvider(GMLocalWallet.getProvider());
-        const signer = await provider.getSigner();
-        const addr = await signer.getAddress();
-        if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
-            throw new Error('Please unlock your GoodMarket wallet (the one tied to this account) to continue.');
-        }
-        return signer;
     }
-    // Run approve+execute while reporting a tx result back to the chat widget.
+    // Resolve the signer for the session's login method — local in-app wallet,
+    // Privy, WalletConnect, then injected (same routing as doSend/getClaimSigner).
+    async function _aiSwapResolveSigner() {
+        if (window.useServerSigning) {
+            throw new Error('This account uses server-side signing. Chat swaps need a connected wallet instead.');
+        }
+        // Local self-custodial logins sign with the PIN-unlocked in-app wallet —
+        // never an injected provider (a different account).
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+            const provider = new ethers.BrowserProvider(GMLocalWallet.getProvider());
+            const signer = await provider.getSigner();
+            const addr = await signer.getAddress();
+            if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+                throw new Error('Please unlock your GoodMarket wallet (the one tied to this account) to continue.');
+            }
+            return signer;
+        }
+        if (IS_PRIVY_LOGIN) {
+            const privyProvider = await _walletGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
+            if (privyProvider) {
+                await _aiSwapEnsureCeloChain(privyProvider);
+                const provider = new ethers.BrowserProvider(privyProvider);
+                const signer = await provider.getSigner();
+                const addr = await signer.getAddress();
+                if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+                    throw new Error('Wrong Privy wallet connected. Please use your GoodMarket wallet.');
+                }
+                return signer;
+            }
+        }
+        // WalletConnect logins must sign via the WC session — an injected
+        // MetaMask on the same browser is a different account.
+        if (_gmPreferWc()) {
+            const wcProvider = await _walletGetWcProviderIfPreferred();
+            if (wcProvider) {
+                const provider = new ethers.BrowserProvider(wcProvider);
+                const signer = await provider.getSigner();
+                const addr = await signer.getAddress();
+                if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+                    throw new Error('Wrong WalletConnect wallet connected. Please switch to your GoodMarket wallet.');
+                }
+                return signer;
+            }
+        }
+        const ep = await _vAwaitEthProvider();
+        if (!ep) {
+            throw new Error('No wallet detected. Please connect your GoodMarket wallet via MetaMask, Trust Wallet, MiniPay, or WalletConnect.');
+        }
+        const accounts = await ep.request({ method: 'eth_requestAccounts' });
+        if (!accounts || !accounts.length) throw new Error('No wallet account available.');
+        if ((accounts[0] || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+        }
+        await _aiSwapEnsureCeloChain(ep);
+        const provider = new ethers.BrowserProvider(ep);
+        return provider.getSigner();
+    }
+    // Run approve+execute while reporting progress + result back to the chat
+    // widget (⏳ processing messages are dismissed when the final result lands).
     async function _aiSwapRun(flow, label) {
         let signer;
         try {
+            _gmAiProcessing('⏳ ' + label + ': preparing — opening your wallet…', 'ai-swap');
             await _aiSwapEnsureEthers();
             if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined' && !GMLocalWallet.isUnlocked()) {
                 await _lwUnlockIfNeeded().catch(function (e) {
@@ -2405,7 +2515,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 });
             }
             signer = await _aiSwapResolveSigner();
+            _gmAiProcessing('⏳ ' + label + ': wallet connected — please confirm the transaction(s) in your wallet…', 'ai-swap');
             const txHash = await flow(signer);
+            _gmAiProcessing('⏳ ' + label + ': confirming on-chain…', 'ai-swap');
             return _aiSwapSuccess({
                 txHash,
                 explorerUrl: 'https://celoscan.io/tx/' + txHash,
@@ -2554,6 +2666,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     window.GoodMarketAI.handleConfirmedAction = async function(action) {
         if (!action) return false;
+        _gmAiSetCurrentAction(action);
         const payload = action.payload || {};
 
         if (action.action_type === 'mobile_load') {
@@ -2671,6 +2784,28 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     }
 
     document.addEventListener('DOMContentLoaded', openAiActionFromUrl);
+
+    // Feature pages (dashboard, learn & earn, play & earn, swap, savings,
+    // reloadly) bounce unverified users back here with ?fv_required=1.
+    // Explain why and flip the Claim button into face-verification mode.
+    function openFvRequiredFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('fv_required') !== '1') return;
+        window._walletNeedsFV = true;
+        const msg = document.getElementById('walletDashboardFVMsg');
+        if (msg) {
+            msg.style.display = 'block';
+            msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        if (typeof window._triggerReVerify === 'function') {
+            window._triggerReVerify();
+        }
+        params.delete('fv_required');
+        const nextUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+        window.history.replaceState({}, '', nextUrl);
+    }
+
+    document.addEventListener('DOMContentLoaded', openFvRequiredFromUrl);
 
             // ── UBI Claim ─────────────────────────────────────────────
     (function() {
