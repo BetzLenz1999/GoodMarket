@@ -528,6 +528,14 @@
                     return;
                 }
 
+                // Human-verified users only: if the wallet page already knows
+                // this wallet is not face-verified, fail fast — the server
+                // enforces the same gate on /api/voucher/claim and /confirm.
+                if (window._walletNeedsFV) {
+                    voucherShowSimple('🚫', 'Not Eligible', "You're not eligible to claim this voucher. Only human-verified users can claim this voucher. Please complete face verification first.");
+                    return;
+                }
+
                 if (btn) { btn.disabled = true; btn.textContent = '⏳ Claiming...'; }
 
                 try {
