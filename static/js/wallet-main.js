@@ -2461,6 +2461,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // Local self-custodial logins sign with the PIN-unlocked in-app wallet —
         // never an injected provider (a different account).
         if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+            // The provider pointer may still sit on XDC after an XDC flow in
+            // the same page (XSwap / bridge / claim) — switch back to Celo
+            // first (a cheap no-op pointer move when already on Celo).
+            await GMLocalWallet.getProvider().request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: '0xa4ec' }]
+            }).catch(function () { /* fall through — the address check below still gates */ });
             const provider = new ethers.BrowserProvider(GMLocalWallet.getProvider());
             const signer = await provider.getSigner();
             const addr = await signer.getAddress();
@@ -2511,10 +2518,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     }
     // Run approve+execute while reporting progress + result back to the chat
     // widget (⏳ processing messages are dismissed when the final result lands).
-    async function _aiSwapRun(flow, label) {
+    // progressKey stays 'ai-swap' for Celo swaps; the Celo → XDC bridge reuses
+    // this Celo-side runner with its own key so the right bubbles get cleared.
+    async function _aiSwapRun(flow, label, progressKey) {
+        progressKey = progressKey || 'ai-swap';
         let signer;
         try {
-            _gmAiProcessing('⏳ ' + label + ': preparing — opening your wallet…', 'ai-swap');
+            _gmAiProcessing('⏳ ' + label + ': preparing — opening your wallet…', progressKey);
             await _aiSwapEnsureEthers();
             if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined' && !GMLocalWallet.isUnlocked()) {
                 await _lwUnlockIfNeeded().catch(function (e) {
@@ -2525,17 +2535,18 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 });
             }
             signer = await _aiSwapResolveSigner();
-            _gmAiProcessing('⏳ ' + label + ': wallet connected — please confirm the transaction(s) in your wallet…', 'ai-swap');
+            _gmAiProcessing('⏳ ' + label + ': wallet connected — please confirm the transaction(s) in your wallet…', progressKey);
             const txHash = await flow(signer);
-            _gmAiProcessing('⏳ ' + label + ': confirming on-chain…', 'ai-swap');
+            _gmAiProcessing('⏳ ' + label + ': confirming on-chain…', progressKey);
             return _aiSwapSuccess({
+                progressKey: progressKey,
                 txHash,
                 explorerUrl: 'https://celoscan.io/tx/' + txHash,
                 message: '✅ ' + label + ' successful. Tx hash: ' + txHash.slice(0, 10) + '…' + txHash.slice(-6)
             });
         } catch (err) {
-            if (err && err._gmCancelled) return _aiSwapFail({ message: 'Swap cancelled.' });
-            return _aiSwapFail({ error: _aiSwapErrMsg(err), message: '❌ ' + label + ' failed: ' + _aiSwapErrMsg(err) });
+            if (err && err._gmCancelled) return _aiSwapFail({ progressKey: progressKey, message: 'Swap cancelled.' });
+            return _aiSwapFail({ progressKey: progressKey, error: _aiSwapErrMsg(err), message: '❌ ' + label + ' failed: ' + _aiSwapErrMsg(err) });
         }
     }
     // GoodReserve (Mento broker): G$ <-> cUSD direct buy/sell. Quote comes from
@@ -2673,6 +2684,346 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return _aiSwapUniswap(fromKey, toKey, amountStr);
     }
 
+    // ── AI chat XDC engine: G$ bridge (Celo <-> XDC) + XSwap (XDC <-> G$ on XDC) ──
+    // Trimmed ports of swap.html's bridge tabs and xdc_wallet.html's XSwap pane.
+    // XDC-side txs go out as raw eth_sendTransaction with an explicit chainId
+    // (mirrors swap.html's _sendXdcBridgeTx) — an ethers.BrowserProvider wraps
+    // the wallet provider and would be bound to the wallet's current chain.
+    const AI_BOOT = window.GM_WALLET_BOOT || {};
+    const AI_XDC_CHAIN_ID    = Number(AI_BOOT.xdcChainId) || 50;
+    const AI_XDC_CHAIN_HEX   = '0x32';
+    const AI_XDC_RPC         = 'https://earpc.xinfin.network';
+    const AI_CELO_CHAIN_ID   = Number(AI_BOOT.celoChainId) || 42220;
+    const AI_BRIDGE_CONTRACT = AI_BOOT.bridgeContract || '0xa3247276DbCC76Dd7705273f766eB3E8a5ecF4a5';
+    const AI_CELO_GD_TOKEN   = AI_BOOT.celoGdTokenContract || '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A';
+    const AI_XDC_GD_TOKEN    = AI_BOOT.xdcGdTokenContract || '0xEC2136843a983885AebF2feB3931F73A8eBEe50c';
+    const AI_BRIDGE_SERVICE_LAYERZERO = 1;
+    const AI_BRIDGE_MIN_GD   = 2000; // mirrors the /swap bridge tab UI minimum
+    const AI_BRIDGE_ABI = ['function bridgeTo(address target, uint256 targetChainId, uint256 amount, uint8 bridge) payable'];
+    const AI_BRIDGE_CANBRIDGE_ABI = [
+        'function bridgeTo(address target, uint256 targetChainId, uint256 amount, uint8 bridge) payable',
+        'function canBridge(address from, uint256 amount) view returns (bool, string)'
+    ];
+    const AI_XDC_CANBRIDGE_ABI = [
+        'function bridgeTo(address target, uint256 targetChainId, uint256 amount, uint8 bridge) payable',
+        'function canBridge(address from, uint256 amount) view returns (bool)'
+    ];
+    const AI_XSWAP_ROUTER = '0xf9c5E4f6E627201aB2d6FB6391239738Cf4bDcf9';
+    const AI_XSWAP_WXDC   = '0x951857744785E80e2De051c32EE7b25f9c458C42';
+    const AI_XSWAP_ROUTER_ABI = [
+        'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+        'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable returns (uint256[] amounts)',
+        'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)'
+    ];
+    const AI_XSWAP_SLIPPAGE_BPS = 100n; // 1% — mirrors xdc_wallet.html's default
+    const AI_XDC_APPROVE_GAS = '0x1d4c0'; // 120000, mirrors swap.html
+    const AI_XDC_BRIDGE_GAS  = '0x55d40'; // 350000
+    const AI_XDC_SWAP_GAS    = '0x493e0'; // 300000
+    // Padded fallback fees mirror the /api/xdc/bridge/estimate-fee response —
+    // the endpoint already applies the same safety buffer the pages use.
+    const AI_BRIDGE_FALLBACK_FEE_CELO = '0.1156';
+    const AI_BRIDGE_FALLBACK_FEE_XDC  = '1.6176';
+
+    function _aiXdcFail(detail) {
+        detail.progressKey = detail.progressKey || 'ai-xdc';
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', { detail: _gmAiEventDetail(detail) }));
+        return false;
+    }
+    function _aiXdcSuccess(detail) {
+        detail.progressKey = detail.progressKey || 'ai-xdc';
+        window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', { detail: _gmAiEventDetail(detail) }));
+        return true;
+    }
+    function _aiXdcReadRpc() {
+        return new ethers.JsonRpcProvider(AI_XDC_RPC);
+    }
+    // Switch (or add) XDC mainnet on an EIP-1193 provider — mirrors
+    // swap.html's ensureXDCNetwork. The local in-app wallet switches its
+    // SUPPORTED_CHAINS pointer with no prompt.
+    async function _aiEnsureXdcChain(ep) {
+        try {
+            const chainId = await ep.request({ method: 'eth_chainId' });
+            if (parseInt(chainId, 16) === AI_XDC_CHAIN_ID) return true;
+            try {
+                await ep.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: AI_XDC_CHAIN_HEX }] });
+                return true;
+            } catch (switchErr) {
+                if (switchErr && (switchErr.code === 4902 || switchErr.code === -32603)) {
+                    await ep.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [{
+                            chainId: AI_XDC_CHAIN_HEX,
+                            chainName: 'XDC Network',
+                            rpcUrls: ['https://earpc.xinfin.network', 'https://rpc.ankr.com/xdc', 'https://erpc.xdcrpc.com'],
+                            nativeCurrency: { name: 'XDC', symbol: 'XDC', decimals: 18 },
+                            blockExplorerUrls: ['https://xdcscan.com']
+                        }]
+                    });
+                    return true;
+                }
+                throw switchErr;
+            }
+        } catch (_) {
+            return false;
+        }
+    }
+    // Resolve the EIP-1193 provider for XDC signing per login method —
+    // in-app wallet (PIN) for local logins, Privy / WalletConnect / injected
+    // otherwise. Never falls through to an injected wallet for local logins.
+    async function _aiResolveXdcProvider() {
+        if (window.useServerSigning) {
+            throw new Error('This account uses server-side signing. Chat XDC actions need a connected wallet instead.');
+        }
+        let ep = null;
+        if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
+            if (typeof GMLocalWallet === 'undefined') {
+                throw new Error('Local GoodMarket wallet is not available on this page.');
+            }
+            if (!GMLocalWallet.isUnlocked()) {
+                await _lwUnlockIfNeeded().catch(function (e) {
+                    if (e && e.message !== 'Unlock cancelled.') throw e;
+                    const cancel = new Error('Unlock cancelled.');
+                    cancel._gmCancelled = true;
+                    throw cancel;
+                });
+            }
+            ep = GMLocalWallet.getProvider();
+        } else if (IS_PRIVY_LOGIN) {
+            ep = await _walletGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
+        } else if (_gmPreferWc()) {
+            ep = await _walletGetWcProviderIfPreferred();
+        } else {
+            ep = await _vAwaitEthProvider();
+        }
+        if (!ep) {
+            throw new Error('No wallet detected. Please connect your GoodMarket wallet via MetaMask, Trust Wallet, or WalletConnect.');
+        }
+        const switched = await _aiEnsureXdcChain(ep);
+        if (!switched) throw new Error('Could not switch your wallet to the XDC network.');
+        const accounts = await ep.request({ method: 'eth_requestAccounts' });
+        const address = accounts && accounts[0];
+        if (!address) throw new Error('No wallet account available.');
+        if ((address || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+        }
+        return { provider: ep, address: address };
+    }
+    async function _aiXdcSendTx(provider, address, tx) {
+        const txParams = {
+            from: address,
+            to: tx.to,
+            data: tx.data,
+            value: tx.valueHex || '0x0',
+            chainId: AI_XDC_CHAIN_HEX
+        };
+        if (tx.gasHex) txParams.gas = tx.gasHex;
+        return await provider.request({ method: 'eth_sendTransaction', params: [txParams] });
+    }
+    // Poll the public XDC RPC for the receipt — the wallet provider may still
+    // be on another chain, and a lagging node answering null is handled by
+    // the retry loop (mirrors xdc_wallet.html's receipt wait).
+    async function _aiXdcWaitReceipt(txHash, timeoutMs, pollMs) {
+        timeoutMs = timeoutMs || 90000;
+        pollMs = pollMs || 2500;
+        const rpc = _aiXdcReadRpc();
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            try {
+                const receipt = await rpc.getTransactionReceipt(txHash);
+                if (receipt) {
+                    if (Number(receipt.status) === 1) return receipt;
+                    throw new Error('Transaction reverted on XDC. Check your balance/allowance, then try again: https://xdcscan.com/tx/' + txHash);
+                }
+            } catch (err) {
+                if (err && /reverted/i.test(String(err.message || ''))) throw err;
+                // transient RPC hiccup — keep polling
+            }
+            await new Promise(function (r) { setTimeout(r, pollMs); });
+        }
+        throw new Error('Transaction was sent but not confirmed yet after ' + Math.floor(timeoutMs / 1000) + 's. Check XDCScan: https://xdcscan.com/tx/' + txHash);
+    }
+    // LayerZero fee estimate through the backend (goodserver estimatefees with
+    // a safety buffer + padded fallback — same values the /swap bridge tabs use).
+    async function _aiBridgeFeeWei(sourceChainId, targetChainId, amountStr) {
+        const fallback = sourceChainId === AI_XDC_CHAIN_ID ? AI_BRIDGE_FALLBACK_FEE_XDC : AI_BRIDGE_FALLBACK_FEE_CELO;
+        try {
+            const res = await fetch(
+                '/api/xdc/bridge/estimate-fee?sourceChainId=' + sourceChainId +
+                '&targetChainId=' + targetChainId +
+                '&amount=' + encodeURIComponent(amountStr || '1')
+            );
+            const data = await res.json().catch(function () { return null; });
+            const wei = data && data.recommended_bridge_fee_wei;
+            if (data && data.success && wei && BigInt(wei) > 0n) return BigInt(wei);
+        } catch (_) { /* fall through to padded fallback */ }
+        return ethers.parseUnits(fallback, 18);
+    }
+    // Celo → XDC: approve G$ to the bridge, then bridgeTo with msg.value = fee.
+    async function _aiBridgeCeloToXdc(amountStr) {
+        return _aiSwapRun(async function (signer) {
+            const amountWei = ethers.parseUnits(amountStr, 18);
+            const feeWei = await _aiBridgeFeeWei(AI_CELO_CHAIN_ID, AI_XDC_CHAIN_ID, amountStr);
+            const gdRead = new ethers.Contract(AI_CELO_GD_TOKEN, AI_SWAP_ERC20_ABI, signer.provider);
+            const bridgeRead = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_BRIDGE_CANBRIDGE_ABI, signer.provider);
+            try {
+                const can = await bridgeRead.canBridge(WALLET, amountWei);
+                if (can && can[0] === false) {
+                    const reason = (can[1] || '').trim();
+                    throw new Error('Bridge route rejected this transfer' + (reason ? ' (' + reason + ')' : '') + '. Try a different amount or retry later.');
+                }
+            } catch (limitErr) {
+                if (limitErr && /rejected this transfer/i.test(String(limitErr.message || ''))) throw limitErr;
+                // contract read failed — let the wallet-side simulation be the gate
+            }
+            const allowance = await gdRead.allowance(WALLET, AI_BRIDGE_CONTRACT);
+            if (allowance < amountWei) {
+                const gd = new ethers.Contract(AI_CELO_GD_TOKEN, AI_SWAP_ERC20_ABI, signer);
+                const approveTx = await gd.approve(AI_BRIDGE_CONTRACT, amountWei);
+                await approveTx.wait();
+            }
+            const bridge = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_BRIDGE_ABI, signer);
+            const bridgeTx = await bridge.bridgeTo(WALLET, AI_XDC_CHAIN_ID, amountWei, AI_BRIDGE_SERVICE_LAYERZERO, { value: feeWei });
+            const receipt = await bridgeTx.wait();
+            try { loadBalances(true); } catch (_) { /* best-effort */ }
+            return receipt.hash || bridgeTx.hash;
+        }, 'Bridge G$ (Celo → XDC)', 'ai-bridge');
+    }
+    // XDC → Celo: raw eth_sendTransaction on the XDC chain (mirrors
+    // swap.html's _sendXdcBridgeTx), receipts polled on the public XDC RPC.
+    async function _aiBridgeXdcToCelo(amountStr) {
+        return _aiXdcRun('ai-bridge', 'Bridge G$ (XDC → Celo)', async function (session) {
+            const amountWei = ethers.parseUnits(amountStr, 18);
+            const feeWei = await _aiBridgeFeeWei(AI_XDC_CHAIN_ID, AI_CELO_CHAIN_ID, amountStr);
+            const rpc = _aiXdcReadRpc();
+            const gdRead = new ethers.Contract(AI_XDC_GD_TOKEN, AI_SWAP_ERC20_ABI, rpc);
+            const bridgeRead = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_XDC_CANBRIDGE_ABI, rpc);
+            const erc20Iface = new ethers.Interface(AI_SWAP_ERC20_ABI);
+            const bridgeIface = new ethers.Interface(AI_BRIDGE_ABI);
+            try {
+                const can = await bridgeRead.canBridge(WALLET, amountWei);
+                if (can === false) throw new Error('Bridge route rejected this transfer (canBridge=false). Try a different amount or retry later.');
+            } catch (limitErr) {
+                if (limitErr && /canBridge=false/i.test(String(limitErr.message || ''))) throw limitErr;
+            }
+            const allowance = await gdRead.allowance(WALLET, AI_BRIDGE_CONTRACT);
+            if (allowance < amountWei) {
+                const approveData = erc20Iface.encodeFunctionData('approve', [AI_BRIDGE_CONTRACT, amountWei]);
+                const approveHash = await _aiXdcSendTx(session.provider, session.address, {
+                    to: AI_XDC_GD_TOKEN, data: approveData, gasHex: AI_XDC_APPROVE_GAS
+                });
+                await _aiXdcWaitReceipt(approveHash);
+            }
+            const bridgeData = bridgeIface.encodeFunctionData('bridgeTo', [WALLET, AI_CELO_CHAIN_ID, amountWei, AI_BRIDGE_SERVICE_LAYERZERO]);
+            const bridgeHash = await _aiXdcSendTx(session.provider, session.address, {
+                to: AI_BRIDGE_CONTRACT, data: bridgeData,
+                valueHex: ethers.toBeHex(feeWei), gasHex: AI_XDC_BRIDGE_GAS
+            });
+            await _aiXdcWaitReceipt(bridgeHash);
+            try { loadBalances(true); } catch (_) { /* best-effort */ }
+            return bridgeHash;
+        }, {
+            explorerUrl: 'https://xdcscan.com/tx/',
+            finalNote: 'Final mint on Celo may take a few minutes — track it on LayerZeroScan with your tx hash.'
+        });
+    }
+    // G$ on XDC <-> native XDC through the XSwap V2 router (Uniswap V2-style,
+    // mirrors xdc_wallet.html's executeXswap). Quote comes from the router's
+    // getAmountsOut on the public XDC RPC — never trust an injected quote.
+    async function _aiExecuteXswap(payload) {
+        const fromKey = String(payload.from_token || '').trim().toUpperCase();
+        const toKey = String(payload.to_token || '').trim().toUpperCase();
+        const amountStr = String(payload.amount || '').replace(/,/g, '');
+        if (['GDX', 'XDC'].indexOf(fromKey) === -1 || ['GDX', 'XDC'].indexOf(toKey) === -1 || fromKey === toKey) {
+            return _aiXdcFail({ progressKey: 'ai-xswap', message: '❌ XSwap failed: supported pair is native XDC <-> G$ on XDC only.' });
+        }
+        if (!amountStr || parseFloat(amountStr) <= 0) {
+            return _aiXdcFail({ progressKey: 'ai-xswap', message: '❌ XSwap failed: invalid amount.' });
+        }
+        const sellingGd = fromKey === 'GDX';
+        const label = 'Swap (XSwap ' + (sellingGd ? 'G$ → XDC' : 'XDC → G$') + ')';
+        return _aiXdcRun('ai-xswap', label, async function (session) {
+            const amountWei = ethers.parseUnits(amountStr, 18);
+            const rpc = _aiXdcReadRpc();
+            const router = new ethers.Contract(AI_XSWAP_ROUTER, AI_XSWAP_ROUTER_ABI, rpc);
+            const path = sellingGd ? [AI_XDC_GD_TOKEN, AI_XSWAP_WXDC] : [AI_XSWAP_WXDC, AI_XDC_GD_TOKEN];
+            const amounts = await router.getAmountsOut(amountWei, path);
+            const amountOutWei = amounts[amounts.length - 1];
+            const minOutWei = amountOutWei * (10000n - AI_XSWAP_SLIPPAGE_BPS) / 10000n;
+            const deadline = Math.floor(Date.now() / 1000) + 20 * 60;
+            const routerIface = new ethers.Interface(AI_XSWAP_ROUTER_ABI);
+            let txHash;
+            if (!sellingGd) {
+                const data = routerIface.encodeFunctionData('swapExactETHForTokens', [minOutWei, path, WALLET, deadline]);
+                txHash = await _aiXdcSendTx(session.provider, session.address, {
+                    to: AI_XSWAP_ROUTER, data: data,
+                    valueHex: ethers.toBeHex(amountWei), gasHex: AI_XDC_SWAP_GAS
+                });
+            } else {
+                const gdRead = new ethers.Contract(AI_XDC_GD_TOKEN, AI_SWAP_ERC20_ABI, rpc);
+                const allowance = await gdRead.allowance(WALLET, AI_XSWAP_ROUTER);
+                if (allowance < amountWei) {
+                    const erc20Iface = new ethers.Interface(AI_SWAP_ERC20_ABI);
+                    const approveData = erc20Iface.encodeFunctionData('approve', [AI_XSWAP_ROUTER, amountWei]);
+                    const approveHash = await _aiXdcSendTx(session.provider, session.address, {
+                        to: AI_XDC_GD_TOKEN, data: approveData, gasHex: AI_XDC_APPROVE_GAS
+                    });
+                    await _aiXdcWaitReceipt(approveHash);
+                }
+                const data = routerIface.encodeFunctionData('swapExactTokensForETH', [amountWei, minOutWei, path, WALLET, deadline]);
+                txHash = await _aiXdcSendTx(session.provider, session.address, {
+                    to: AI_XSWAP_ROUTER, data: data, gasHex: AI_XDC_SWAP_GAS
+                });
+            }
+            await _aiXdcWaitReceipt(txHash);
+            try { loadBalances(true); } catch (_) { /* best-effort */ }
+            return txHash;
+        }, {
+            explorerUrl: 'https://xdcscan.com/tx/'
+        });
+    }
+    // Shared XDC-side runner: resolve the XDC-signing provider per login
+    // method, run the flow, then report to the chat widget with the right
+    // explorer + progress key (progress bubbles are dismissed on the result).
+    async function _aiXdcRun(progressKey, label, flow, opts) {
+        opts = opts || {};
+        try {
+            _gmAiProcessing('⏳ ' + label + ': preparing — opening your wallet…', progressKey);
+            await _aiSwapEnsureEthers();
+            const session = await _aiResolveXdcProvider();
+            _gmAiProcessing('⏳ ' + label + ': wallet connected — please confirm the transaction(s) in your wallet…', progressKey);
+            const txHash = await flow(session);
+            _gmAiProcessing('⏳ ' + label + ': confirming on-chain…', progressKey);
+            const explorerBase = opts.explorerUrl || 'https://xdcscan.com/tx/';
+            return _aiXdcSuccess({
+                progressKey: progressKey,
+                txHash: txHash,
+                explorerUrl: explorerBase + txHash,
+                message: '✅ ' + label + ' successful. Tx hash: ' + txHash.slice(0, 10) + '…' + txHash.slice(-6) +
+                    (opts.finalNote ? '\n' + opts.finalNote : '')
+            });
+        } catch (err) {
+            if (err && err._gmCancelled) return _aiXdcFail({ progressKey: progressKey, message: label + ' cancelled.' });
+            return _aiXdcFail({ progressKey: progressKey, error: _aiSwapErrMsg(err), message: '❌ ' + label + ' failed: ' + _aiSwapErrMsg(err) });
+        }
+    }
+    // Entry point for a confirmed chat bridge. Token is always G$ — only the
+    // chain direction varies (backend computes bridge_direction).
+    async function _aiExecuteBridge(payload) {
+        const direction = String(payload.bridge_direction || '').trim().toLowerCase().replace(/-/g, '_');
+        const amountStr = String(payload.amount || '').replace(/,/g, '');
+        if (direction !== 'celo_to_xdc' && direction !== 'xdc_to_celo') {
+            return _aiXdcFail({ progressKey: 'ai-bridge', message: '❌ Bridge failed: pick a destination chain, e.g. \'bridge 2,000 G$ to xdc\' o \'bridge 5,000 G$ to celo\'.' });
+        }
+        if (!amountStr || parseFloat(amountStr) <= 0) {
+            return _aiXdcFail({ progressKey: 'ai-bridge', message: '❌ Bridge failed: invalid amount.' });
+        }
+        if (parseFloat(amountStr) < AI_BRIDGE_MIN_GD) {
+            return _aiXdcFail({ progressKey: 'ai-bridge', message: '❌ Bridge failed: minimum is ' + AI_BRIDGE_MIN_GD.toLocaleString() + ' G$ per transfer.' });
+        }
+        if (direction === 'celo_to_xdc') return _aiBridgeCeloToXdc(amountStr);
+        return _aiBridgeXdcToCelo(amountStr);
+    }
+
 
     window.GoodMarketAI.handleConfirmedAction = async function(action) {
         if (!action) return false;
@@ -2741,8 +3092,20 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         if (action.action_type === 'swap') {
             // Chat-confirmed swap executes in-page (send-token style — no
             // swap-page redirect, no modal). Progress/result is reported back
-            // to the chat via goodmarket:ai-tx-* events.
+            // to the chat via goodmarket:ai-tx-* events. XDC-side pairs
+            // (native XDC <-> G$ on XDC) run through the XSwap router.
+            if (payload.swap_route === 'xswap') {
+                setTimeout(function() { _aiExecuteXswap(payload); }, 150);
+                return true;
+            }
             setTimeout(function() { _aiExecuteSwap(payload); }, 150);
+            return true;
+        }
+
+        if (action.action_type === 'bridge') {
+            // Chat-confirmed G$ bridge (Celo <-> XDC), same in-page style as
+            // the swap branch — the review card is the only preview surface.
+            setTimeout(function() { _aiExecuteBridge(payload); }, 150);
             return true;
         }
 
