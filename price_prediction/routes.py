@@ -16,6 +16,13 @@ def price_prediction_home():
     if not wallet or not verified:
         return redirect('/')
 
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     maintenance_status = maintenance_service.get_maintenance_status('minigames')
     if maintenance_status.get('is_maintenance', False):
         return redirect('/minigames/')
