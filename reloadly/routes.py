@@ -113,6 +113,14 @@ def reloadly_home():
     wallet, verified = _require_auth()
     if not wallet or not verified:
         return redirect("/")
+
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     import os
     gd_price = get_gd_usd_price()
     has_explicit_sidecar = bool(os.getenv("WC_SERVICE_URL"))
