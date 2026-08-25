@@ -7277,6 +7277,13 @@ def wallet_page():
         gd_token_address=GOODDOLLAR_CONTRACTS.get("GOODDOLLAR_TOKEN", ""),
         raffle_contract_address=os.environ.get("GOODMARKET_RAFFLE_CONTRACT_ADDRESS", ""),
         buy_eth_visible=buy_eth_visible,
+        # Same bridge/chain context as the swap page — the chat agent's
+        # in-page bridge + XSwap execution reads these via GM_WALLET_BOOT.
+        bridge_contract=os.getenv("XDC_CELO_BRIDGE_CONTRACT", "0xa3247276DbCC76Dd7705273f766eB3E8a5ecF4a5"),
+        celo_gd_token_contract=os.getenv("CELO_GD_TOKEN_CONTRACT", "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A"),
+        xdc_gd_token_contract=os.getenv("XDC_GD_TOKEN_CONTRACT", "0xEC2136843a983885AebF2feB3931F73A8eBEe50c"),
+        xdc_chain_id=get_env_int("XDC_MAINNET_CHAIN_ID", 50),
+        celo_chain_id=get_env_int("CELO_MAINNET_CHAIN_ID", 42220),
     )
 
 
