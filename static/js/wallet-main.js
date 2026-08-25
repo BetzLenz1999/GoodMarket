@@ -86,6 +86,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 await _lwUnlockIfNeeded();
             }
             const localProvider = GMLocalWallet.getProvider();
+            // The raffle contract is on Celo — the in-app wallet may still be
+            // on XDC after an XDC claim, so switch back first (cheap no-op).
+            await localProvider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: '0xa4ec' }]
+            });
             const browserProvider = new ethers.BrowserProvider(localProvider);
             const signer = await browserProvider.getSigner();
             const signerAddress = await signer.getAddress();
@@ -1801,10 +1807,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         const isXdcToken = meta.network === 'xdc';
         const isFuseToken = meta.network === 'fuse';
         const isLocalLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
-        // The in-app wallet signs Celo transactions only — stop before an
-        // injected MetaMask (a different account) gets prompted for XDC/FUSE.
-        if (isLocalLogin && (isXdcToken || isFuseToken)) {
-            showAlert('sendAlert', 'alert-error', '❌ Your in-app GoodMarket wallet can sign Celo transactions only. Sending ' + (meta.label || 'this token') + ' on ' + (isXdcToken ? 'XDC' : 'Fuse') + ' needs MetaMask or WalletConnect — log in with that wallet to use it.');
+        // The in-app wallet signs Celo & XDC — only a Fuse send is blocked
+        // here up-front before an injected MetaMask (a different account)
+        // gets prompted.
+        if (isLocalLogin && isFuseToken) {
+            showAlert('sendAlert', 'alert-error', '❌ Your in-app GoodMarket wallet can sign Celo & XDC transactions only. Sending ' + (meta.label || 'this token') + ' on Fuse needs MetaMask or WalletConnect — log in with that wallet to use it.');
             return;
         }
 
@@ -2198,6 +2205,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (!provider) provider = await _walletGetWcProviderIfPreferred();
             }
             if (!provider) throw new Error('No wallet detected. Please connect your wallet.');
+            // The G$ transfer is on Celo — the in-app wallet may still be on
+            // XDC after an XDC claim, so switch back first (cheap no-op).
+            await _ensureCeloChainForSigning(provider);
 
             const accounts = await provider.request({ method: 'eth_requestAccounts' });
             if (!accounts || !accounts.length) throw new Error('No wallet account available.');
@@ -3340,14 +3350,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const login = window.GM_WALLET_BOOT.loginMethod.toLowerCase();
             const provider = _getEthProvider && _getEthProvider();
             const isMiniPay = _isMiniPay();
-            // The in-app wallet signs Celo transactions only — never recommend
-            // the XDC route to local logins, even if an extension is installed.
+            // The in-app GoodMarket wallet signs Celo & XDC — local logins
+            // support the XDC claim directly (no injected extension needed).
             const isLocal = login === 'local';
             const isWalletConnect = ['walletconnect', 'manual', 'manual_address'].includes(login) || !!(provider && provider.isWalletConnect);
             const isMetaMask = !!(provider && provider.isMetaMask) || !!(window.ethereum && window.ethereum.isMetaMask);
             const isTrustWallet = _isTrustWalletMobileContext && _isTrustWalletMobileContext();
             const hasInjected = !!provider || !!window.ethereum;
-            const supportsXdc = !isLocal && !isMiniPay && !isTrustWallet && (isMetaMask || isWalletConnect || hasInjected);
+            const supportsXdc = isLocal || (!isMiniPay && !isTrustWallet && (isMetaMask || isWalletConnect || hasInjected));
             return { isMiniPay, isWalletConnect, isMetaMask, isTrustWallet, hasInjected, supportsFuse: false, supportsXdc };
         }
 
@@ -5039,6 +5049,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
 
         async function getClaimProviderAndFrom() {
+            // Local self-custodial accounts sign with the in-app browser
+            // wallet (it now supports Celo & XDC) — never probe an injected
+            // MetaMask extension on a different account.
+            const isLocalClaimLogin = (LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined';
+            if (isLocalClaimLogin) {
+                if (typeof _lwUnlockIfNeeded === 'function') await _lwUnlockIfNeeded();
+                const localProvider = GMLocalWallet.getProvider();
+                const accounts = await localProvider.request({ method: 'eth_requestAccounts' });
+                if (!accounts || !accounts.length) throw new Error('No wallet account available.');
+                const from = accounts[0];
+                if (from.toLowerCase() !== WALLET.toLowerCase()) {
+                    throw new Error('Wrong wallet unlocked. Please use your GoodMarket wallet.');
+                }
+                return { provider: localProvider, from };
+            }
+
             // For WalletConnect users, use the existing WC session directly to avoid
             // injected provider conflicts. This matches the behavior in savings/swap/reloadly
             // where the WC session is prioritized.
