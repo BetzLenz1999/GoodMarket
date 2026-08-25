@@ -13,6 +13,14 @@ def jumble_game():
     verified = session.get('verified') or session.get('ubi_verified')
     if not wallet or not verified:
         return redirect('/')
+
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     return render_template('jumble_game.html', wallet=wallet)
 
 
