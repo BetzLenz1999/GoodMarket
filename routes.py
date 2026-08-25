@@ -8331,6 +8331,17 @@ def get_daily_voucher():
         if row.get("is_claimed"):
             return jsonify({"success": True, "voucher": None, "reason": "already_claimed"})
 
+        # Human-verified users only: hide the banner entirely for wallets
+        # that are not face-verified on the GoodDollar Identity contract
+        # (the same gate /api/voucher/claim enforces server-side).
+        try:
+            from blockchain import is_identity_verified
+            if not is_identity_verified(session.get("wallet")).get("verified"):
+                return jsonify({"success": True, "voucher": None, "reason": "not_human_verified"})
+        except Exception as fv_err:
+            logger.warning(f"⚠️ Voucher FV check failed for {str(session.get('wallet'))[:10]}…: {fv_err}")
+            return jsonify({"success": True, "voucher": None, "reason": "not_human_verified"})
+
         return jsonify({
             "success": True,
             "voucher": {
@@ -8352,6 +8363,10 @@ def claim_daily_voucher():
     GoodMarket users only: the voucher is reserved for accounts created in
     the GoodMarket app (login_method == "local"). WalletConnect / injected
     (MetaMask, MiniPay) / Privy logins are rejected before any claim happens.
+
+    Human-verified users only: the wallet must also be face-verified on the
+    GoodDollar Identity contract — unverified wallets are rejected before
+    the voucher slot is taken.
     """
     try:
         wallet = session.get("wallet")
@@ -8361,6 +8376,22 @@ def claim_daily_voucher():
                 "error": "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.",
                 "not_eligible": True,
             }), 403
+
+        # Human (face) verification gate — fails closed on check errors.
+        try:
+            from blockchain import is_identity_verified
+            human_verified = bool(is_identity_verified(wallet).get("verified"))
+        except Exception as fv_err:
+            logger.warning(f"⚠️ Voucher claim FV check failed for {str(wallet)[:10]}…: {fv_err}")
+            human_verified = False
+        if not human_verified:
+            return jsonify({
+                "success": False,
+                "error": "You're not eligible to claim this voucher. Only human-verified users can claim this voucher. Please complete face verification first.",
+                "not_eligible": True,
+                "not_human_verified": True,
+            }), 403
+
         today = _get_today_pht()
         supabase = get_supabase_client()
         if not supabase:
@@ -8408,6 +8439,23 @@ def confirm_voucher_claim():
 
         if not tx_hash:
             return jsonify({"success": False, "error": "tx_hash is required"}), 400
+
+        # Human (face) verification gate — same rule as /api/voucher/claim.
+        # An unverified wallet must never be able to consume the voucher even
+        # if it somehow obtained the link. Fails closed on check errors.
+        try:
+            from blockchain import is_identity_verified
+            human_verified = bool(is_identity_verified(wallet).get("verified"))
+        except Exception as fv_err:
+            logger.warning(f"⚠️ Voucher confirm FV check failed for {str(wallet)[:10]}…: {fv_err}")
+            human_verified = False
+        if not human_verified:
+            return jsonify({
+                "success": False,
+                "error": "You're not eligible to claim this voucher. Only human-verified users can claim this voucher. Please complete face verification first.",
+                "not_eligible": True,
+                "not_human_verified": True,
+            }), 403
 
         supabase = get_supabase_client()
         if not supabase:
