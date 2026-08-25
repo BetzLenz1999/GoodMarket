@@ -2466,6 +2466,12 @@
             }
             const localProvider = await _swapGetLocalWalletProvider();
             if (localProvider) {
+                // Celo-only swaps — the in-app wallet may still be on XDC
+                // after a bridge, so switch back before wrapping (no-op).
+                await localProvider.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0xa4ec' }]
+                });
                 // Wrap like every other branch: callers use signer.provider and
                 // new ethers.Contract(..., signer), which need a real ethers
                 // Signer — the raw EIP-1193 bridge alone is not a valid runner.
@@ -3922,10 +3928,10 @@
         }
 
         async function getConnectedFuseSigner() {
-            // The in-app wallet signs Celo transactions only — stop before an
+            // The in-app wallet signs Celo & XDC only — stop before an
             // injected MetaMask on a different account gets prompted instead.
             if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
-                throw new Error('The in-app GoodMarket wallet supports Celo only. The Fuse G$ swap needs MetaMask or another Fuse-compatible wallet — log in with that wallet to use it.');
+                throw new Error('The in-app GoodMarket wallet supports Celo & XDC only. The Fuse G$ swap needs MetaMask or another Fuse-compatible wallet — log in with that wallet to use it.');
             }
             const ethProvider = IS_PRIVY_LOGIN
                 ? (await _swapGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 }))
@@ -5533,15 +5539,25 @@
         var _xdcWarmedAddress = null;
 
         async function _warmUpXdcWalletProvider() {
-            // The in-app wallet signs Celo transactions only — never pop an
-            // injected MetaMask (a different account) for local logins.
-            if ((LOGIN_METHOD || '').toLowerCase() === 'local') return null;
+            // The in-app wallet signs Celo & XDC — never pop an injected
+            // MetaMask (a different account) for local logins. Warm the
+            // PIN-unlocked local provider on XDC instead.
+            const isLocal = (LOGIN_METHOD || '').toLowerCase() === 'local';
             // If already warmed and cached, return the cached provider
             if (_xdcWarmedProvider && _xdcWarmedAddress) {
                 return { provider: _xdcWarmedProvider, address: _xdcWarmedAddress };
             }
 
-            const ep = await _awaitEthProvider(3000);
+            let ep;
+            if (isLocal) {
+                // Page-load warming must not pop the PIN modal — only warm an
+                // already-unlocked wallet; the bridge action re-resolves (and
+                // prompts) at click time.
+                if (typeof GMLocalWallet === 'undefined' || !GMLocalWallet.isUnlocked()) return null;
+                ep = await _swapGetLocalWalletProvider();
+            } else {
+                ep = await _awaitEthProvider(3000);
+            }
             if (!ep) return null;
             
             // Switch to XDC network first
@@ -5825,7 +5841,18 @@
                 ep = warmed.provider;
                 from = warmed.address;
             } else if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
-                throw new Error('The in-app GoodMarket wallet supports Celo only. Bridging FROM XDC needs MetaMask or another XDC-compatible wallet — log in with that wallet to use it.');
+                // In-app wallet: XDC is supported — sign with the PIN-unlocked
+                // local provider (never an injected extension).
+                ep = await _swapGetLocalWalletProvider();
+                if (!ep) throw new Error('No Web3 wallet found.');
+                const switched = await ensureXDCNetwork(ep);
+                if (!switched) throw new Error('Could not switch to XDC network.');
+                const accounts = await ep.request({ method: 'eth_requestAccounts' });
+                from = accounts[0];
+                if (!from) throw new Error('No wallet account found.');
+                if (WALLET_ADDRESS && _normalizeAddrXdcToCelo(from).toLowerCase() !== _normalizeAddrXdcToCelo(WALLET_ADDRESS).toLowerCase()) {
+                    throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+                }
             } else {
                 // Fallback to legacy flow if pre-warming failed
                 ep = await _awaitEthProvider();
