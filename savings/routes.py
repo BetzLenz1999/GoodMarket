@@ -28,6 +28,14 @@ def savings_home():
     wallet, verified = _require_auth()
     if not wallet or not verified:
         return redirect("/login")
+
+    # Human (face) verification gate — all login_methods must be
+    # face-verified on the GoodDollar Identity contract to enter.
+    from human_verification import human_verification_redirect
+    fv_gate = human_verification_redirect(wallet)
+    if fv_gate:
+        return fv_gate
+
     wc_pid = os.environ.get('WALLETCONNECT_PROJECT_ID', '')
     has_explicit_sidecar = bool(os.getenv("WC_SERVICE_URL"))
     is_serverless_runtime = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
