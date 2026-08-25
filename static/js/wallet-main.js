@@ -5800,8 +5800,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const attempts = [
                 { method: 'personal_sign', params: [msgHex, connected], label: 'personal_sign(hex,address)' },
                 { method: 'personal_sign', params: [connected, msgHex], label: 'personal_sign(address,hex)' },
-                { method: 'personal_sign', params: [msg,    connected], label: 'personal_sign(text,address)' },
-                { method: 'eth_sign',      params: [connected, msgHex], label: 'eth_sign(address,hex)' }
+                { method: 'personal_sign', params: [msg,    connected], label: 'personal_sign(text,address)' }
             ];
 
             let lastErr = null;
@@ -5893,9 +5892,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 { method: 'personal_sign', params: [msgHex, connected], label: 'personal_sign(hex,address)' },
                 { method: 'personal_sign', params: [connected, msgHex], label: 'personal_sign(address,hex)' },
                 { method: 'personal_sign', params: [msg, connected], label: 'personal_sign(text,address)' },
-                { method: 'personal_sign', params: [connected, msg], label: 'personal_sign(address,text)' },
-                { method: 'eth_sign', params: [connected, msgHex], label: 'eth_sign(address,hex)' },
-                { method: 'eth_sign', params: [msgHex, connected], label: 'eth_sign(hex,address)' }
+                { method: 'personal_sign', params: [connected, msg], label: 'personal_sign(address,text)' }
             ];
 
             let lastErr = null;
