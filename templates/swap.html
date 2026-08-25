@@ -5587,6 +5587,10 @@
 
         // Auto-switch (or add) the user's wallet to XDC mainnet right
         // before signing. Uses cached provider if available.
+        // Some wallets accept wallet_addEthereumChain but DON'T auto-switch,
+        // and injected wallets ignore the chainId inside eth_sendTransaction
+        // — without the re-switch + verification an XDC-bound tx went out on
+        // Celo and failed with the misleading "insufficient CELO for gas".
         async function ensureXDCNetwork(ep) {
             try {
                 const chainId = await ep.request({ method: 'eth_chainId' });
@@ -5596,7 +5600,6 @@
                         method: 'wallet_switchEthereumChain',
                         params: [{ chainId: XDC_CHAIN_ID_HEX }]
                     });
-                    return true;
                 } catch (switchErr) {
                     if (switchErr && (switchErr.code === 4902 || switchErr.code === -32603)) {
                         await ep.request({
@@ -5609,10 +5612,22 @@
                                 blockExplorerUrls: ['https://xdcscan.com']
                             }]
                         });
-                        return true;
+                        await ep.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: XDC_CHAIN_ID_HEX }]
+                        });
+                    } else {
+                        throw switchErr;
                     }
-                    throw switchErr;
                 }
+                // Verify where the wallet actually landed; a silent no-switch
+                // must fail here, not at eth_sendTransaction.
+                for (let i = 0; i < 5; i++) {
+                    const cur = await ep.request({ method: 'eth_chainId' }).catch(() => null);
+                    if (parseInt(cur, 16) === XDC_CHAIN_ID) return true;
+                    await new Promise(r => setTimeout(r, 400));
+                }
+                return false;
             } catch (_) {
                 return false;
             }
