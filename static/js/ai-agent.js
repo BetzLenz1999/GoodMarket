@@ -56,6 +56,39 @@
     }
   }
 
+  // Display names for the token keys the backend emits — internal keys
+  // (GDX/GD) must never leak into the review card.
+  function _tokenLabel(key) {
+    switch (String(key || '').trim().toUpperCase()) {
+      case 'GDX': return 'G$ on XDC';
+      case 'XDC': return 'XDC';
+      case 'GD':  return 'G$';
+      case 'CUSD': return 'cUSD';
+      case 'USDT': return 'USDT';
+      case 'CELO': return 'CELO';
+      default: return key || '';
+    }
+  }
+
+  function _routeLabel(payload) {
+    if (payload.bridge_direction === 'celo_to_xdc') return 'G$: Celo → XDC';
+    if (payload.bridge_direction === 'xdc_to_celo') return 'G$: XDC → Celo';
+    if (payload.from_token && payload.to_token) {
+      return _tokenLabel(payload.from_token) + ' → ' + _tokenLabel(payload.to_token);
+    }
+    return '';
+  }
+
+  // Success links used to be hardcoded to Celoscan — XDC-side flows
+  // (bridge, XSwap) link to XDCScan, so derive the label from the URL.
+  function _explorerLinkLabel(url) {
+    const lower = String(url || '').toLowerCase();
+    if (lower.indexOf('xdcscan') !== -1) return 'View on XDCScan ↗';
+    if (lower.indexOf('celoscan') !== -1) return 'View on Celoscan ↗';
+    if (lower.indexOf('layerzeroscan') !== -1) return 'Track on LayerZeroScan ↗';
+    return 'View on explorer ↗';
+  }
+
   function renderActionCard(action) {
     const card = el('div', 'gm-ai-card');
     const title = el('strong', '', 'Review before signing');
@@ -64,8 +97,9 @@
     const rows = [
       ['Action', action.action_type],
       ['Amount', payload.flow_rate_per_day ? (payload.flow_rate_per_day + ' G$/day') : (payload.amount || payload.fiat_amount)],
-      ['Token', payload.token || payload.from_token],
-      ['To', payload.recipient_username ? ('@' + payload.recipient_username + ' (' + payload.recipient + ')') : (payload.recipient || payload.to_token || payload.phone)],
+      ['Token', payload.token ? _tokenLabel(payload.token) : _tokenLabel(payload.from_token)],
+      ['Route', _routeLabel(payload)],
+      ['To', payload.recipient_username ? ('@' + payload.recipient_username + ' (' + payload.recipient + ')') : (payload.recipient || payload.phone)],
       ['GCash #', payload.gcash_number],
       ['GCash Name', payload.gcash_name],
       ['Signing', signingLabel(action.login_method)],
@@ -223,7 +257,7 @@
       const text = detail.message || ('✅ Transaction sent successfully. Tx hash: ' + shortHash);
       addMessage(messages, 'bot', text);
       if (detail.explorerUrl && messages.lastElementChild) {
-        const link = el('a', '', 'View on Celoscan ↗');
+        const link = el('a', '', _explorerLinkLabel(detail.explorerUrl));
         link.href = detail.explorerUrl;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
