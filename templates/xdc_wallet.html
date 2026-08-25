@@ -358,6 +358,9 @@
     </style>
     <!-- WalletConnect bridge for users without injected wallet -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <!-- In-app self-custodial wallet for local logins (ethers is loaded in
+         <head>, which local-wallet.js requires for PIN decrypt + signing). -->
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script>
         if (typeof GMWalletConnect !== "undefined") {
             GMWalletConnect.configure({
@@ -751,6 +754,7 @@
 
         function _providerLabel(provider) {
             if (!provider) return 'wallet';
+            if (provider.isGMLocalWallet) return 'GoodMarket wallet';
             // Check if it's a WalletConnect provider (has specific WC properties)
             if (provider.__isWalletConnect || (provider && provider.constructor && provider.constructor.name === 'EIP1193Bridge')) {
                 return 'WalletConnect';
@@ -762,6 +766,12 @@
         }
 
         async function _getEthProvider() {
+            // Local (in-app wallet) logins must never resolve an injected
+            // extension here — it is a different account and produced
+            // "Wrong wallet connected" on every XDC signing action. Signing
+            // flows resolve the in-app wallet via _xdcGetSigningProvider();
+            // read-only callers fall back to the public XDC RPC.
+            if ((LOGIN_METHOD || '').toLowerCase() === 'local') return null;
             const _isWcLogin = (typeof GMWalletConnect !== 'undefined' && typeof GMWalletConnect.prefersWcSigning === 'function')
                 ? GMWalletConnect.prefersWcSigning()
                 : ['walletconnect', 'manual', 'manual_address'].includes((LOGIN_METHOD || '').toLowerCase());
@@ -803,6 +813,33 @@
             }
 
             return null;
+        }
+
+        // Local self-custodial accounts (login_method === 'local') sign with
+        // the PIN-decrypted in-app wallet — the same account as the session,
+        // on XDC here. Never falls through to an injected provider: while
+        // locked it opens the PIN prompt, because an injected MetaMask would
+        // be a different account entirely. Mirrors _swapGetLocalWalletProvider()
+        // in swap.html.
+        async function _xdcGetLocalWalletProvider() {
+            if ((LOGIN_METHOD || '').toLowerCase() !== 'local') return null;
+            if (typeof GMLocalWallet === 'undefined') return null;
+            if (!GMLocalWallet.isUnlocked()) {
+                if (typeof window._lwOpenUnlockModal === 'function') {
+                    await window._lwOpenUnlockModal();
+                } else {
+                    throw new Error('Please unlock your wallet. Reload the page and log in again.');
+                }
+            }
+            return GMLocalWallet.getProvider();
+        }
+
+        // Signing provider for XDC transactions: the in-app wallet for local
+        // logins, the injected/WalletConnect wallet otherwise.
+        async function _xdcGetSigningProvider() {
+            const local = await _xdcGetLocalWalletProvider();
+            if (local) return local;
+            return _getEthProvider();
         }
 
         let xdcBalanceVal = 0;
@@ -1170,7 +1207,7 @@
                 return d.tx_hash;
             }
 
-            const ep = await _getEthProvider();
+            const ep = await _xdcGetSigningProvider();
             if (!ep) throw new Error('No Web3 wallet found.');
             const switched = await ensureXDCNetwork(ep);
             if (!switched) throw new Error('Could not switch to XDC network.');
@@ -1512,8 +1549,9 @@
                     // _sendXswapTx() will route signing to /api/server/sign-tx
                     from = normalizeAddr(WALLET);
                 } else {
-                    // Injected wallet path: require Web3 wallet and verify identity
-                    ep = await _getEthProvider();
+                    // Wallet path: require Web3 wallet and verify identity
+                    // (the in-app wallet for local logins, injected/WC otherwise)
+                    ep = await _xdcGetSigningProvider();
                     if (!ep) throw new Error('No Web3 wallet found.');
                     const switched = await ensureXDCNetwork(ep);
                     if (!switched) throw new Error('Could not switch to XDC network.');
@@ -1897,7 +1935,7 @@
                 return;
             }
 
-            const ep = await _getEthProvider();
+            const ep = await _xdcGetSigningProvider();
             if (!ep) {
                 document.getElementById('noWalletWarn').style.display = 'block';
                 showAlert(alertId, 'alert-error', '❌ No Web3 wallet detected. Install MetaMask and add the XDC Network.');
@@ -2134,8 +2172,8 @@
                 return;
             }
 
-            // ── Browser wallet (MetaMask) flow ──
-            const ep = await _getEthProvider();
+            // ── Wallet flow (in-app wallet for local logins, MetaMask/WC otherwise) ──
+            const ep = await _xdcGetSigningProvider();
             if (!ep) {
                 noWallet.style.display = 'block';
                 setAlert('alert-error', '❌ No Web3 wallet detected. Please open this page in a Web3-compatible browser.');
@@ -2475,6 +2513,14 @@
 
             // Server-signing users don't need MetaMask — just redirect to Celo wallet
             if (useServerSigning) {
+                status.textContent = '✅ Redirecting to Celo Wallet...';
+                setTimeout(() => { window.location.href = '/wallet'; }, 800);
+                return;
+            }
+
+            // In-app wallet (local login) signs Celo & XDC internally — no
+            // network switch to perform, just go to the Celo wallet page.
+            if ((LOGIN_METHOD || '').toLowerCase() === 'local') {
                 status.textContent = '✅ Redirecting to Celo Wallet...';
                 setTimeout(() => { window.location.href = '/wallet'; }, 800);
                 return;
