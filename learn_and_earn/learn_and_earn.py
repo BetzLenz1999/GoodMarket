@@ -705,6 +705,21 @@ class LearnEarnQuizManager:
             return wallet_address
         return wallet_address[:6] + "..." + wallet_address[-4:]
 
+    def _wallet_history_filter(self, wallet_address: str) -> str:
+        """Canonical case-insensitive wallet WHERE clause for learnearn_log.
+
+        Rows store the wallet as a masked display address (``0xabc...xyz``) in
+        whatever casing the submitting side used — the web session wallet is
+        often checksummed while the Telegram bot's saved wallet is lowercase —
+        so a case-sensitive eq misses Telegram-bot quiz logs (empty quiz
+        history). Match the masked form and the full-address form with ilike,
+        like ``_latest_attempt_query``. When adding a wallet-scoped query on
+        this table, use this helper, never eq('wallet_address', ...).
+        """
+        normalized = (wallet_address or '').lower()
+        masked = self.mask_wallet_address(normalized)
+        return f"wallet_address.ilike.{masked},wallet_address.ilike.{normalized}"
+
 
     def _latest_attempt_query(self, supabase, wallet_address: str):
         """Build the canonical cooldown query for Learn & Earn logs.
@@ -828,7 +843,10 @@ class LearnEarnQuizManager:
             current_time = datetime.utcnow()
             quiz_log = {
                 'quiz_id': quiz_id,
-                'wallet_address': self.mask_wallet_address(user_wallet),
+                # Normalize the stored mask to lowercase so all readers (web
+                # session wallets are often checksummed, Telegram bot wallets
+                # are lowercase) find every row case-insensitively.
+                'wallet_address': self.mask_wallet_address(user_wallet.lower()),
                 'timestamp': current_time.isoformat() + 'Z',  # Use UTC with Z suffix
                 'score': correct_answers,
                 'total_questions': len(questions),
@@ -1029,14 +1047,11 @@ class LearnEarnQuizManager:
         try:
             supabase = get_supabase_client()
 
-            wallet_normalized = wallet_address.lower()
-            masked_address = self.mask_wallet_address(wallet_address)
-
             logger.info(f"🔍 Optimized quiz history fetch for: {wallet_address[:10]}...")
 
             result = supabase.table(LEARN_EARN_LOG_TABLE)\
                 .select('*')\
-                .or_(f"wallet_address.eq.{masked_address},wallet_address.eq.{wallet_normalized},wallet_address.eq.{wallet_address}")\
+                .or_(self._wallet_history_filter(wallet_address))\
                 .order('timestamp', desc=True)\
                 .limit(limit)\
                 .execute()
@@ -1248,7 +1263,7 @@ class LearnEarnQuizManager:
 
             quiz_log_data = {
                 'quiz_id': log_id,
-                'wallet_address': self.mask_wallet_address(user_wallet),
+                'wallet_address': self.mask_wallet_address(user_wallet.lower()),
                 'timestamp': datetime.utcnow().isoformat() + 'Z', # Use UTC with Z suffix
                 'score': score,
                 'total_questions': total_questions,
@@ -2047,13 +2062,15 @@ def get_daily_ranking(current_user):
                 'is_first': True
             })
 
-        # Find user's rank (based on who took quiz first)
-        masked_address = quiz_manager.mask_wallet_address(current_user)
+        # Find user's rank (based on who took quiz first). Rows store the
+        # wallet as a masked address in whichever casing the submitting side
+        # used, so compare case-insensitively (Telegram-bot rows are lowercase).
+        masked_address = quiz_manager.mask_wallet_address((current_user or '').lower())
         user_rank = 0
 
         # Check if user already has a quiz today
         for idx, quiz in enumerate(result.data, start=1):
-            if quiz['wallet_address'] == masked_address:
+            if str(quiz.get('wallet_address', '')).lower() == masked_address.lower():
                 user_rank = idx
                 break
 
@@ -3455,7 +3472,7 @@ def mint_achievement_nft(current_user):
         quiz_log_row = supabase.table(LEARN_EARN_LOG_TABLE)\
             .select('timestamp')\
             .eq('quiz_id', quiz_id)\
-            .eq('wallet_address', current_user)\
+            .or_(quiz_manager._wallet_history_filter(current_user))\
             .limit(1)\
             .execute()
 
@@ -3562,7 +3579,7 @@ def check_nft_minted(current_user):
             quiz_log_row = supabase.table(LEARN_EARN_LOG_TABLE)\
                 .select('timestamp')\
                 .eq('quiz_id', quiz_id)\
-                .eq('wallet_address', current_user)\
+                .or_(quiz_manager._wallet_history_filter(current_user))\
                 .limit(1)\
                 .execute()
             if quiz_log_row.data:
