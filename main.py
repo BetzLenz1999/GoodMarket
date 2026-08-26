@@ -650,6 +650,21 @@ try:
 except Exception as e:
     logger.error(f"❌ Telegram daily reward scheduler initialization failed: {e}")
 
+# Group UBI check-in. A scheduler DMs each linked bot member a random message
+# from a pool of 100 (with a "📋 Copy message" inline button) every day at the
+# configured UTC slot (default 03:30 = 11:30 AM PH time). The member pastes it
+# in the group; the bot only READS group messages (recognizes the pool) and
+# replies only in PM. Once-per-day UNIQUE rows; non-linked users get silence.
+# Env-gated (GROUP_UBI_CHECKIN_ENABLED, default off).
+try:
+    from group_ubi_checkin import init_checkin_scheduler
+    if init_checkin_scheduler(app):
+        logger.info("✅ Group UBI check-in scheduler started")
+    else:
+        logger.info("ℹ️ Group UBI check-in scheduler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ Group UBI check-in scheduler initialization failed: {e}")
+
 # Durable Telegram broadcast delivery. When an admin broadcasts a message,
 # recipients are queued as per-row delivery records and this scheduler drains
 # them in the background. Survives gunicorn worker recycling so a half-finished
