@@ -503,6 +503,9 @@ def _reclaim_stale_sending() -> int:
 
 
 def _fetch_pending_rows(today: str, limit: int):
+    # lte (not eq) so rows stranded from earlier days — e.g. stuck 'sending'
+    # rows reclaimed by _reclaim_stale_sending, or funding-stalled rows waiting
+    # for a DAILYTASK_KEY top-up — are still settled by later passes.
     supabase = _get_supabase()
     if not supabase:
         return []
@@ -510,7 +513,7 @@ def _fetch_pending_rows(today: str, limit: int):
         result = (
             supabase.table("telegram_daily_reward_log")
             .select("*")
-            .eq("payout_date", today)
+            .lte("payout_date", today)
             .eq("status", "pending")
             .order("created_at", desc=False)
             .limit(limit)
@@ -530,7 +533,7 @@ def _has_pending_rows(today: str) -> bool:
         result = (
             supabase.table("telegram_daily_reward_log")
             .select("id")
-            .eq("payout_date", today)
+            .lte("payout_date", today)
             .eq("status", "pending")
             .limit(1)
             .execute()
@@ -645,6 +648,7 @@ def _broadcast_row(row: dict, ctx):
         # hash so the sweep / next pass settles it; double-pay protection is
         # the tx_hash check in Phase 1.
         _update_row(row_id, {
+            "status": "pending",
             "tx_hash": result.get("tx_hash"),
             "last_error": "broadcast, awaiting confirmation",
         })
