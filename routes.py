@@ -6636,12 +6636,15 @@ def get_profile():
             operation_name="get user info"
         )
 
-        masked_wallet = f"{wallet[:6]}...{wallet[-4:]}"
+        # learnearn_log stores masked display addresses in whichever casing the
+        # submitting side used (Telegram-bot rows are lowercase), so match the
+        # masked and full-address forms case-insensitively.
+        masked_wallet_lower = f"{wallet[:6]}...{wallet[-4:]}".lower()
         wallet_lower = wallet.lower()
         learn_data = safe_supabase_operation(
             lambda: supabase.table("learnearn_log")
                 .select("amount_g$, timestamp, score, total_questions, quiz_id")
-                .or_(f"wallet_address.eq.{masked_wallet},wallet_address.eq.{wallet_lower},wallet_address.eq.{wallet}")
+                .or_(f"wallet_address.ilike.{masked_wallet_lower},wallet_address.ilike.{wallet_lower}")
                 .eq("status", True)
                 .order("timestamp", desc=True)
                 .execute(),
