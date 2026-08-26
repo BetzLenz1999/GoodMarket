@@ -21,7 +21,6 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from config import PRODUCTION_DOMAIN
 from supabase_client import get_supabase_admin_client, get_supabase_client
 from news_feed import news_feed_service
-from group_ubi_checkin import handle_group_checkin
 
 logger = logging.getLogger(__name__)
 
@@ -2478,10 +2477,6 @@ def webhook():
                 handle_trustpilot_task(chat_id, telegram_user)
             elif text.startswith("/dailytask"):
                 handle_daily_task(chat_id, telegram_user)
-            elif handle_group_checkin(chat_id, telegram_user, text):
-                # UBI check-in phrase — consumed first so session-based text
-                # handlers and the wallet fallback stay quiet.
-                pass
             elif handle_trustpilot_text(chat_id, telegram_user, text):
                 pass
             elif handle_community_stories_text(chat_id, telegram_user, text):
