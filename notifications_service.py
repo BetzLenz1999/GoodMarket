@@ -117,10 +117,14 @@ class NotificationService:
     def _get_learn_earn_notifications(self, wallet_address: str, limit: int) -> List[Dict]:
         """Get Learn & Earn notifications"""
         try:
-            # Get recent quiz completions - use full wallet address
+            # learnearn_log stores masked display addresses in whichever casing
+            # the submitting side used (Telegram-bot rows are lowercase), so
+            # match the masked and full-address forms case-insensitively.
+            wallet_lower = (wallet_address or '').lower()
+            masked_lower = wallet_lower[:6] + '...' + wallet_lower[-4:] if wallet_lower else ''
             learn_earn = self.client.table('learnearn_log')\
                 .select('*')\
-                .eq('wallet_address', wallet_address)\
+                .or_(f"wallet_address.ilike.{masked_lower},wallet_address.ilike.{wallet_lower}")\
                 .order('timestamp', desc=True)\
                 .limit(limit)\
                 .execute()
