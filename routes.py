@@ -300,11 +300,45 @@ def confirm_goodmarket_claim():
         except Exception as ref_err:
             logger.warning(f"[gm-claim-confirm] referral auto-disburse skipped: {ref_err}")
 
+    # DOUBLE UBI BONUS trigger (Celo only + confirmed).
+    # A confirmed Celo claim instantly entitles the wallet to an extra G$ bonus
+    # equal to the amount it just received — funded by the DOUBLEUBI_KEY wallet.
+    # The claimed amount is read from the claim tx receipt (authoritative), then
+    # the disbursement runs on a daemon thread via the durable double_ubi log so
+    # it cannot double-pay and survives worker restarts. Never blocks the claim
+    # response. Env-gated (DOUBLE_UBI_ENABLED + DOUBLEUBI_KEY).
+    bonus_info = None
+    if status == "confirmed" and network == "celo":
+        try:
+            from double_ubi import is_double_ubi_enabled, compute_claimed_amount_from_tx, queue_and_fire_async
+            if is_double_ubi_enabled():
+                amount_res = compute_claimed_amount_from_tx(tx_hash, wallet)
+                claimed_g = amount_res.get("amount_gd") or 0.0
+                if claimed_g > 0:
+                    q = queue_and_fire_async(wallet, tx_hash, claimed_g)
+                    bonus_info = {
+                        "claimed_amount_gd": claimed_g,
+                        "bonus_amount_gd": q.get("bonus_amount_gd", claimed_g),
+                        "queued": q.get("success", False),
+                    }
+                else:
+                    bonus_info = {
+                        "claimed_amount_gd": 0.0,
+                        "bonus_amount_gd": 0.0,
+                        "queued": False,
+                        "reason": amount_res.get("pending") and "receipt_pending"
+                                  or amount_res.get("reverted") and "reverted"
+                                  or "no_amount",
+                    }
+        except Exception as bonus_err:
+            logger.warning(f"[gm-claim-confirm] double-UBI bonus trigger skipped: {bonus_err}")
+
     return jsonify({
         "success": True,
         "tx_hash": tx_hash,
         "status": status,
         "claim_attempt_id": claim_attempt_id,
+        "double_ubi_bonus": bonus_info,
     })
 
 
@@ -8383,7 +8417,7 @@ def claim_daily_voucher():
         if (session.get("login_method") or "").lower() != "local":
             return jsonify({
                 "success": False,
-                "error": "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.",
+                "error": "This voucher is exclusively for GoodMarket wallet users — users who created a GoodMarket wallet with their email + PIN inside the app. It's not for MiniPay, MetaMask, or WalletConnect logins. To be eligible, log in with your GoodMarket wallet instead.",
                 "not_eligible": True,
             }), 403
 
