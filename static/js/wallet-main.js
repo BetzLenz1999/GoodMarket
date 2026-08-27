@@ -4223,7 +4223,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         logGoodMarketClaim(txHash, 'celo', 'confirmed');
                         startCountdown();
                         setTimeout(() => { loadBalances(true); fetchEntitlement(); }, 4000);
-                        try { window.showClaimCelebration && window.showClaimCelebration({ networks: ['celo'] }); } catch (_) {}
+                        try {
+                            window.showClaimCelebration && window.showClaimCelebration({
+                                networks: ['celo'],
+                                double_ubi_bonus: window.__doubleUbiBonus || null
+                            });
+                        } catch (_) {}
                         setTimeout(openSavingsPopupAfterClaim, 900);
                     } else {
                         btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
@@ -4291,10 +4296,16 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 }
                 if (window.__claimDebug) {
                     try {
-                        const data = await resp.json();
+                        const data = await resp.clone().json();
                         console.log('[claim-log] recorded', data);
                     } catch (_) {}
                 }
+                // Stash any DOUBLE UBI bonus reported by the confirm endpoint so
+                // the claim celebration modal can show "(+X G$ bonus)".
+                try {
+                    const data = await resp.clone().json();
+                    if (data && data.double_ubi_bonus) window.__doubleUbiBonus = data.double_ubi_bonus;
+                } catch (_) {}
             } catch (e) {
                 console.warn('[claim-log] failed to record claim metric:', e);
             }
