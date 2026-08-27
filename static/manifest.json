@@ -1,7 +1,7 @@
 {
   "name": "GoodMarket",
   "short_name": "GoodMarket",
-  "description": "Learn & Earn with GoodDollar on Celo",
+  "description": "GoodMarket — community wallet for the G$ token (GoodDollar protocol) on Celo",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",
