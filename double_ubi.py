@@ -482,22 +482,48 @@ def _settle_row(row: dict, summary: dict) -> str:
     """Claim + process a single pending row. Returns a status string.
 
     Handles prior-tx verification (resend only if the prior tx reverted) and
-    funding shortfalls (stay pending, never failed). Counter updates are left
-    to the caller (``run_pass_once``) so a return here never double-counts.
+    funding shortfalls (stay pending, never failed). If the row was queued
+    before the claim receipt was indexed (bonus_amount_gd == 0), resolve the
+    amount from the claim tx receipt on-chain here — the authoritative source.
+    Counter updates are left to the caller (``run_pass_once``) so a return
+    here never double-counts.
     """
     row_id = row["id"]
     wallet = (row.get("wallet_address") or "").strip().lower()
+    claim_tx = (row.get("claim_tx_hash") or "").strip().lower()
     bonus = float(row.get("bonus_amount_gd") or 0)
     attempts = int(row.get("attempts") or 0)
     prior_bonus_tx = row.get("bonus_tx_hash")
 
-    if not wallet or bonus <= 0:
-        # Safety: never broadcast to an empty/suspicious row.
-        _update_row(row_id, {"status": "failed", "last_error": "invalid row (no wallet or amount)"})
+    if not wallet:
+        _update_row(row_id, {"status": "failed", "last_error": "invalid row (no wallet)"})
         return "failed"
 
     if not _claim_row(row_id):
         return "skipped"  # another worker won the CAS flip
+
+    # Resolve the claimed amount from the claim receipt when unknown. This is
+    # the reliability fix: the confirm route often fires before forno indexes
+    # the receipt, so the bonus amount is determined here instead, and the row
+    # stays pending and retries until the receipt is readable.
+    if bonus <= 0 and claim_tx:
+        amount_res = compute_claimed_amount_from_tx(claim_tx, wallet)
+        if amount_res.get("pending"):
+            _update_row(row_id, {"status": "pending", "last_error": "claim receipt not indexed yet"})
+            return "retry"
+        if amount_res.get("success") and amount_res.get("amount_gd", 0) > 0:
+            bonus = float(amount_res["amount_gd"])
+            _update_row(row_id, {"claimed_amount_gd": bonus, "bonus_amount_gd": bonus})
+        else:
+            # Reverted or no G$ received — nothing to send; park as failed so it
+            # is never retried as a scan-anew.
+            _update_row(row_id, {"status": "failed",
+                                 "last_error": "no G$ received in claim receipt"})
+            return "failed"
+
+    if bonus <= 0:
+        _update_row(row_id, {"status": "failed", "last_error": "no bonus amount"})
+        return "failed"
 
     if prior_bonus_tx:
         prior_status = _check_bonus_tx_status(prior_bonus_tx)
@@ -574,6 +600,11 @@ def queue_and_fire_async(wallet: str, claim_tx_hash: str, claimed_amount_g, bonu
     (idempotent on claim_tx_hash) and fires a daemon worker so the claim
     response stays fast; the scheduler + the immediate worker share the durable
     log to guarantee delivery exactly once.
+
+    ``claimed_amount_g`` may be 0 when the claim receipt isn't indexed yet —
+    the row is still queued and ``_settle_row`` resolves the real amount from
+    the claim receipt before sending (the confirm route often fires before
+    forno has the receipt, which is why a 0 here must not drop the bonus).
     """
     if not is_double_ubi_enabled():
         return {"success": False, "error_type": "disabled", "error": "Double UBI not enabled"}
@@ -581,9 +612,6 @@ def queue_and_fire_async(wallet: str, claim_tx_hash: str, claimed_amount_g, bonu
         return {"success": False, "error_type": "no_claim", "error": "missing claim tx hash"}
 
     claimed = max(float(claimed_amount_g or 0), 0.0)
-    if claimed <= 0:
-        return {"success": False, "error_type": "no_amount", "error": "no claimed amount"}
-
     bonus = float(bonus or claimed)
     try:
         supabase = _get_supabase()
@@ -638,6 +666,27 @@ def queue_and_fire_async(wallet: str, claim_tx_hash: str, claimed_amount_g, bonu
     except Exception as exc:  # noqa: BLE001
         logger.exception("⚠️ DOUBLE bonus: queue failed: %s", exc)
         return {"success": False, "error_type": "unexpected", "error": str(exc)}
+
+
+def get_last_bonus(wallet: str) -> dict:
+    """Return the latest DOUBLE bonus row for ``wallet`` (or None). Never raises."""
+    try:
+        supabase = _get_supabase()
+        if not supabase:
+            return {"success": False, "error_type": "no_db", "error": "Storage unavailable"}
+        result = (
+            supabase.table("double_ubi_rewards")
+            .select("*")
+            .eq("wallet_address", (wallet or "").strip().lower())
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        data = result.data or []
+        return {"success": True, "bonus": data[0] if data else None}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ DOUBLE bonus: get_last_bonus(%s) failed: %s", wallet, exc)
+        return {"success": False, "error_type": "db_error", "error": str(exc)}
 
 
 def record_and_settle_sync(wallet: str, claim_tx_hash: str, claimed_g: float, bonus: float = 0.0) -> dict:
