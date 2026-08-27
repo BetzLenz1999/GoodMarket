@@ -2939,9 +2939,25 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         if (tx.gasHex) txParams.gas = tx.gasHex;
         return await provider.request({ method: 'eth_sendTransaction', params: [txParams] });
     }
+    // Fetch the real revert reason for a failed XDC tx via the backend helper
+    // (the same endpoint the manual /swap bridge uses). Returns "" when the
+    // reason can't be recovered. Mirrors the selector→friendly mapping in
+    // routes.py so fee mismatches (LayerZero) surface as fee problems rather
+    // than being lumped into a generic "check allowance".
+    async function _aiXdcRevertReason(txHash) {
+        try {
+            const res = await fetch('/api/xdc/tx-revert-reason/' + encodeURIComponent(txHash));
+            const data = await res.json().catch(function () { return null; });
+            if (data && data.success && data.reverted && data.reason) return data.reason;
+        } catch (_) { /* best-effort — fall back to the generic message */ }
+        return '';
+    }
     // Poll the public XDC RPC for the receipt — the wallet provider may still
-    // be on another chain, and a lagging node answering null is handled by
-    // the retry loop (mirrors xdc_wallet.html's receipt wait).
+    // be on another chain, and a tx may answer null on a lagging node, so the
+    // retry loop mirrors xdc_wallet.html's receipt wait. On a revert, decode
+    // the actual reason (bridge-fee mismatch, allowance, paused route, …) so
+    // the error shown to the user is accurate, never the misleading blanket
+    // "Token approval is missing or too low".
     async function _aiXdcWaitReceipt(txHash, timeoutMs, pollMs) {
         timeoutMs = timeoutMs || 90000;
         pollMs = pollMs || 2500;
@@ -2952,7 +2968,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 const receipt = await rpc.getTransactionReceipt(txHash);
                 if (receipt) {
                     if (Number(receipt.status) === 1) return receipt;
-                    throw new Error('Transaction reverted on XDC. Check your balance/allowance, then try again: https://xdcscan.com/tx/' + txHash);
+                    const reason = await _aiXdcRevertReason(txHash);
+                    if (reason) throw new Error(reason + ' (https://xdcscan.com/tx/' + txHash + ')');
+                    throw new Error('Transaction reverted on XDC (https://xdcscan.com/tx/' + txHash + ').');
                 }
             } catch (err) {
                 if (err && /reverted/i.test(String(err.message || ''))) throw err;
@@ -3022,8 +3040,23 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     async function _aiBridgeXdcToCelo(amountStr) {
         return _aiXdcRun('ai-bridge', 'Bridge G$ (XDC → Celo)', async function (session) {
             const amountWei = ethers.parseUnits(amountStr, 18);
-            const feeWei = await _aiBridgeFeeWei(AI_XDC_CHAIN_ID, AI_CELO_CHAIN_ID, amountStr);
+            let feeWei = await _aiBridgeFeeWei(AI_XDC_CHAIN_ID, AI_CELO_CHAIN_ID, amountStr);
             const rpc = _aiXdcReadRpc();
+            // LayerZero route fees can drift up between the backend estimate
+            // and submission. The manual /swap page preflights the fee via the
+            // wallet (bumping to 1.3x); the chat skips the wallet preflight, so
+            // apply the same 1.3x safety margin here — the excess is refunded
+            // by the bridge. Cap it against the wallet's real XDC balance so an
+            // aggressively-bumped fee can't make the tx fail with insufficient
+            // funds when gas+value would otherwise fit.
+            feeWei = (feeWei * 130n) / 100n;
+            try {
+                const bal = await rpc.getBalance(WALLET);
+                const roughGasWei = ethers.parseUnits('0.05', 18); // safety reserve beyond the fee
+                if (feeWei + roughGasWei > bal) {
+                    feeWei = bal > roughGasWei ? bal - roughGasWei : feeWei;
+                }
+            } catch (_) { /* balance read is best-effort — keep the bumped fee */ }
             const gdRead = new ethers.Contract(AI_XDC_GD_TOKEN, AI_SWAP_ERC20_ABI, rpc);
             const bridgeRead = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_XDC_CANBRIDGE_ABI, rpc);
             const erc20Iface = new ethers.Interface(AI_SWAP_ERC20_ABI);
