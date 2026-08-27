@@ -17,7 +17,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             projectId: window.GM_WALLET_BOOT.walletConnectProjectId,
             sidecarEnabled: false, // Disabled to prevent QR during signing - use existing WC session
             dappName: "GoodMarket — Wallet",
-            dappDescription: "Claim and send GoodDollar on Celo",
+            dappDescription: "Community wallet for the G$ token (GoodDollar protocol) on Celo",
             assetVersion: window.GM_WALLET_BOOT.assetVersion,
         });
     }
