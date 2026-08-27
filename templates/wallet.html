@@ -3279,6 +3279,72 @@
         </div>
     </div>
 
+    <!-- Referral Program Modal -->
+    <div class="modal-overlay" id="referralModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">🤝 Referral Program</div>
+
+            <div style="background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.22);border-radius:12px;padding:0.85rem 0.95rem;margin-bottom:1rem;font-size:0.82rem;line-height:1.6;">
+                <div style="font-weight:600;color:#7c3aed;margin-bottom:0.35rem;">Invite &amp; Earn G$</div>
+                <div style="color:var(--text-dim);">
+                    Share your referral link. When your friend connects their wallet and completes GoodDollar face verification, you both receive G$ rewards automatically.
+                </div>
+                <div style="display:flex;gap:0.5rem;margin-top:0.65rem;flex-wrap:wrap;">
+                    <span style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:8px;padding:0.28rem 0.65rem;font-size:0.75rem;color:#7c3aed;font-weight:600;">You get: 1,000 G$</span>
+                    <span style="background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.28);border-radius:8px;padding:0.28rem 0.65rem;font-size:0.75rem;color:#2563eb;font-weight:600;">Friend gets: 500 G$</span>
+                </div>
+            </div>
+
+            <!-- Referral link box (shown after load) -->
+            <div id="wlReferralLinkBox" style="display:none;">
+                <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:0.4rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Your Referral Link</div>
+                <div style="display:flex;gap:0.5rem;align-items:center;">
+                    <input id="wlReferralLinkInput" type="text" readonly style="flex:1;background:var(--card-soft);border:1px solid var(--card-border);border-radius:8px;padding:0.55rem 0.75rem;color:var(--text);font-size:0.8rem;outline:none;min-width:0;" />
+                    <button onclick="copyWalletReferralLink()" style="flex-shrink:0;background:#7c3aed;border:none;color:#fff;padding:0.55rem 0.9rem;border-radius:8px;font-size:0.82rem;font-weight:600;cursor:pointer;">📋 Copy</button>
+                </div>
+                <div id="referralCopyMsg" style="display:none;color:#16a34a;font-size:0.78rem;margin-top:0.35rem;font-weight:600;">Copied to clipboard!</div>
+            </div>
+
+            <!-- Loading state -->
+            <div id="referralLoading" style="text-align:center;padding:1rem 0;">
+                <div class="spinner" style="border-color:rgba(124,58,237,0.25);border-top-color:#7c3aed;"></div>
+                <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">Loading referral info...</div>
+            </div>
+
+            <!-- Stats row -->
+            <div id="referralStats" style="display:none;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);">
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;text-align:center;">
+                    <div style="background:var(--card-soft);border:1px solid var(--card-border);border-radius:12px;padding:0.6rem 0.3rem;">
+                        <div id="refStatTotal" style="font-size:1.1rem;font-weight:800;color:#7c3aed;">0</div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.15rem;">Invited</div>
+                    </div>
+                    <div style="background:var(--card-soft);border:1px solid var(--card-border);border-radius:12px;padding:0.6rem 0.3rem;">
+                        <div id="refStatCompleted" style="font-size:1.1rem;font-weight:800;color:#16a34a;">0</div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.15rem;">Verified</div>
+                    </div>
+                    <div style="background:var(--card-soft);border:1px solid var(--card-border);border-radius:12px;padding:0.6rem 0.3rem;">
+                        <div id="refStatEarned" style="font-size:1.1rem;font-weight:800;color:#f59e0b;">0</div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.15rem;">G$ Earned</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Referral history -->
+            <div id="referralHistorySection" style="display:none;margin-top:0.75rem;">
+                <div style="font-size:0.78rem;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">Referral History</div>
+                <div id="referralHistoryList" style="max-height:180px;overflow-y:auto;"></div>
+            </div>
+
+            <!-- Error state -->
+            <div id="referralError" style="display:none;color:#dc2626;font-size:0.82rem;padding:0.5rem;background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.2);border-radius:8px;margin-top:0.5rem;"></div>
+
+            <div class="modal-sheet-footer">
+                <button class="btn-secondary" onclick="closeModal('referralModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- lz-string for GoodDollar FV link generation -->
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"
             integrity="sha384-0d+Gr7vM4Drod8E3hXKgciWJSWbjD/opKLLygI9ktiWbuvlDwQLzU46wJ9s5gsp7"
@@ -3456,6 +3522,10 @@
             <div class="bn-sheet-item" onclick="bnGo(function(){ handleDashboardFromWallet(); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#6366f1,#2563eb);color:#fff;">📊</div>
                 <div class="bn-sheet-name">Dashboard</div>
+            </div>
+            <div class="bn-sheet-item" onclick="bnGo(function(){ openReferralModal(); })">
+                <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;">🤝</div>
+                <div class="bn-sheet-name">Referral</div>
             </div>
             <div class="bn-sheet-item" onclick="bnGo(function(){ openGdRafflePanel(); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;">🎟️</div>
