@@ -524,7 +524,7 @@
                 // for MetaMask / MiniPay / WalletConnect / Privy logins — the
                 // server enforces the same gate, this just saves a round-trip.
                 if ((LOGIN_METHOD || '').toLowerCase() !== 'local') {
-                    voucherShowSimple('🚫', 'Not Eligible', "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.");
+                    voucherShowSimple('🚫', 'Not Eligible', "This voucher is exclusively for GoodMarket wallet users — users who created a GoodMarket wallet with their email + PIN inside the app. It's not for MiniPay, MetaMask, or WalletConnect logins. To be eligible, log in with your GoodMarket wallet instead.");
                     return;
                 }
 
@@ -581,7 +581,7 @@
                         }
 
                     } else if (data.not_eligible) {
-                        voucherShowSimple('🚫', 'Not Eligible', data.error || "You're not eligible to claim this voucher. Only GoodMarket users can claim this voucher.");
+                        voucherShowSimple('🚫', 'Not Eligible', data.error || "This voucher is exclusively for GoodMarket wallet users — users who created a GoodMarket wallet with their email + PIN inside the app. It's not for MiniPay, MetaMask, or WalletConnect logins. To be eligible, log in with your GoodMarket wallet instead.");
                     } else if (data.already_claimed) {
                         voucherShowSimple('😔', 'Already Claimed!', 'Someone else already claimed this voucher. Come back next time for a new one!');
                         document.getElementById('dailyVoucherBanner').style.display = 'none';
