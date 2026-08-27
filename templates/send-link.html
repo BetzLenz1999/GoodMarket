@@ -112,7 +112,7 @@
                 projectId: "{{ walletconnect_project_id|default('', true) }}",
                 sidecarEnabled: false,
                 dappName: "GoodMarket — Send",
-                dappDescription: "Send GoodDollar to others on Celo",
+                dappDescription: "Send G$ to others on Celo",
                 assetVersion: "{{ ASSET_VERSION }}",
             });
         }
@@ -455,7 +455,7 @@
                 projectId: WC_PROJECT_ID,
                 metadata: {
                     name: 'GoodMarket',
-                    description: 'Send links with GoodDollar on Celo',
+                    description: 'Send G$ payment links with GoodMarket on Celo',
                     url: window.location.origin,
                     icons: [window.location.origin + '/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}']
                 }
