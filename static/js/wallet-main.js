@@ -2983,8 +2983,17 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return _aiSwapRun(async function (signer) {
             const amountWei = ethers.parseUnits(amountStr, 18);
             const feeWei = await _aiBridgeFeeWei(AI_CELO_CHAIN_ID, AI_XDC_CHAIN_ID, amountStr);
-            const gdRead = new ethers.Contract(AI_CELO_GD_TOKEN, AI_SWAP_ERC20_ABI, signer.provider);
-            const bridgeRead = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_BRIDGE_CANBRIDGE_ABI, signer.provider);
+            // Read-only calls go through the public Celo RPC, NOT the wallet
+            // provider — mobile wallets (MetaMask dApp browser, Trust) route
+            // every eth_call/eth_estimateGas through the wallet app, which is
+            // slow and can answer a stale/lagging node. If canBridge/allowance
+            // read through the wallet, a just-confirmed approve can still be
+            // reported as missing by the next eth_call, and bridgeTo's
+            // safeTransferFrom reverts with "allowance too low". Signing-only
+            // ops (approve, bridgeTo) stay on `signer`.
+            const celoRpc = new ethers.JsonRpcProvider(AI_SWAP_CELO_RPC);
+            const gdRead = new ethers.Contract(AI_CELO_GD_TOKEN, AI_SWAP_ERC20_ABI, celoRpc);
+            const bridgeRead = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_BRIDGE_CANBRIDGE_ABI, celoRpc);
             try {
                 const can = await bridgeRead.canBridge(WALLET, amountWei);
                 if (can && can[0] === false) {
