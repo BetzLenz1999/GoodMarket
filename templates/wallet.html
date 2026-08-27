@@ -3344,6 +3344,35 @@
             </div>
         </div>
     </div>
+<!--
+      DOUBLE UBI bonus modal — a DEDICATED, prominent notification that shows
+      AFTER a Celo claim when the extra G$ bonus (equal to the claimed amount,
+      funded by DOUBLEUBI_KEY) has actually been confirmed on-chain. Kept
+      separate from the claim celebration banner so users can clearly see that
+      they received the additional G$. Stack above ALL feature modals on
+      wallet.html (see the modal-stacking rules — only lwUnlockModal > this).
+    -->
+    <div class="modal-overlay" id="doubleUbiModal" aria-hidden="true"
+         style="z-index:99999;">
+        <div class="modal-sheet" style="max-width:360px;border-radius:20px;overflow:hidden;background:linear-gradient(160deg,#7c3aed 0%,#6d28d9 45%,#4c1d95 100%);color:#fff;box-shadow:0 20px 60px rgba(76,29,149,0.45);">
+            <div style="padding:1.6rem 1.4rem;text-align:center;">
+                <div style="font-size:3rem;margin-bottom:0.4rem;">🎁</div>
+                <div style="font-size:1.05rem;font-weight:800;letter-spacing:-0.2px;">DOUBLE UBI Bonus Received!</div>
+                <div id="duBonusNote" style="margin-top:0.3rem;font-size:0.78rem;opacity:0.85;line-height:1.45;">Your extra G$ on top of today's UBI claim has arrived.</div>
+                <div style="margin-top:1rem;background:rgba(255,255,255,0.14);border:1px solid rgba(255,255,255,0.25);border-radius:16px;padding:1rem;">
+                    <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;opacity:0.8;">Extra G$ received</div>
+                    <div id="duBonusAmount" style="font-size:2.4rem;font-weight:900;letter-spacing:-1px;margin-top:0.2rem;background:linear-gradient(135deg,#fde68a,#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent;">+1,200 G$</div>
+                    <div id="duBonusTxRow" style="margin-top:0.7rem;font-size:0.76rem;opacity:0.85;">
+                        <a id="duBonusExplorer" href="#" target="_blank" rel="noopener" style="color:#fde68a;text-decoration:underline;">View on Celoscan ↗</a>
+                    </div>
+                </div>
+                <div style="margin-top:1.3rem;font-size:0.78rem;opacity:0.8;line-height:1.5;">Enjoy the bonus — see you tomorrow for another claim!</div>
+                <div class="modal-sheet-footer" style="border-top:1px solid rgba(255,255,255,0.15);margin-top:1.3rem;padding-top:1rem;justify-content:center;">
+                    <button class="btn-primary" onclick="closeModal('doubleUbiModal')" style="min-width:160px;">Awesome 🎉</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- lz-string for GoodDollar FV link generation -->
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"
