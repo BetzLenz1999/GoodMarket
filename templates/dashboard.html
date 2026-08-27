@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - GoodDollar Analytics</title>
+    <title>Dashboard - GoodMarket Analytics</title>
     <!-- Telegram Mini App SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
 
@@ -3984,12 +3984,6 @@
     </style>
 
     <div id="musicPlayer" style="position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999; display:none; flex-direction:column; align-items:flex-end; gap:0.5rem;">
-        <div id="musicLabel" style="display:none; background:rgba(11,15,42,0.92); border:1px solid rgba(124,58,237,0.35); border-radius:10px; padding:0.4rem 0.75rem; font-size:0.75rem; color:#a78bfa; white-space:nowrap; backdrop-filter:blur(10px);">
-            🎵 Background Music
-        </div>
-        <div id="musicHint" style="background:rgba(11,15,42,0.92); border:1px solid rgba(124,58,237,0.35); border-radius:10px; padding:0.4rem 0.75rem; font-size:0.72rem; color:rgba(167,139,250,0.8); white-space:nowrap; backdrop-filter:blur(10px);">
-            Tap to play music
-        </div>
         <button id="musicToggleBtn" onclick="toggleMusic()" title="Toggle Background Music" class="waiting"
             style="width:48px; height:48px; border-radius:50%; background:linear-gradient(135deg,#7c3aed,#5b21b6); border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.3rem; transition:transform 0.2s ease, box-shadow 0.2s ease;">
             🎵
@@ -4028,8 +4022,6 @@
         function startMusic() {
             if (musicStarted) return;
             var btn = document.getElementById('musicToggleBtn');
-            var label = document.getElementById('musicLabel');
-            var hint = document.getElementById('musicHint');
             var musicPlayer = document.getElementById('musicPlayer');
 
             if (ytPlayer && ytPlayer.mute) {
@@ -4042,8 +4034,6 @@
             btn.innerHTML = '🔇';
             btn.style.boxShadow = '0 4px 20px rgba(124,58,237,0.7)';
             musicPlayer.style.display = 'flex';
-            label.style.display = 'block';
-            hint.style.display = 'none';
 
             document.removeEventListener('scroll', startMusic);
             document.removeEventListener('click', onFirstInteraction);
