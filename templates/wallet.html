@@ -7,14 +7,15 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <meta name="theme-color" content="#f7f4ef">
+    <meta name="theme-color" content="#f7f1e8">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
     <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
     <link rel="apple-touch-icon" href="/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400&family=Nunito+Sans:opsz,wght@6..12,300;6..12,400;6..12,600;6..12,700;6..12,800&display=swap" rel="stylesheet">
     <style>
         
 
@@ -1934,29 +1935,31 @@
            migrated alongside; keep new markup on the CSS variables below.
            ───────────────────────────────────────────────────────────── */
         :root {
-            --bg: #f1ebdf;
-            --bg2: #f7f2e8;
+            --serif: "Fraunces", Georgia, "Times New Roman", serif;
+            --sans: "Nunito Sans", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+            --bg: #f7f1e8;
+            --bg2: #fbf6ee;
             --card: #ffffff;
-            --card-border: #e2d7c3;
-            --card-soft: rgba(67,56,43,0.06);
-            --card-shadow: 0 2px 6px rgba(67,56,43,0.08), 0 1px 2px rgba(67,56,43,0.06);
+            --card-border: #eadfcb;
+            --card-soft: rgba(95,72,40,0.06);
+            --card-shadow: 0 2px 6px rgba(95,72,40,0.08), 0 8px 22px rgba(95,72,40,0.07);
             --blue: #2563eb;
             --blue-dim: rgba(37,99,235,0.1);
             --blue-glow: rgba(37,99,235,0.25);
-            --accent: #ea580c;
-            --accent-rgb: 234,88,12;
+            --accent: #e8720a;
+            --accent-rgb: 232,114,10;
             --accent-secondary: #0d9488;
             --accent-secondary-rgb: 13,148,136;
             --green: #16a34a;
             --green-dim: rgba(22,163,74,0.1);
-            --gold: #f97316;
-            --gold-rgb: 234,88,12;
-            --gold-deep: #c2410c;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
             --primary-button-text: #ffffff;
             --red: #dc2626;
-            --text: #292524;
-            --text-dim: #665d51;
-            --text-muted: #93897b;
+            --text: #2b241a;
+            --text-dim: #6b5d48;
+            --text-muted: #a0907a;
         }
 
         body { background: var(--bg); }
@@ -2261,6 +2264,149 @@
                 animation: none !important;
             }
         }
+
+        /* ═══════════════════════════════════════════════════════════════
+           Sunrise Platinum — Option A (2026-08)
+           Keeps the light, warm base but adds a real design identity:
+           1) Distinctive typography (Fraunces display serif for hero values
+              + limited accents; Nunito Sans for UI/body instead of Inter).
+           2) Warmer canvas + a grain/dot texture so surfaces feel organic
+              rather than flat-white-on-cream.
+           3) The balance card becomes a proper gradient-mesh hero with an
+              inner glow and a duotone accent — the money moment.
+           Appended AFTER "Soft Sunrise" so equal-specificity rules win.
+
+           Keep-new-markup rule: use the shared :root variables (--serif,
+           --sans, --gold, --card-shadow, …) rather than white-on-dark
+           literals. Variables live in the single :root block above.
+           ─────────────────────────────────────────────────────────────── */
+
+        /* ── Whole-screen grain + mesh for depth ──
+           Tiny SVG noise gives the cream canvas a warm, tactile finish
+           (kept faint so it never fights the content or scroll perf). */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 40;
+            pointer-events: none;
+            opacity: 0.5;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='110' height='110'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/></svg>");
+        }
+        body { font-family: var(--sans); }
+
+        /* ── Serif for money moments ── */
+        .pc-balance,
+        .pc-field-value,
+        .claim-box-amount .amount-value,
+        .ubi-hero-amount,
+        .savings-value,
+        .raffle-stat-value,
+        .tx-amount,
+        .token-amount {
+            font-family: var(--serif);
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        /* ── Top bar: quieter, premium ── */
+        .top-bar {
+            background: rgba(251,246,238,0.92);
+            border-bottom: 1px solid rgba(95,72,40,0.10);
+        }
+        .top-bar-title { font-family: var(--serif); font-weight: 700; letter-spacing: -0.01em; }
+        .top-bar-subtitle { color: var(--text-muted); letter-spacing: 0.08em; }
+
+        /* ── Balance card: gradient-mesh hero ── */
+        .balance-card {
+            background:
+                radial-gradient(120% 90% at 12% 8%, rgba(255,255,255,0.35) 0%, transparent 52%),
+                radial-gradient(90% 80% at 88% 88%, rgba(253,186,116,0.55) 0%, transparent 55%),
+                radial-gradient(70% 60% at 60% 20%, rgba(255,217,150,0.35) 0%, transparent 60%),
+                linear-gradient(135deg, #f7a23a 0%, #ee7a1c 48%, #e8720a 100%);
+            border-color: rgba(255,255,255,0.22);
+            box-shadow:
+                0 18px 40px rgba(190,90,10,0.28),
+                0 2px 0 rgba(255,255,255,0.30) inset,
+                inset 0 -24px 40px rgba(150,60,0,0.18);
+        }
+        .balance-card::before { background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.14) 48%, transparent 60%); }
+        .balance-card::after {
+            background:
+                radial-gradient(circle, rgba(255,230,170,0.6) 0%, transparent 55%),
+                linear-gradient(135deg, transparent, rgba(122,48,0,0.10));
+        }
+        .pc-gd-badge {
+            background: radial-gradient(circle at 30% 25%, #fff3c4 0%, #f5c33b 50%, #d99a06 100%);
+            box-shadow: 0 2px 12px rgba(220,150,10,0.5), 0 0 0 1px rgba(255,255,255,0.25) inset;
+        }
+        .pc-brand-marks .mc-c1 { background: radial-gradient(circle at 35% 30%, #fffbe0 0%, #f6c945 55%, #d99a06 100%); box-shadow: 0 2px 8px rgba(0,0,0,0.18); }
+        .pc-brand-marks .mc-c2 { background: radial-gradient(circle at 35% 30%, #c9fff6 0%, #20b8a0 55%, #0d8a74 100%); }
+
+        /* ── Action rows ── */
+        .action-item { border-radius: 18px; }
+        .action-circle.claim-circle {
+            background: radial-gradient(circle at 30% 25%, #ffffff 0%, #ffdc9a 40%, #fdbE5a 100%);
+            border-color: rgba(var(--gold-rgb),0.6);
+        }
+        .claim-glyph { color: #b45309; }
+        .claim-badge { background: linear-gradient(135deg, #ffd88a, #f5a623); color: #4a3300; box-shadow: 0 4px 14px rgba(245,166,35,0.45); }
+
+        /* ── Claim box: soft gold aura ── */
+        .claim-button-box {
+            background: linear-gradient(135deg, rgba(245,166,35,0.18) 0%, rgba(var(--accent-rgb),0.10) 100%), var(--card);
+            border-color: rgba(var(--gold-rgb),0.45);
+        }
+        .claim-button-box:hover {
+            background: linear-gradient(135deg, rgba(255,190,70,0.26) 0%, rgba(var(--accent-rgb),0.18) 100%);
+            box-shadow: 0 6px 22px rgba(var(--gold-rgb),0.28);
+        }
+        .claim-box-icon { box-shadow: 0 0 12px rgba(var(--accent-rgb),0.28), 0 0 0 4px rgba(var(--gold-rgb),0.12); }
+
+        /* ── Sections / tabs ── */
+        .section-label { color: var(--gold-deep); }
+        .tab.active { color: var(--gold-deep); border-bottom-color: var(--gold); }
+
+        /* ── Lists: softer, layered ── */
+        .token-list, .tx-list { border-radius: 20px; box-shadow: var(--card-shadow); }
+        .token-item, .tx-item { border-bottom-color: rgba(172,146,95,0.12); }
+
+        /* ── Primary buttons: richer gold ── */
+        .btn-primary {
+            background: linear-gradient(135deg, #f7b238 0%, #ee8a13 55%, #e8720a 100%);
+            border-color: rgba(200,120,12,0.5);
+            box-shadow: 0 4px 16px rgba(var(--gold-rgb),0.30), inset 0 1px 0 rgba(255,255,255,0.40);
+        }
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 28px rgba(var(--gold-rgb),0.42), inset 0 1px 0 rgba(255,255,255,0.45);
+        }
+        .btn-secondary { border-radius: 14px; }
+        .btn-danger { border-radius: 14px; }
+
+        /* ── Forms ── */
+        .form-input { border-radius: 12px; }
+        .token-chip.active { background: #fff6e6; border-color: rgba(var(--gold-rgb),0.5); color: #b45309; }
+        .address-box { background: #fff6e6; border-color: rgba(var(--gold-rgb),0.32); }
+
+        /* ── Alerts ── */
+        .alert-info { color: #a15e00; }
+        .spinner { border-top-color: var(--gold); }
+
+        /* ── Bottom nav: warm active pill ── */
+        .wallet-bottom-nav { background: rgba(255,255,255,0.97); }
+        .bn-item.active {
+            background: linear-gradient(135deg, rgba(var(--gold-rgb),0.22), rgba(var(--accent-rgb),0.16));
+            color: #b45309;
+            box-shadow: inset 0 0 0 1px rgba(var(--gold-rgb),0.40);
+            border-radius: 14px;
+        }
+
+        /* ── Modal sheets: rounded, airy ── */
+        .modal-sheet { border-radius: 22px; }
+        .modal-sheet .modal-sheet-footer { border-radius: 0 0 22px 22px; }
+        .bn-sheet { border-radius: 22px; }
+        .bn-sheet-item { border-radius: 16px; }
 
     </style>
 </head>
