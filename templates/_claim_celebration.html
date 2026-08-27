@@ -166,6 +166,41 @@
         box-shadow: 0 0 8px rgba(74, 222, 128, 0.8);
     }
 
+    /* Double UBI bonus banner */
+    .gm-cele-bonus {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 16px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(249, 115, 22, 0.16));
+        border: 1px solid rgba(251, 191, 36, 0.5);
+        text-align: left;
+    }
+    .gm-cele-bonus[hidden] { display: none; }
+    .gm-cele-bonus-icon {
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: rgba(251, 191, 36, 0.22);
+        font-size: 18px;
+    }
+    .gm-cele-bonus-text {
+        font-size: 13px;
+        line-height: 1.45;
+        color: #fde68a;
+        font-weight: 600;
+    }
+    .gm-cele-bonus-text b {
+        color: #fbbf24;
+        font-weight: 800;
+    }
+
     /* primary copy button */
     .gm-cele-copy {
         position: relative;
@@ -257,6 +292,11 @@
             <!-- chips injected by JS -->
         </div>
 
+        <div class="gm-cele-bonus" id="gmCeleBonus" hidden>
+            <span class="gm-cele-bonus-icon">🎁</span>
+            <span class="gm-cele-bonus-text" id="gmCeleBonusText"></span>
+        </div>
+
         <button type="button" class="gm-cele-copy" id="gmCeleCopyBtn" aria-live="polite">
             <span id="gmCeleCopyLabel">Copy invite &amp; link</span>
         </button>
@@ -277,6 +317,8 @@
     var chipsWrap = document.getElementById('gmCeleChips');
     var copyBtn = document.getElementById('gmCeleCopyBtn');
     var copyLabel = document.getElementById('gmCeleCopyLabel');
+    var bonusEl = document.getElementById('gmCeleBonus');
+    var bonusTextEl = document.getElementById('gmCeleBonusText');
 
     if (!overlay || !copyBtn) return; // partial not on this page
 
@@ -419,6 +461,7 @@
         // reset for the next claim cycle
         state.networks = {};
         state.openedAt = 0;
+        if (bonusEl) bonusEl.hidden = true;
         copyBtn.classList.remove('gm-cele-copied');
         copyLabel.textContent = 'Copy invite & link';
     }
@@ -437,9 +480,53 @@
     //        window.showClaimCelebration({ networks: ['xdc'] })
     // Calling twice within MERGE_WINDOW_MS merges chips into one modal
     // (the unified Celo + XDC claim flow on /wallet).
+    function setBonus(bonus) {
+        if (!bonusEl || !bonusTextEl) return;
+        bonus = bonus || {};
+        if (bonus.queued && Number(bonus.bonus_amount_gd) > 0) {
+            var amt = Number(bonus.bonus_amount_gd).toLocaleString(undefined, {
+                minimumFractionDigits: Number.isInteger(bonus.bonus_amount_gd) ? 0 : 2,
+                maximumFractionDigits: 4
+            });
+            bonusTextEl.innerHTML = 'DOUBLE UBI active! You\u2019ll receive an extra <b>' +
+                amt + ' G$</b> on top of today\u2019s claim.';
+            bonusEl.hidden = false;
+        } else {
+            bonusEl.hidden = true;
+        }
+    }
+    window.showDoubleUbiBonus = setBonus;
+
+    // The confirm endpoint reports the bonus asynchronously (after the claim
+    // receipt is logged). When we open the celebration without a bonus yet,
+    // briefly poll window.__doubleUbiBonus so a just-confirmed Celo claim can
+    // light up the banner a moment later.
+    var bonusPollTimer = null;
+    function pullBonusOnce(opts) {
+        var bonus = opts && (opts.double_ubi_bonus || opts.bonus) || null;
+        if (bonus && (bonus.queued || !bonus.queued && bonus.bonus_amount_gd)) {
+            setBonus(bonus);
+            return;
+        }
+        clearTimeout(bonusPollTimer);
+        var tries = 0;
+        function poll() {
+            var cur = window.__doubleUbiBonus || null;
+            if (cur && cur.queued) { setBonus(cur); return; }
+            tries += 1;
+            if (tries < 5) {
+                bonusPollTimer = setTimeout(poll, 700);
+            } else {
+                setBonus(null); // no bonus reported — nothing to show
+            }
+        }
+        bonusPollTimer = setTimeout(poll, 700);
+    }
+
     window.showClaimCelebration = function (opts) {
         opts = opts || {};
         var nets = Array.isArray(opts.networks) ? opts.networks : [];
+        var bonus = opts.double_ubi_bonus || opts.bonus || null;
         var alreadyOpen = overlay.classList.contains('gm-cele-show');
         var withinMerge = alreadyOpen &&
             (Date.now() - state.openedAt) < MERGE_WINDOW_MS;
@@ -452,6 +539,9 @@
             if (k === 'celo' || k === 'xdc') state.networks[k] = true;
         }
         renderChips();
+
+        // Show the DOUBLE UBI bonus banner if the claim confirm reported one.
+        pullBonusOnce(bonus);
 
         // Make sure we have a link to copy. Cache for instant; refresh in bg.
         var cached = readCachedLink();
