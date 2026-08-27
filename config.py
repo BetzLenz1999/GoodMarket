@@ -7,7 +7,7 @@ from env_utils import get_env_float, get_env_int
 import os
 
 # Production domain configuration
-PRODUCTION_DOMAIN = os.getenv('PRODUCTION_DOMAIN', 'https://goodmarket.live')
+PRODUCTION_DOMAIN = os.getenv('PRODUCTION_DOMAIN', 'https://goodmarketph.live')
 
 # ============================
 # Superfluid P2P Streaming Configuration
