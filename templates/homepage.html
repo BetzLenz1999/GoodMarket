@@ -3,17 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GoodMarket - Earn Free GoodDollar (G$) Daily | Cash Out to GCash</title>
-    <meta name="description" content="Earn free GoodDollar (G$) every day — quizzes, daily tasks, minigames, and community stories. Cash out to GCash. Community-built, gas-free, powered by Celo.">
+    <title>GoodMarket — Community Wallet for the G$ Token (GoodDollar Protocol)</title>
+    <meta name="description" content="GoodMarket is a community-built wallet for the G$ token on the GoodDollar protocol (Celo) — quizzes, daily tasks, minigames, savings & swap, gas-free. Not an official GoodDollar product.">
     <!-- Open Graph / link-sharing previews (Telegram, Facebook, X) -->
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="GoodMarket">
-    <meta property="og:title" content="GoodMarket — Earn Free GoodDollar (G$) Daily">
+    <meta property="og:title" content="GoodMarket — Community Wallet for the G$ Token">
     <meta property="og:description" content="Quizzes, daily tasks, minigames & more — earn real G$ and cash out to GCash. Gas-free, community-built on Celo.">
     <meta property="og:image" content="{{ request.url_root }}static/icons/goodmarket-icon.png">
     <meta property="og:url" content="{{ request.url_root }}">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="GoodMarket — Earn Free GoodDollar (G$) Daily">
+    <meta name="twitter:title" content="GoodMarket — Community Wallet for the G$ Token">
     <meta name="twitter:description" content="Quizzes, daily tasks, minigames & more — earn real G$ and cash out to GCash. Gas-free, community-built on Celo.">
     <meta name="twitter:image" content="{{ request.url_root }}static/icons/goodmarket-icon.png">
     <!-- Telegram Mini App SDK -->
@@ -1906,7 +1906,7 @@
                 projectId: "{{ walletconnect_project_id|default('', true) }}",
                 sidecarEnabled: {{ 'true' if walletconnect_sidecar_enabled|default(true) else 'false' }},
                 dappName: "GoodMarket",
-                dappDescription: "Claim and manage GoodDollar on Celo",
+                dappDescription: "Community wallet for the G$ token (GoodDollar protocol) on Celo",
                 assetVersion: "{{ ASSET_VERSION }}",
             });
         }
@@ -1957,13 +1957,13 @@
                     <span class="line">Cash out to <span class="highlight">GCash</span>.</span>
                 </h1>
                 <p class="hero-description">
-                    Answer quizzes, finish daily tasks, and play minigames to earn real GoodDollar (G$) tokens — sent straight to your wallet, gas-free. Then cash out to GCash anytime.
+                    Answer quizzes, finish daily tasks, and play minigames to earn real G$ tokens on the GoodDollar protocol — sent straight to your wallet, gas-free. Then cash out to GCash anytime.
                 </p>
                 <p class="hero-tagline-tl">
                     🇵🇭 Libreng G$ araw-araw — kumita habang natututo, diretso sa wallet mo.
                 </p>
                 <p class="hero-community-note">
-                    🤝 <strong>Community tools that support GoodDollar users</strong> &mdash; easing G$ claims, swaps &amp; onboarding.
+                    🤝 <strong>Community-built tools for G$ users</strong> &mdash; easing claims, swaps &amp; onboarding.
                 </p>
                 <div class="hero-buttons">
                     <button class="btn-primary" onclick="openWalletModal()">
@@ -2334,7 +2334,7 @@
             <div class="feature-card">
                 <div class="feature-icon">🌍</div>
                 <h3 class="feature-title">Built for Everyone</h3>
-                <p class="feature-description">GoodMarket is part of the GoodDollar ecosystem — designed to give everyone access to universal basic income.</p>
+                <p class="feature-description">GoodMarket is built for the GoodDollar ecosystem — designed to give everyone access to universal basic income.</p>
             </div>
         </div>
     </div>
@@ -2430,8 +2430,8 @@
 
     <!-- Footer small print -->
     <footer class="site-footer">
-        <p>⚠️ GoodMarket is a community initiative &mdash; not an official product of GoodDollar.</p>
-        <p>Built by the community, for GoodDollar users &middot; Powered by Celo</p>
+        <p>⚠️ GoodMarket is an independent community project &mdash; not an official product of, or affiliated with, GoodDollar (gooddollar.org).</p>
+        <p>Built by the community, for users of the G$ token on the GoodDollar protocol &middot; Powered by Celo</p>
     </footer>
 
     <!-- Wallet Modal -->
@@ -4202,7 +4202,7 @@
                     projectId: projectId,
                     metadata: {
                         name: 'GoodMarket',
-                        description: 'Learn & Earn with GoodDollar on Celo',
+                        description: 'Learn & Earn G$ with GoodMarket on Celo',
                         url: window.location.origin,
                         icons: [window.location.origin + '/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}']
                     }
