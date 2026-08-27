@@ -315,6 +315,22 @@ _BLOCKED_PATH_PATTERNS = tuple(_re.compile(p, _re.IGNORECASE) for p in (
 
 
 @app.before_request
+def _redirect_alias_hosts_to_canonical():
+    """308-redirect alias hosts (*.vercel.app, goodmarket.live) to the
+    canonical domain (goodmarketph.live). See canonical_host.py — the
+    vercel.app origin is a phishing risk signal with wallet security vendors,
+    so pages must only be served on the canonical domain."""
+    try:
+        from canonical_host import canonical_redirect_target
+        target = canonical_redirect_target(request.host, request.full_path)
+        if target:
+            return redirect(target, code=308)
+    except Exception as _hard_err:
+        logger.debug(f"canonical-redirect hook skipped: {_hard_err}")
+    return None
+
+
+@app.before_request
 def _block_scanner_paths():
     """Reject requests that match well-known scanner / probe path patterns.
 
