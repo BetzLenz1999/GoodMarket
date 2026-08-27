@@ -303,9 +303,11 @@ def confirm_goodmarket_claim():
     # DOUBLE UBI BONUS trigger (Celo only + confirmed).
     # A confirmed Celo claim instantly entitles the wallet to an extra G$ bonus
     # equal to the amount it just received — funded by the DOUBLEUBI_KEY wallet.
-    # The claimed amount is read from the claim tx receipt (authoritative), then
-    # the disbursement runs on a daemon thread via the durable double_ubi log so
-    # it cannot double-pay and survives worker restarts. Never blocks the claim
+    # The claimed amount is best-effort read from the claim tx receipt here, but
+    # if forno hasn't indexed it yet we STILL queue the intent (bonus=0); the
+    # durable scheduler resolves the real amount from the receipt before sending.
+    # Disbursement runs on a daemon thread via the durable double_ubi log so it
+    # cannot double-pay and survives worker restarts. Never blocks the claim
     # response. Env-gated (DOUBLE_UBI_ENABLED + DOUBLEUBI_KEY).
     bonus_info = None
     if status == "confirmed" and network == "celo":
@@ -314,21 +316,23 @@ def confirm_goodmarket_claim():
             if is_double_ubi_enabled():
                 amount_res = compute_claimed_amount_from_tx(tx_hash, wallet)
                 claimed_g = amount_res.get("amount_gd") or 0.0
-                if claimed_g > 0:
-                    q = queue_and_fire_async(wallet, tx_hash, claimed_g)
+                pending_receipt = bool(amount_res.get("pending"))
+                # Queue the intent even when the receipt isn't indexed yet — the
+                # scheduler fills in the amount from the receipt (reliability fix).
+                q = queue_and_fire_async(wallet, tx_hash, claimed_g)
+                if q.get("success"):
                     bonus_info = {
                         "claimed_amount_gd": claimed_g,
                         "bonus_amount_gd": q.get("bonus_amount_gd", claimed_g),
-                        "queued": q.get("success", False),
+                        "queued": True,
+                        "resolving": pending_receipt or claimed_g <= 0,
                     }
                 else:
                     bonus_info = {
-                        "claimed_amount_gd": 0.0,
-                        "bonus_amount_gd": 0.0,
+                        "claimed_amount_gd": claimed_g,
+                        "bonus_amount_gd": claimed_g,
                         "queued": False,
-                        "reason": amount_res.get("pending") and "receipt_pending"
-                                  or amount_res.get("reverted") and "reverted"
-                                  or "no_amount",
+                        "reason": q.get("error_type") or "queue_failed",
                     }
         except Exception as bonus_err:
             logger.warning(f"[gm-claim-confirm] double-UBI bonus trigger skipped: {bonus_err}")
@@ -340,6 +344,32 @@ def confirm_goodmarket_claim():
         "claim_attempt_id": claim_attempt_id,
         "double_ubi_bonus": bonus_info,
     })
+
+
+@routes.route("/api/double-ubi/status", methods=["GET"])
+@auth_required
+def double_ubi_status():
+    """Return the latest DOUBLE UBI bonus row for the session wallet.
+
+    Powering the dedicated bonus success notice that's separate from the claim
+    banner. Auth-required; never raises (best-effort, envelope with
+    ``success`` boolean). The frontend polls this after a claim (and once on
+    wallet load) and surfaces a prominent notice when the bonus is ``sent``.
+    """
+    wallet = (session.get("wallet") or "").strip().lower()
+    if not wallet:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+    try:
+        from double_ubi import get_last_bonus, is_double_ubi_enabled
+        if not is_double_ubi_enabled():
+            return jsonify({"success": False, "reason": "disabled", "bonus": None})
+        result = get_last_bonus(wallet)
+        if not result.get("success"):
+            return jsonify({"success": False, "error": result.get("error") or "db_error", "bonus": None})
+        return jsonify({"success": True, "bonus": result.get("bonus")})
+    except Exception as e:
+        logger.warning(f"[double-ubi-status] failed: {e}")
+        return jsonify({"success": False, "error": str(e), "bonus": None}), 500
 
 
 @routes.route("/api/claims/v2/health", methods=["GET"])
