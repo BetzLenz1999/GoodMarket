@@ -1784,6 +1784,106 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
         return navigateWithFeedback('/dashboard', 'Opening More Ways to Earn…');
     }
+
+    // ── Referral Program ─────────────────────────────────────
+    // Mirrors the /dashboard referral section but rendered inside the wallet
+    // modal (soft sunrise theme). Same /api/referral/stats source of truth.
+
+    // Match the referral link to the domain the visitor is actually on.
+    function _referralUrlOnCurrentOrigin(link) {
+        const m = (link || '').match(/^(https?:)?\/\/[^/]+/);
+        return m ? link.replace(m[0], window.location.origin) : (link || '');
+    }
+
+    function openReferralModal() {
+        openModal('referralModal');
+        loadWalletReferral();
+    }
+    function _wlRefEl(id) { return document.getElementById(id); }
+
+    async function loadWalletReferral() {
+        const linkBox = _wlRefEl('wlReferralLinkBox');
+        const loading = _wlRefEl('referralLoading');
+        const stats = _wlRefEl('referralStats');
+        const historySection = _wlRefEl('referralHistorySection');
+        const error = _wlRefEl('referralError');
+        if (!linkBox || !loading || !stats || !error) return;
+        linkBox.style.display = 'none';
+        stats.style.display = 'none';
+        historySection.style.display = 'none';
+        error.style.display = 'none';
+        loading.style.display = 'block';
+
+        try {
+            const resp = await fetch('/api/referral/stats');
+            if (!resp.ok) {
+                loading.style.display = 'none';
+                error.style.display = 'block';
+                error.textContent = resp.status === 401 ? 'Please log in to access the referral program.' : 'Could not load referral data (' + resp.status + ').';
+                return;
+            }
+            const data = await resp.json();
+            loading.style.display = 'none';
+
+            if (!data.success) {
+                error.style.display = 'block';
+                error.textContent = data.error || 'Could not load referral data.';
+                return;
+            }
+
+            _wlRefEl('wlReferralLinkInput').value = _referralUrlOnCurrentOrigin(data.referral_link);
+            linkBox.style.display = 'block';
+
+            _wlRefEl('refStatTotal').textContent = data.total_referrals || 0;
+            _wlRefEl('refStatCompleted').textContent = data.completed_referrals || 0;
+            const earned = parseFloat(data.total_earned_g || 0);
+            _wlRefEl('refStatEarned').textContent = earned >= 1000 ? (earned/1000).toFixed(1) + 'K' : earned.toFixed(0);
+            stats.style.display = 'block';
+
+            const referrals = data.referrals || [];
+            if (referrals.length > 0) {
+                const listEl = _wlRefEl('referralHistoryList');
+                if (listEl) {
+                    const statusLabels = {
+                        pending_face_verification: { label: 'Awaiting face verification', color: '#f59e0b' },
+                        pending_disbursed: { label: 'Reward pending (low funds)', color: '#f97316' },
+                        completed: { label: 'Reward sent', color: '#16a34a' },
+                        failed: { label: 'Failed', color: '#dc2626' }
+                    };
+                    listEl.innerHTML = referrals.map(function (ref) {
+                        const s = statusLabels[ref.status] || { label: ref.status, color: '#7c3aed' };
+                        const addr = ref.referee_wallet ? (ref.referee_wallet.slice(0,6) + '…' + ref.referee_wallet.slice(-4)) : 'Unknown';
+                        const dt = ref.created_at ? new Date(ref.created_at).toLocaleDateString() : '';
+                        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:0.45rem 0;border-bottom:1px solid var(--card-border);font-size:0.78rem;">'
+                            + '<span style="color:var(--text-dim);">' + addr + ' <span style="color:var(--text-muted);font-size:0.7rem;">' + dt + '</span></span>'
+                            + '<span style="color:' + s.color + ';font-weight:600;font-size:0.73rem;">' + s.label + '</span></div>';
+                    }).join('');
+                    historySection.style.display = 'block';
+                }
+            }
+
+        } catch (err) {
+            loading.style.display = 'none';
+            error.style.display = 'block';
+            error.textContent = 'Failed to load referral data.';
+            console.error('Referral load error:', err);
+        }
+    }
+
+    function copyWalletReferralLink() {
+        const input = _wlRefEl('wlReferralLinkInput');
+        if (!input || !input.value) return;
+        navigator.clipboard.writeText(input.value).then(function () {
+            const msg = _wlRefEl('referralCopyMsg');
+            if (msg) { msg.style.display = 'block'; setTimeout(function () { msg.style.display = 'none'; }, 2500); }
+        }).catch(function () {
+            input.select();
+            document.execCommand('copy');
+            const msg = _wlRefEl('referralCopyMsg');
+            if (msg) { msg.style.display = 'block'; setTimeout(function () { msg.style.display = 'none'; }, 2500); }
+        });
+    }
+
     function clearAlert(id) {
         const el = document.getElementById(id);
         el.className = 'alert';
