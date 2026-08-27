@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 REFERRER_REWARD = 1000.0
 REFEREE_REWARD = 500.0
 
-BASE_URL = os.getenv('BASE_URL', 'https://goodmarket.live')
+BASE_URL = os.getenv('BASE_URL', 'https://goodmarketph.live')
 
 
 def _origin_base() -> str:
