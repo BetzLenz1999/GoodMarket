@@ -517,10 +517,11 @@ class CommunityStoriesService:
                     'total_submissions': 1
                 }).execute()
 
-            # Mark notification as read
+            # Mark notification as read (admin_wallet matched case-insensitively:
+            # Telegram-login admins store lowercase, web sessions checksummed)
             self.supabase.table('community_stories_admin_notifications').update({
                 'is_read': True
-            }).eq('submission_id', submission_id).eq('admin_wallet', admin_wallet).execute()
+            }).eq('submission_id', submission_id).ilike('admin_wallet', admin_wallet).execute()
 
             logger.info(f"✅ Approved submission {submission_id}: {amount} G$ to {wallet_address[:8]}...")
 
@@ -549,10 +550,11 @@ class CommunityStoriesService:
                 'admin_comment': reason
             }).eq('submission_id', submission_id).execute()
 
-            # Mark notification as read
+            # Mark notification as read (admin_wallet matched case-insensitively:
+            # Telegram-login admins store lowercase, web sessions checksummed)
             self.supabase.table('community_stories_admin_notifications').update({
                 'is_read': True
-            }).eq('submission_id', submission_id).eq('admin_wallet', admin_wallet).execute()
+            }).eq('submission_id', submission_id).ilike('admin_wallet', admin_wallet).execute()
 
             logger.info(f"❌ Rejected submission {submission_id}")
 
@@ -568,23 +570,38 @@ class CommunityStoriesService:
             return {'success': False, 'error': 'Database not available'}
 
         try:
-            notifications = self.supabase.table('community_stories_admin_notifications')\
-                .select('*, community_stories_submissions(*)')\
-                .eq('admin_wallet', admin_wallet)\
-                .eq('is_read', False)\
-                .order('created_at', desc=True)\
-                .execute()
+            # Read the actual pending submissions directly as the source of
+            # truth instead of joining community_stories_admin_notifications:
+            # that path silently hid every pending submission because (a) the
+            # embedded-resource join resolves to null without a foreign-key
+            # relationship between the two tables, and (b) admin_wallet is
+            # stored lowercase for Telegram-login admins while the web session
+            # holds the checksummed form, so the case-sensitive .eq() matched
+            # nothing. Pending submissions are review-worthy for any admin, so
+            # filter on the submission itself. (Mirrors the duplicate
+            # /api/admin/community-stories-notifications endpoint.)
+            pending = safe_supabase_operation(
+                lambda: self.supabase.table('community_stories_submissions')\
+                    .select('*')\
+                    .eq('status', 'pending')\
+                    .order('submitted_at', desc=True)\
+                    .execute(),
+                fallback_result=type('obj', (object,), {'data': []})(),
+                operation_name="get admin pending community stories"
+            )
 
-            # Filter to only include submissions that are still pending
-            filtered_notifications = [
-                n for n in (notifications.data or [])
-                if n.get('community_stories_submissions', {}).get('status') == 'pending'
+            notifications = [
+                {
+                    'submission_id': sub.get('submission_id'),
+                    'community_stories_submissions': sub,
+                }
+                for sub in (pending.data or [])
             ]
 
             return {
                 'success': True,
-                'notifications': filtered_notifications,
-                'count': len(filtered_notifications)
+                'notifications': notifications,
+                'count': len(notifications)
             }
 
         except Exception as e:
