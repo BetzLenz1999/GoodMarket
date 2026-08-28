@@ -1,6 +1,7 @@
 import logging
 import uuid
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from supabase_client import get_supabase_client, safe_supabase_operation
 from .blockchain import community_stories_blockchain
@@ -256,22 +257,32 @@ class CommunityStoriesService:
                 }
 
             # Validate tweet URL
-            config = self.get_config()
-            required_mentions = config.get('REQUIRED_MENTIONS', [])
-            if isinstance(required_mentions, str):
-                required_mentions = [item for item in required_mentions.split() if item]
-            if required_mentions:
-                if not any(mention in tweet_url for mention in required_mentions):
-                    return {
-                        'success': False,
-                        'error': f"Tweet must contain one of the required mentions: {', '.join(required_mentions)}"
-                    }
-
             if not tweet_url.startswith('https://x.com/') and not tweet_url.startswith('https://twitter.com/'):
                 return {
                     'success': False,
                     'error': 'Invalid Twitter/X URL format'
                 }
+
+            # A tweet's @mentions live in the post BODY, never in the URL.
+            # Previously this checked the mentions against `tweet_url` itself,
+            # which never contains "@handle", so EVERY valid submission was
+            # rejected with "Tweet must contain one of the required mentions".
+            # Now we fetch the tweet's actual text (best-effort, keyless) and
+            # check the mentions against that. When the content cannot be
+            # retrieved at all (endpoint down / private post / network error),
+            # we let the submission through and rely on the manual admin review
+            # (the real gate) — an outage must never brick every submission.
+            config = self.get_config()
+            required_mentions = config.get('REQUIRED_MENTIONS', [])
+            if isinstance(required_mentions, str):
+                required_mentions = [item for item in required_mentions.split() if item]
+            if required_mentions:
+                mention_ok = self._tweet_contains_required_mention(tweet_url, required_mentions)
+                if mention_ok is False:
+                    return {
+                        'success': False,
+                        'error': f"Tweet must include one of the required mentions: {', '.join(required_mentions)}"
+                    }
 
             # Create submission
             submission_id = f"CS{uuid.uuid4().hex[:12].upper()}"
@@ -299,6 +310,101 @@ class CommunityStoriesService:
         except Exception as e:
             logger.error(f"❌ Error submitting tweet: {e}")
             return {'success': False, 'error': str(e)}
+
+    def _tweet_contains_required_mention(self, tweet_url: str, required_mentions) -> bool:
+        """Best-effort check that the tweet's BODY contains a required mention.
+
+        Returns True when any required mention is present, False when the tweet
+        body was fetched and contains none of them, and True (pass-through) when
+        the content cannot be retrieved at all — see submit_tweet for why: an
+        endpoint/network failure must not hard-reject every submission. The
+        human admin review remains the ultimate gate.
+
+        Mentions are matched loosely so the mention requirement can be satisfied
+        by a hashtag-style variant (e.g. ``#gooddollarorg``) or a plain handle.
+        """
+        handles = []
+        for mention in required_mentions:
+            m = str(mention).strip()
+            if not m:
+                continue
+            if m.startswith('#'):
+                handles.append(m.lower())
+            elif m.startswith('@'):
+                handles.append(m.lower())
+                handles.append('#' + m[1:].lower())
+            else:
+                handles.append(m.lower())
+        if not handles:
+            return True
+
+        text = self._fetch_tweet_text(tweet_url)
+        if text is None:
+            # Could not retrieve the tweet body (private post, endpoint down,
+            # rate limit) — don't hard-reject; fall through to admin review.
+            logger.warning("⚠️ Could not fetch tweet body for %s, skipping mention check", tweet_url)
+            return True
+
+        lowered = text.lower()
+        return any(h in lowered for h in handles if h)
+
+    def _fetch_tweet_text(self, tweet_url: str):
+        """Best-effort fetch of a tweet's text via keyless public endpoints.
+
+        Returns the raw tweet body text, or None if it cannot be determined.
+        ``requests`` is imported lazily so this module still imports and tests
+        without the dependency installed.
+        """
+        try:
+            import requests
+        except ImportError:
+            logger.warning("⚠️ requests not installed; skipping tweet body fetch")
+            return None
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; GoodMarket/1.0)',
+        }
+        try:
+            if 'api.fxtwitter.com' not in tweet_url:
+                fixed = re.sub(r'^https?://(?:www\.)?(?:x|twitter)\.com/', 'https://api.fxtwitter.com/', tweet_url)
+            else:
+                fixed = tweet_url
+            resp = requests.get(fixed, headers=headers, timeout=8)
+            if resp.ok:
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    payload = None
+                if payload and payload.get('code') == 200 and payload.get('tweet'):
+                    return payload['tweet'].get('text')
+        except Exception as e:
+            logger.warning("⚠️ fxtwitter body fetch failed (%s)", e)
+
+        try:
+            resp = requests.get(
+                'https://api.vxtwitter.com/' + self._tweet_path(tweet_url),
+                headers=headers, timeout=8,
+            )
+            if resp.ok:
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    payload = None
+                if payload and payload.get('text'):
+                    return payload['text']
+        except Exception as e:
+            logger.warning("⚠️ vxtwitter body fetch failed (%s)", e)
+
+        return None
+
+    @staticmethod
+    def _tweet_path(url: str) -> str:
+        """Extract the ``user/status/<id>`` path from a Twitter/X URL, or ''. """
+        match = re.search(r'/(?:[A-Za-z0-9_]+)/status/(\d+)(?:/|$)', url)
+        if match:
+            user_part = re.search(r'/([A-Za-z0-9_]+)/status/', url)
+            if user_part:
+                return f"{user_part.group(1)}/status/{match.group(1)}"
+        return ''
 
     def _notify_admins(self, submission_id: str):
         """Create notifications for all admins"""
