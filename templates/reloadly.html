@@ -4,6 +4,7 @@
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>GoodMarket Store – Buy with G$</title>
+    <meta name="theme-color" content="#f97316">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
           integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0"
           crossorigin="anonymous" referrerpolicy="no-referrer"/>
@@ -313,6 +314,198 @@
         .country-required-msg i { color: #7986cb; margin-right: 6px; }
 
         .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited.
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .top-bar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .top-bar a { color: #ea580c; }
+        .top-bar h1 { color: var(--text); font-family: var(--serif); }
+        .sandbox-badge { background: #f59e0b; }
+        .gd-rate { color: var(--text-muted); }
+        .gd-rate span { color: #c2410c; }
+
+        .tabs {
+            background: #ffffff;
+            border-bottom-color: var(--card-border);
+            box-shadow: 0 2px 10px rgba(67,56,43,0.04);
+        }
+        .tab-btn { color: var(--text-muted); }
+        .tab-btn.active { color: #c2410c; border-bottom-color: #ea580c; }
+        .tab-btn:hover { color: var(--text); }
+
+        .card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .card h3 { color: var(--text); }
+
+        .form-group label { color: var(--text-dim); }
+        .form-group input, .form-group select {
+            border-color: var(--card-border);
+            background: #fbfaf8;
+            color: var(--text);
+        }
+        .form-group input:focus, .form-group select:focus { border-color: rgba(var(--accent-rgb),0.6); }
+
+        .btn-primary { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .btn-secondary { background: #fbfaf8; border-color: var(--card-border); color: var(--text-dim); }
+        .btn-secondary:hover { background: #faf7f2; color: var(--text); }
+
+        .operator-card, .gc-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+        }
+        .operator-card:hover, .gc-card:hover { border-color: rgba(var(--accent-rgb),0.5); }
+        .operator-card.selected, .gc-card.selected { border-color: rgba(var(--accent-rgb),0.55); background: #fff7ed; }
+        .op-name { color: var(--text); }
+        .op-country { color: var(--text-muted); }
+        .op-amounts { color: #c2410c; }
+
+        .bundle-chip {
+            background: #ffffff;
+            border-color: var(--card-border);
+        }
+        .bundle-chip:hover, .bundle-chip.selected { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.5); }
+        .bundle-name { color: var(--text); }
+
+        .chip {
+            border-color: var(--card-border);
+            background: #ffffff;
+            color: var(--text-dim);
+        }
+        .chip:hover, .chip.selected { background: linear-gradient(135deg, #f97316, #ea580c); border-color: #ea580c; color: #fff; }
+
+        .summary-box {
+            background: #fff7ed;
+            border-color: rgba(var(--accent-rgb),0.25);
+        }
+        .summary-row { color: var(--text-dim); }
+        .summary-row:last-child { color: #c2410c; }
+
+        .status-completed { background: rgba(22,163,74,0.12); color: #15803d; }
+        .status-pending_payment { background: #fef3c7; color: #92400e; }
+        .status-processing { background: rgba(8,145,178,0.12); color: #0e7490; }
+        .status-verifying { background: rgba(8,145,178,0.12); color: #0e7490; }
+        .status-refunded { background: rgba(124,58,237,0.12); color: #6d28d9; }
+        .status-pending_refund { background: rgba(124,58,237,0.12); color: #6d28d9; }
+        .status-refunding { background: rgba(124,58,237,0.12); color: #6d28d9; }
+        .status-failed, .status-payment_failed, .status-refund_failed { background: rgba(220,38,38,0.10); color: #b91c1c; }
+        .status-expired { background: rgba(120,113,108,0.10); color: #78716c; }
+        .status-cancelled { background: rgba(120,113,108,0.10); color: #57534e; }
+
+        .modal-overlay { background: rgba(41,37,36,0.5); }
+        .modal {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 -12px 40px rgba(67,56,43,0.18);
+        }
+        .modal h2 { color: var(--text); }
+        .modal-subtitle { color: var(--text-muted); }
+        .modal-close { color: var(--text-muted); }
+
+        .pay-status-info { background: rgba(var(--accent-rgb),0.08); border-color: rgba(var(--accent-rgb),0.28); color: #c2410c; }
+        .pay-status-success { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.28); color: #15803d; }
+        .pay-status-error { background: rgba(220,38,38,0.07); border-color: rgba(220,38,38,0.25); color: #b91c1c; }
+        .pay-status-warning { background: rgba(217,119,6,0.10); border-color: rgba(217,119,6,0.28); color: #92400e; }
+
+        .qr-box { background: #ffffff; border: 1px solid var(--card-border); }
+        .qr-label { color: var(--text-muted); }
+
+        .addr-box {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+
+        .loading { color: var(--text-muted); }
+        .empty-msg { color: var(--text-muted); }
+
+        .toast-success { background: #dcfce7; color: #15803d; border-color: #86efac; }
+        .toast-error { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+        .toast-info { background: #fff7ed; color: #c2410c; border-color: #fdba74; }
+
+        .order-row { border-bottom-color: rgba(67,56,43,0.09); }
+        .order-title { color: var(--text); }
+        .order-sub { color: var(--text-muted); }
+
+        .country-picker-btn {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text);
+        }
+        .country-picker-btn:hover { border-color: rgba(var(--accent-rgb),0.5); }
+        .country-picker-btn .cp-chevron { color: #ea580c; }
+        .country-picker-modal { background: rgba(41,37,36,0.5); }
+        .country-picker-panel {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 12px 40px rgba(67,56,43,0.18);
+        }
+        .country-picker-header { border-bottom-color: var(--card-border); }
+        .country-picker-header h3 { color: var(--text); }
+        .country-picker-close { color: var(--text-muted); }
+        .country-picker-search { border-bottom-color: var(--card-border); }
+        .country-picker-search input {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+            color: var(--text);
+        }
+        .country-picker-search input:focus { border-color: rgba(var(--accent-rgb),0.6); }
+        .country-picker-item:hover { background: #fff7ed; }
+        .country-picker-item .cp-name { color: var(--text); }
+        .country-picker-item .cp-code { color: #c2410c; }
+        .country-picker-empty, .country-picker-loading { color: var(--text-muted); }
+
+        .phone-input-wrap {
+            background: #ffffff;
+            border-color: var(--card-border);
+        }
+        .phone-input-wrap:focus-within { border-color: rgba(var(--accent-rgb),0.6); }
+        .phone-input-wrap .phone-prefix {
+            background: #fff7ed;
+            color: #c2410c;
+            border-right-color: var(--card-border);
+        }
+        .phone-input-wrap input { color: var(--text); }
+        .phone-input-wrap input::placeholder { color: var(--text-muted); }
+
+        .phone-hint { color: var(--text-muted); }
+        .country-required-msg {
+            color: var(--text-dim);
+            border-color: var(--card-border);
+            background: rgba(255,255,255,0.6);
+        }
+        .country-required-msg i { color: #c2410c; }
     </style>
     <div id="privyWalletMount" style="display:none"></div>
     <script type="module">
@@ -387,7 +580,7 @@
     <a href="/wallet"><i class="fas fa-arrow-left"></i> Back to Wallet</a>
     <h1>GoodMarket Store</h1>
     {% if is_sandbox %}<span class="sandbox-badge">SANDBOX</span>{% endif %}
-    <div class="gd-rate">1 G$ ≈ <span id="liveGdRate">${{ "%.6f"|format(gd_price) }}</span> <span style="font-size:9px;color:#69f0ae;opacity:0.7" id="rateSource">CoinGecko</span></div>
+    <div class="gd-rate">1 G$ ≈ <span id="liveGdRate">${{ "%.6f"|format(gd_price) }}</span> <span style="font-size:9px;color:#15803d;opacity:0.8" id="rateSource">CoinGecko</span></div>
 </div>
 
 <div class="tabs">
@@ -449,9 +642,9 @@
 
 <!-- VIRTUAL CARD TAB -->
 <div id="tab-virtualcard" class="tab-content">
-    <div class="card" style="background:linear-gradient(135deg,#1e2260,#141735);border-color:#3730a3;">
-        <h3 style="display:flex;align-items:center;gap:8px"><i class="fas fa-credit-card" style="color:#a5b4fc"></i> Virtual Prepaid Card</h3>
-        <div style="font-size:13px;color:#b4b9d6;line-height:1.55;margin-bottom:12px">
+    <div class="card" style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border-color:rgba(var(--accent-rgb),0.4);">
+        <h3 style="display:flex;align-items:center;gap:8px"><i class="fas fa-credit-card" style="color:#ea580c"></i> Virtual Prepaid Card</h3>
+        <div style="font-size:13px;color:#6b5d48;line-height:1.55;margin-bottom:12px">
             Turn your GoodDollar portfolio into a <strong>Visa / Mastercard virtual prepaid card</strong>.
             Pay with G$, receive a card number + CVV + expiry instantly — usable at online stores that accept the underlying network.
         </div>
@@ -465,7 +658,7 @@
                 <div style="color:#9ca3af">Works on Amazon, Netflix, Shopee, and other online merchants.</div>
             </div>
             <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:10px 12px">
-                <div style="color:#fcd34d;font-weight:600;margin-bottom:3px">🔒 Minimal KYC</div>
+                <div style="color:#b45309;font-weight:600;margin-bottom:3px">🔒 Minimal KYC</div>
                 <div style="color:#9ca3af">Issued via Reloadly — no bank-grade KYC, no physical card.</div>
             </div>
         </div>
@@ -534,16 +727,16 @@
     <div id="orderStats" style="display:none">
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
             <div class="card" style="text-align:center;padding:14px">
-                <div style="font-size:22px;font-weight:700;color:#7986cb" id="statTotal">0</div>
-                <div style="font-size:11px;color:#aaa;margin-top:2px">Total Orders</div>
+                <div style="font-size:22px;font-weight:700;color:#c2410c" id="statTotal">0</div>
+                <div style="font-size:11px;color:#8a8378;margin-top:2px">Total Orders</div>
             </div>
             <div class="card" style="text-align:center;padding:14px">
-                <div style="font-size:22px;font-weight:700;color:#69f0ae" id="statCompleted">0</div>
-                <div style="font-size:11px;color:#aaa;margin-top:2px">Completed</div>
+                <div style="font-size:22px;font-weight:700;color:#15803d" id="statCompleted">0</div>
+                <div style="font-size:11px;color:#8a8378;margin-top:2px">Completed</div>
             </div>
             <div class="card" style="text-align:center;padding:14px">
-                <div style="font-size:22px;font-weight:700;color:#fff" id="statGd">0</div>
-                <div style="font-size:11px;color:#aaa;margin-top:2px">G$ Spent</div>
+                <div style="font-size:22px;font-weight:700;color:#2b241a" id="statGd">0</div>
+                <div style="font-size:11px;color:#8a8378;margin-top:2px">G$ Spent</div>
             </div>
         </div>
     </div>
@@ -603,9 +796,9 @@
                     <div style="background:#0f0f1a;border:1px solid #3a3a5c;border-radius:10px;padding:12px 14px">
                         <div style="font-size:10px;color:#777;margin-bottom:6px;letter-spacing:0.6px;text-transform:uppercase">Merchant Wallet · Celo Network</div>
                         <div style="display:flex;align-items:center;gap:8px">
-                            <span id="merchantAddrText" style="font-family:monospace;font-size:11px;color:#a5b4fc;word-break:break-all;flex:1;line-height:1.5"></span>
+                            <span id="merchantAddrText" style="font-family:monospace;font-size:11px;color:#0e7490;word-break:break-all;flex:1;line-height:1.5"></span>
                             <button onclick="copyMerchantAddr()" title="Copy address"
-                                style="flex-shrink:0;background:#3730a3;border:none;border-radius:6px;padding:8px 12px;color:#fff;cursor:pointer;font-size:14px">
+                                style="flex-shrink:0;background:linear-gradient(135deg,#f97316,#ea580c);border:none;border-radius:6px;padding:8px 12px;color:#fff;cursor:pointer;font-size:14px">
                                 <i class="fas fa-copy" id="merchantCopyIcon"></i>
                             </button>
                         </div>
@@ -628,8 +821,8 @@
                 <div style="font-size:28px;margin-bottom:10px"><i class="fas fa-satellite-dish spin"></i></div>
                 <strong id="processingMsg">Watching the blockchain for your payment...</strong>
                 <div style="font-size:12px;color:#818cf8;margin-top:8px" id="processingDetail">Scanning Celo network • Auto-detecting G$ transfer</div>
-                <div style="margin-top:14px;background:rgba(255,255,255,0.06);border-radius:8px;height:6px;overflow:hidden">
-                    <div id="detectProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#5c6bc0,#7986cb);transition:width 0.5s ease;border-radius:8px"></div>
+                <div style="margin-top:14px;background:rgba(67,56,43,0.10);border-radius:8px;height:6px;overflow:hidden">
+                    <div id="detectProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#f97316,#f5a623);transition:width 0.5s ease;border-radius:8px"></div>
                 </div>
                 <div style="font-size:11px;color:#555;margin-top:6px" id="detectPollCount">Poll 0 / 360 • expires in 30:00</div>
             </div>
@@ -859,8 +1052,8 @@ function applyTopupCountry(country) {
         : '';
     const labelEl = document.getElementById('tuCountryLabel');
     labelEl.classList.remove('cp-placeholder');
-    labelEl.innerHTML = `<strong style="color:#fff">${country.name}</strong>` +
-        (dial ? ` <span style="color:#7986cb;font-weight:600;margin-left:4px">${dial}</span>` : '');
+    labelEl.innerHTML = `<strong style="color:#2b241a">${country.name}</strong>` +
+        (dial ? ` <span style="color:#c2410c;font-weight:600;margin-left:4px">${dial}</span>` : '');
 
     // Reveal phone input + dial-code prefix
     const prefix = dial || '+--';
@@ -1639,7 +1832,7 @@ async function dappSendPayment() {
 
         setDappStatus('info',
             '<i class="fas fa-spinner spin"></i> Confirm in wallet:<br>' +
-            '<small style="color:#aaa">Sending <strong>' + gdNeededDisplay + ' G$</strong> to merchant via G$ token contract.<br>' +
+            '<small style="color:#8a8378">Sending <strong>' + gdNeededDisplay + ' G$</strong> to merchant via G$ token contract.<br>' +
             'The recipient shown in advanced details is:<br>' +
             '<code style="font-size:10px">' + MERCHANT_ADDRESS.slice(0,10) + '...' + MERCHANT_ADDRESS.slice(-6) + '</code></small>'
         );
@@ -1846,7 +2039,7 @@ async function openPayModal(order) {
     document.getElementById('payModalSummary').innerHTML = `
         <div class="summary-row"><span>Product</span><span style="text-align:right;max-width:60%">${order.label}</span></div>
         <div class="summary-row"><span>Amount</span><span>$${order.usd_amount.toFixed(2)} USD</span></div>
-        <div class="summary-row"><span>You Pay</span><span style="color:#69f0ae;font-weight:700">${formatGdAmount(order.gd_amount)} G$</span></div>`;
+        <div class="summary-row"><span>You Pay</span><span style="color:#15803d;font-weight:700">${formatGdAmount(order.gd_amount)} G$</span></div>`;
 
     // Balance check — show warning if user may not have enough G$
     try {
@@ -2143,9 +2336,9 @@ function renderOperators(operators, detectedId = null, meta = {}) {
             <div style="background:rgba(105,240,174,0.08);border:1px solid rgba(105,240,174,0.25);
                         border-radius:10px;padding:10px 14px;margin-bottom:14px;
                         display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                <i class="fas fa-bullseye" style="color:#69f0ae"></i>
-                <div style="flex:1;font-size:12.5px;color:#cfead8;line-height:1.45">
-                    Showing <strong style="color:#69f0ae">${operators.length}</strong>
+                <i class="fas fa-bullseye" style="color:#15803d"></i>
+                <div style="flex:1;font-size:12.5px;color:#3a5c47;line-height:1.45">
+                    Showing <strong style="color:#15803d">${operators.length}</strong>
                     operator${operators.length === 1 ? '' : 's'} matching your number's prefix.
                     ${hidden > 0 ? `<span style="color:#9ca3af">${hidden} other${hidden === 1 ? '' : 's'} hidden.</span>` : ''}
                 </div>
@@ -2159,14 +2352,14 @@ function renderOperators(operators, detectedId = null, meta = {}) {
         banner = `
             <div style="background:rgba(121,134,203,0.08);border:1px solid rgba(121,134,203,0.25);
                         border-radius:10px;padding:10px 14px;margin-bottom:14px;
-                        display:flex;align-items:center;gap:10px;font-size:12.5px;color:#cdd3ec">
-                <i class="fas fa-info-circle" style="color:#7986cb"></i>
+                        display:flex;align-items:center;gap:10px;font-size:12.5px;color:#3a3226">
+                <i class="fas fa-info-circle" style="color:#c2410c"></i>
                 <span>Couldn't auto-match your number. Showing all operators for this country.</span>
             </div>`;
     }
 
     const headerExtra = detectedId
-        ? '<span style="font-size:11px;color:#69f0ae;font-weight:400;margin-left:6px">✓ Auto-detected from phone number</span>'
+        ? '<span style="font-size:11px;color:#15803d;font-weight:400;margin-left:6px">✓ Auto-detected from phone number</span>'
         : '';
 
     list.innerHTML = `<div class="card">
@@ -2181,7 +2374,7 @@ function renderOperators(operators, detectedId = null, meta = {}) {
                 <div class="op-name">${op.name}</div>
                 <div class="op-country">${op.country?.name || ''}</div>
                 <div class="op-amounts">${op.gd_amounts ? op.gd_amounts.slice(0,3).map(a=>`${a} G$`).join(' · ') : (op.minAmount ? `$${op.minAmount}–$${op.maxAmount}` : '')}</div>
-                ${isDetected ? '<div style="font-size:9px;color:#69f0ae;margin-top:4px">● Detected</div>' : ''}
+                ${isDetected ? '<div style="font-size:9px;color:#15803d;margin-top:4px">● Detected</div>' : ''}
             </div>`;
         }).join('')
     }</div></div>`;
@@ -2205,7 +2398,7 @@ function selectOperator(idx) {
         const hasDescs = Object.keys(localDescs).length > 0 || Object.keys(usdDescs).length > 0;
         const isBundle = selectedOperator.bundle || selectedOperator.data || hasDescs;
 
-        sec.innerHTML = `<label style="font-size:12px;color:#aaa;display:block;margin-bottom:8px">
+        sec.innerHTML = `<label style="font-size:12px;color:#6b5d48;display:block;margin-bottom:8px">
             ${isBundle ? 'Select Promo / Bundle' : 'Select Amount'}
             </label>
             <div class="${isBundle ? 'bundle-list' : 'amount-chips'}">${selectedOperator.fixedAmounts.map((a, i) => {
@@ -2223,13 +2416,13 @@ function selectOperator(idx) {
                     return `<div class="bundle-chip" onclick="selectFixedAmt(${a},${gd[i]},this)" data-usd="${a}" data-local="${localAmt||''}">
                         <div class="bundle-name">${desc}</div>
                         <div class="bundle-price">
-                            <div style="color:#69f0ae;font-weight:700;font-size:13px">${Math.round(gd[i]).toLocaleString()} G$</div>
+                            <div style="color:#15803d;font-weight:700;font-size:13px">${Math.round(gd[i]).toLocaleString()} G$</div>
                             <div style="color:#888;font-size:10px">${localDisplay}</div>
                         </div>
                     </div>`;
                 }
                 return `<div class="chip" onclick="selectFixedAmt(${a},${gd[i]},this)">
-                    ${localDisplay} <span style="color:#7986cb">(${Math.round(gd[i]).toLocaleString()} G$)</span>
+                    ${localDisplay} <span style="color:#c2410c">(${Math.round(gd[i]).toLocaleString()} G$)</span>
                 </div>`;
             }).join('')}</div>`;
     } else {
@@ -2241,7 +2434,7 @@ function selectOperator(idx) {
             ? `$${selectedOperator.minAmount} – $${selectedOperator.maxAmount} USD`
             : `${cSym}${localMin} – ${cSym}${localMax} (${selectedOperator.destinationCurrencyCode})`;
         sec.innerHTML = `<div class="form-group">
-            <label style="font-size:12px;color:#aaa">Amount in USD — ${rangeLabel}</label>
+            <label style="font-size:12px;color:#6b5d48">Amount in USD — ${rangeLabel}</label>
             <input id="tuCustomAmt" type="number" step="0.01" min="${selectedOperator.minAmount}" max="${selectedOperator.maxAmount}" placeholder="USD amount" oninput="updateTuSummary()"/>
         </div>`;
     }
@@ -2274,7 +2467,7 @@ function updateTuSummary() {
         : ''}
         <div class="summary-row"><span>Amount</span><span>${amountDisplay}</span></div>
         <div class="summary-row"><span>Operator</span><span>${selectedOperator?.name||''}</span></div>
-        <div class="summary-row"><span>You Pay</span><span style="color:#69f0ae;font-weight:700">${Math.round(gd).toLocaleString()} G$</span></div>`;
+        <div class="summary-row"><span>You Pay</span><span style="color:#15803d;font-weight:700">${Math.round(gd).toLocaleString()} G$</span></div>`;
 }
 
 function initiateTopup() {
@@ -2331,7 +2524,7 @@ function selectGc(idx) {
     if (selectedGcProduct.fixedRecipientDenominations?.length) {
         const gd = selectedGcProduct.gd_fixed || selectedGcProduct.fixedRecipientDenominations.map(a => Math.ceil(a / GD_PRICE));
         amtHtml = `<div class="form-group"><label>Select Denomination</label><div class="amount-chips">${
-            selectedGcProduct.fixedRecipientDenominations.map((a,i) => `<div class="chip" onclick="selectGcAmt(${a},${gd[i]},this)">$${a} <span style="color:#7986cb">(${gd[i]} G$)</span></div>`).join('')}</div></div>`;
+            selectedGcProduct.fixedRecipientDenominations.map((a,i) => `<div class="chip" onclick="selectGcAmt(${a},${gd[i]},this)">$${a} <span style="color:#c2410c">(${gd[i]} G$)</span></div>`).join('')}</div></div>`;
     } else {
         amtHtml = `<div class="form-group"><label>Amount (USD) — $${selectedGcProduct.minRecipientDenomination}–$${selectedGcProduct.maxRecipientDenomination}</label>
             <input id="gcCustomAmt" type="number" step="0.01" min="${selectedGcProduct.minRecipientDenomination}" max="${selectedGcProduct.maxRecipientDenomination}" placeholder="Enter amount"/></div>`;
@@ -2406,14 +2599,14 @@ function selectVc(idx) {
     if (selectedVcProduct.fixedRecipientDenominations?.length) {
         const gd = selectedVcProduct.gd_fixed || selectedVcProduct.fixedRecipientDenominations.map(a => Math.ceil(a / GD_PRICE));
         amtHtml = `<div class="form-group"><label>Select Denomination</label><div class="amount-chips">${
-            selectedVcProduct.fixedRecipientDenominations.map((a,i) => `<div class="chip" onclick="selectVcAmt(${a},${gd[i]},this)">$${a} <span style="color:#7986cb">(${gd[i].toLocaleString()} G$)</span></div>`).join('')}</div></div>`;
+            selectedVcProduct.fixedRecipientDenominations.map((a,i) => `<div class="chip" onclick="selectVcAmt(${a},${gd[i]},this)">$${a} <span style="color:#c2410c">(${gd[i].toLocaleString()} G$)</span></div>`).join('')}</div></div>`;
     } else {
         amtHtml = `<div class="form-group"><label>Amount (USD) — $${selectedVcProduct.minRecipientDenomination}–$${selectedVcProduct.maxRecipientDenomination}</label>
             <input id="vcCustomAmt" type="number" step="0.01" min="${selectedVcProduct.minRecipientDenomination}" max="${selectedVcProduct.maxRecipientDenomination}" placeholder="Enter amount" oninput="updateVcSummary()"/></div>`;
     }
     div.innerHTML = `<h3>${selectedVcProduct.productName}</h3>${amtHtml}
         <div class="summary-box" id="vcSummary" style="display:none"></div>
-        <div style="font-size:11.5px;color:#9ca3af;line-height:1.5;margin-top:10px;padding:9px 12px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid rgba(255,255,255,0.06)">
+        <div style="font-size:11.5px;color:#9ca3af;line-height:1.5;margin-top:10px;padding:9px 12px;background:#fbfaf8;border-radius:8px;border:1px solid #e9e2d6">
             ℹ️ After payment confirms, card number + CVV + expiry will appear below. <strong>Save them immediately</strong> — most virtual cards are one-time use.
         </div>
         <button class="btn btn-primary btn-full" onclick="initiateVirtualCard()" style="margin-top:12px"><i class="fas fa-bolt"></i> Pay with G$</button>`;
@@ -2429,7 +2622,7 @@ function selectVcAmt(usd, gd, el) {
     s.style.display='block';
     s.innerHTML = `<div class="summary-row"><span>Card</span><span>${selectedVcProduct.productName}</span></div>
         <div class="summary-row"><span>Value</span><span>$${usd}</span></div>
-        <div class="summary-row"><span>You Pay</span><span style="color:#69f0ae;font-weight:700">${gd.toLocaleString()} G$</span></div>`;
+        <div class="summary-row"><span>You Pay</span><span style="color:#15803d;font-weight:700">${gd.toLocaleString()} G$</span></div>`;
 }
 
 function updateVcSummary() {
@@ -2441,7 +2634,7 @@ function updateVcSummary() {
     s.style.display='block';
     s.innerHTML = `<div class="summary-row"><span>Card</span><span>${selectedVcProduct.productName}</span></div>
         <div class="summary-row"><span>Value</span><span>$${usd.toFixed(2)}</span></div>
-        <div class="summary-row"><span>You Pay</span><span style="color:#69f0ae;font-weight:700">${gd.toLocaleString()} G$</span></div>`;
+        <div class="summary-row"><span>You Pay</span><span style="color:#15803d;font-weight:700">${gd.toLocaleString()} G$</span></div>`;
 }
 
 function initiateVirtualCard() {
@@ -2466,9 +2659,9 @@ async function revealVirtualCard(orderId) {
     if (!box) return;
     const loader = document.createElement('div');
     loader.id = 'vcCardReveal';
-    loader.style.cssText = 'margin-top:14px;padding:14px;background:#0f0f1a;border:1px solid #3730a3;border-radius:12px';
+    loader.style.cssText = 'margin-top:14px;padding:14px;background:#fbfaf8;border:1px solid #e9e2d6;border-radius:12px';
     const spinner = document.createElement('div');
-    spinner.style.cssText = 'text-align:center;font-size:13px;color:#a5b4fc';
+    spinner.style.cssText = 'text-align:center;font-size:13px;color:#6b5d48';
     const icon = document.createElement('i');
     icon.className = 'fas fa-spinner fa-spin';
     spinner.append(icon, ' Retrieving your card details…');
@@ -2492,7 +2685,7 @@ async function revealVirtualCard(orderId) {
         }
         const cards = Array.isArray(res.cards) ? res.cards : (res.cards?.content || res.cards?.cards || [res.cards]);
         if (!cards || !cards.length) {
-            setMsg('#fcd34d',
+            setMsg('#b45309',
                 `⚠️ Card was ordered successfully but Reloadly returned no redeem data yet. Check "My Orders" in a few minutes, or contact support with order id ${orderId}.`);
             return;
         }
@@ -2517,7 +2710,7 @@ function renderVirtualCard(card) {
     wrap.style.cssText = 'margin-bottom:10px';
 
     const header = document.createElement('div');
-    header.style.cssText = 'font-size:12px;color:#a5b4fc;margin-bottom:8px;display:flex;align-items:center;gap:6px';
+    header.style.cssText = 'font-size:12px;color:#6b5d48;margin-bottom:8px;display:flex;align-items:center;gap:6px';
     const headerIcon = document.createElement('i');
     headerIcon.className = 'fas fa-credit-card';
     const brandStrong = document.createElement('strong');
@@ -2533,13 +2726,13 @@ function renderVirtualCard(card) {
 
     if (instructions) {
         const note = document.createElement('div');
-        note.style.cssText = 'font-size:11px;color:#9ca3af;margin-top:8px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;line-height:1.5';
+        note.style.cssText = 'font-size:11px;color:#8a8378;margin-top:8px;padding:8px;background:#fbfaf8;border-radius:6px;line-height:1.5';
         note.textContent = String(instructions);
         wrap.appendChild(note);
     }
 
     const warn = document.createElement('div');
-    warn.style.cssText = 'font-size:11px;color:#fcd34d;margin-top:8px';
+    warn.style.cssText = 'font-size:11px;color:#b45309;margin-top:8px';
     warn.textContent = '⚠️ Save these details now — for security, you may not be able to retrieve them again.';
     wrap.appendChild(warn);
     return wrap;
@@ -2547,17 +2740,17 @@ function renderVirtualCard(card) {
 
 function _vcMakeRow(label, value, isSecret) {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px dashed rgba(255,255,255,0.06)';
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px dashed #e9e2d6';
 
     const lbl = document.createElement('span');
-    lbl.style.cssText = 'font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:#7986cb';
+    lbl.style.cssText = 'font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:#8a8378';
     lbl.textContent = label;
 
     const right = document.createElement('div');
     right.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end';
 
     const val = document.createElement('span');
-    val.style.cssText = 'font-family:monospace;font-size:14px;color:#fff;word-break:break-all;text-align:right';
+    val.style.cssText = 'font-family:monospace;font-size:14px;color:#2b241a;word-break:break-all;text-align:right';
     val.dataset.vcValue = value;
     val.dataset.vcSecret = isSecret ? '1' : '0';
     val.dataset.vcRevealed = '0';
@@ -2567,7 +2760,7 @@ function _vcMakeRow(label, value, isSecret) {
     if (isSecret) {
         const eyeBtn = document.createElement('button');
         eyeBtn.type = 'button';
-        eyeBtn.style.cssText = 'background:#3730a3;border:none;color:#fff;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer';
+        eyeBtn.style.cssText = 'background:linear-gradient(135deg,#f97316,#ea580c);border:none;color:#fff;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer';
         const eyeIcon = document.createElement('i');
         eyeIcon.className = 'fas fa-eye';
         eyeBtn.appendChild(eyeIcon);
@@ -2578,7 +2771,7 @@ function _vcMakeRow(label, value, isSecret) {
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.title = 'Copy';
-    copyBtn.style.cssText = 'background:#1e2260;border:1px solid #3730a3;color:#a5b4fc;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer';
+    copyBtn.style.cssText = 'background:#fff7ed;border:1px solid rgba(var(--accent-rgb),0.5);color:#b45309;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer';
     const copyIcon = document.createElement('i');
     copyIcon.className = 'fas fa-copy';
     copyBtn.appendChild(copyIcon);
@@ -2722,7 +2915,7 @@ async function loadOrders() {
 
             const txLink = o.tx_hash
                 ? `<a href="${CELOSCAN}${o.tx_hash}" target="_blank" rel="noopener"
-                      style="color:#7986cb;font-size:11px;text-decoration:none">
+                      style="color:#0369a1;font-size:11px;text-decoration:none">
                       <i class="fas fa-external-link-alt" style="font-size:9px"></i>
                       ${o.tx_hash.slice(0,10)}…${o.tx_hash.slice(-6)}
                    </a>` : '';
@@ -2758,8 +2951,8 @@ async function loadOrders() {
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
                     <div>
-                        <span style="font-weight:700;color:#69f0ae">${parseFloat(o.gd_amount).toFixed(2)} G$</span>
-                        <span style="color:#aaa;font-size:12px;margin-left:4px">≈ $${parseFloat(o.usd_amount).toFixed(2)}</span>
+                        <span style="font-weight:700;color:#15803d">${parseFloat(o.gd_amount).toFixed(2)} G$</span>
+                        <span style="color:#8a8378;font-size:12px;margin-left:4px">≈ $${parseFloat(o.usd_amount).toFixed(2)}</span>
                     </div>
                     <div style="font-size:11px;color:#888">${date}</div>
                 </div>
