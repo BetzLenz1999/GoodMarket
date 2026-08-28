@@ -2408,6 +2408,37 @@
         .bn-sheet { border-radius: 22px; }
         .bn-sheet-item { border-radius: 16px; }
 
+        /* ── Bottom nav: bolder & more attractive (2026-08) ──
+           Keeps the Soft Sunrise warm palette but gives the 5 nav buttons
+           real presence: larger icons, chunkier bold labels and a warm
+           decorative pill so they pop before any hover. */
+        .wallet-bottom-nav {
+            padding: 0.6rem 0.4rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+            gap: 0.22rem;
+        }
+        .bn-item {
+            gap: 0.26rem;
+            padding: 0.5rem 0.18rem;
+            border-radius: 15px;
+            background: rgba(var(--accent-rgb),0.06);
+        }
+        .bn-item:hover { background: rgba(var(--accent-rgb),0.16); }
+        .bn-icon {
+            font-size: 1.5rem;
+            filter: drop-shadow(0 2px 3px rgba(67,56,43,0.22));
+        }
+        .bn-icon + .bn-label { color: #4a3f36; }
+        .bn-label {
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: -0.01em;
+            line-height: 1.15;
+            color: #4a3f36;
+        }
+        .bn-item:hover .bn-label { color: #b45309; }
+        .bn-item:hover .bn-icon { transform: translateY(-1px); }
+        .bn-item.active .bn-label { color: #b45309; }
+
     </style>
 </head>
 <body>
