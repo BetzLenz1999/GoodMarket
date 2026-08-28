@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Savings – GoodMarket</title>
-    <meta name="theme-color" content="#7c3aed">
+    <meta name="theme-color" content="#f97316">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
     <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
@@ -159,6 +159,170 @@
         .divider { height:1px; background:rgba(255,255,255,.06); margin:1.25rem 0; }
 
         .empty-state { text-align:center; padding:2.5rem 1rem; color:rgba(255,255,255,.3); font-size:.9rem; }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited.
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .navbar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .logo { color: #ea580c; }
+        .back-wallet-btn {
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.28);
+            color: #b45309;
+        }
+        .back-wallet-btn:hover { background: rgba(var(--accent-rgb),0.16); }
+        .nav-links a { color: #57534e; }
+        .nav-links a:hover { color: #b45309; background: rgba(var(--accent-rgb),0.12); }
+        .nav-links a.active { color: #b45309; background: rgba(var(--accent-rgb),0.16); font-weight: 700; }
+        .nav-sep { background: var(--card-border); }
+        .wallet-tag {
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.28);
+            color: #b45309;
+        }
+        .logout-btn {
+            background: rgba(239,68,68,0.08) !important;
+            border: 1px solid rgba(239,68,68,0.22) !important;
+            color: #dc2626 !important;
+        }
+        .logout-btn:hover { background: rgba(239,68,68,0.16) !important; color: #b91c1c !important; }
+
+        .page-title { color: var(--text); font-family: var(--serif); }
+        .page-subtitle { color: var(--text-dim); }
+
+        .card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .card-title { color: var(--text-muted); }
+
+        .stat-box {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .stat-label { color: var(--text-muted); }
+        .stat-value { color: var(--text); }
+        .stat-sub { color: var(--text-muted); }
+
+        .dur-btn {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .dur-btn:hover { border-color: rgba(var(--accent-rgb),0.4); color: #b45309; }
+        .dur-btn.selected {
+            background: rgba(var(--accent-rgb),0.12);
+            border-color: rgba(var(--accent-rgb),0.5);
+            color: #c2410c;
+        }
+        .dur-btn .dur-label { color: var(--text-muted); }
+
+        .form-group label { color: var(--text-dim); }
+        .input-wrap input {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+            color: var(--text);
+        }
+        .input-wrap input:focus { border-color: rgba(var(--accent-rgb),0.55); }
+        .input-suffix { color: var(--text-muted); }
+        .hint { color: var(--text-muted); }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.22);
+        }
+        .btn-outline {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .btn-outline:hover { background: #faf7f2; color: var(--text); }
+
+        .alert-info { background: rgba(var(--accent-rgb),0.08); border-color: rgba(var(--accent-rgb),0.28); color: #c2410c; }
+        .alert-success { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.28); color: #15803d; }
+        .alert-error { background: rgba(220,38,38,0.07); border-color: rgba(220,38,38,0.25); color: #b91c1c; }
+        .alert-warn { background: rgba(217,119,6,0.10); border-color: rgba(217,119,6,0.28); color: #92400e; }
+
+        .dep-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .dep-card.withdrawn { opacity: 0.75; border-color: var(--card-border); background: #fbfaf8; }
+        .dep-card.withdrawn .dep-amount { color: var(--text-muted); }
+        .dep-amount { color: var(--text); }
+        .dep-meta .row { color: var(--text-dim); }
+        .dep-meta .row span { color: #b45309; }
+        .badge-locked { background: rgba(217,119,6,0.12); border-color: rgba(217,119,6,0.3); color: #92400e; }
+        .badge-ready { background: rgba(22,163,74,0.12); border-color: rgba(22,163,74,0.3); color: #15803d; }
+        .badge-done { background: rgba(120,113,108,0.10); border-color: rgba(120,113,108,0.2); color: #78716c; }
+        .badge-bonus { background: rgba(var(--accent-rgb),0.12); border-color: rgba(var(--accent-rgb),0.3); color: #c2410c; }
+
+        .plan-btn {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .plan-btn:hover { border-color: rgba(var(--accent-rgb),0.4); color: #b45309; }
+        .plan-btn.selected {
+            background: rgba(var(--accent-rgb),0.12);
+            border-color: rgba(var(--accent-rgb),0.5);
+            color: #c2410c;
+            box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.14);
+        }
+        .plan-btn .plan-days { color: var(--text-muted); }
+        .plan-btn.selected .plan-days { color: #b45309; }
+        .plan-chip { background: rgba(8,145,178,0.10); border-color: rgba(8,145,178,0.28); color: #0e7490; }
+        .plan-clear { background: #fbfaf8; border-color: var(--card-border); color: var(--text-muted); }
+        .plan-clear:hover { color: #dc2626; border-color: rgba(220,38,38,0.3); }
+
+        .step-n { background: rgba(var(--accent-rgb),0.14); border-color: rgba(var(--accent-rgb),0.35); color: #c2410c; }
+        .step-t { color: var(--text-dim); }
+        .step-t strong { color: #b45309; }
+
+        .bonus-box { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.28); }
+        .bonus-text { color: var(--text-dim); }
+        .bonus-text strong { color: #c2410c; }
+
+        .spinner { border-color: rgba(var(--accent-rgb),0.2); border-top-color: var(--accent); }
+
+        .tabs { border-bottom-color: var(--card-border); }
+        .tab-btn { color: var(--text-muted); }
+        .tab-btn.active { color: #c2410c; border-bottom-color: var(--accent); }
+
+        .divider { background: rgba(67,56,43,0.09); }
+
+        .empty-state { color: var(--text-muted); }
     </style>
     <!-- WalletConnect bridge for users without injected wallet -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
@@ -399,7 +563,7 @@
             </div>
 
             <!-- Top-up notice -->
-            <div class="bonus-box" id="topupNotice" style="display:none; margin-bottom:1rem; background:rgba(56,189,248,.07); border-color:rgba(56,189,248,.25);">
+            <div class="bonus-box" id="topupNotice" style="display:none; margin-bottom:1rem; background:rgba(8,145,178,0.08); border-color:rgba(8,145,178,0.28);">
                 <div class="bonus-icon">🔄</div>
                 <div class="bonus-text" id="topupNoticeText">
                     You already have an active slot for this token + lock duration. <strong>This deposit will be added to that slot.</strong> The unlock date stays the same — top-ups never extend it.
@@ -415,25 +579,25 @@
             </div>
 
             <!-- Summary -->
-            <div class="card" style="margin-bottom:1rem; background:rgba(0,0,0,.2); border-color:rgba(255,255,255,.06);">
+            <div class="card" style="margin-bottom:1rem; background:#fff; border-color:#e9e2d6;">
                 <div id="summaryPlanRow" style="display:none; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
-                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Plan</span>
-                    <span id="summaryPlan" style="font-weight:700; color:#7dd3fc;">—</span>
+                    <span style="font-size:.82rem; color:#8a8378;">Plan</span>
+                    <span id="summaryPlan" style="font-weight:700; color:#b45309;">—</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
-                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Token</span>
-                    <span id="summaryToken" style="font-weight:700; color:#e2e8f0;">G$</span>
+                    <span style="font-size:.82rem; color:#8a8378;">Token</span>
+                    <span id="summaryToken" style="font-weight:700; color:#2b241a;">G$</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
-                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Lock Amount</span>
-                    <span id="summaryAmount" style="font-weight:700; color:#e2e8f0;">—</span>
+                    <span style="font-size:.82rem; color:#8a8378;">Lock Amount</span>
+                    <span id="summaryAmount" style="font-weight:700; color:#2b241a;">—</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.6rem;">
-                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Lock Period</span>
-                    <span id="summaryDuration" style="font-weight:700; color:#e2e8f0;">30 days</span>
+                    <span style="font-size:.82rem; color:#8a8378;">Lock Period</span>
+                    <span id="summaryDuration" style="font-weight:700; color:#2b241a;">30 days</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:.82rem; color:rgba(255,255,255,.4);">Unlocks On</span>
+                    <span style="font-size:.82rem; color:#8a8378;">Unlocks On</span>
                     <span id="summaryUnlocks" style="font-weight:700; color:#a78bfa;">—</span>
                 </div>
             </div>
@@ -470,20 +634,20 @@
             </div>
         </div>
 
-        <div class="card" id="legacyV5Card" style="display:none; margin-top:1.25rem; border-color:rgba(167,139,250,.22); background:rgba(167,139,250,.04);">
+        <div class="card" id="legacyV5Card" style="display:none; margin-top:1.25rem; border-color:rgba(124,58,237,0.25); background:rgba(124,58,237,0.05);">
             <button type="button"
                     id="legacyV5Toggle"
                     onclick="toggleLegacyV5()"
                     style="width:100%; background:transparent; border:none; padding:0; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:.75rem;">
-                <span style="font-size:1.05rem; font-weight:600; color:#f5f5f7;">
+                <span style="font-size:1.05rem; font-weight:600; color:#2b241a;">
                     ⏪Legacy v5 Saves
-                    <span id="legacyV5Count" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(167,139,250,.22); color:#ddd6fe; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
-                    <span style="display:inline-block; margin-left:.35rem; padding:.05rem .45rem; background:rgba(167,139,250,.16); color:#c4b5fd; border-radius:6px; font-size:.62rem; font-weight:700; letter-spacing:.04em; vertical-align:middle;">WITHDRAW-ONLY</span>
+                    <span id="legacyV5Count" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(124,58,237,0.12); color:#6d28d9; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
+                    <span style="display:inline-block; margin-left:.35rem; padding:.05rem .45rem; background:rgba(124,58,237,0.10); color:#6d28d9; border-radius:6px; font-size:.62rem; font-weight:700; letter-spacing:.04em; vertical-align:middle;">WITHDRAW-ONLY</span>
                 </span>
-                <span id="legacyV5Chevron" style="color:rgba(255,255,255,.45); font-size:.9rem;">▾</span>
+                <span id="legacyV5Chevron" style="color:var(--text-muted); font-size:.9rem;">▾</span>
             </button>
             <div id="legacyV5Body" style="display:none; margin-top:.95rem;">
-                <p style="font-size:.74rem; color:rgba(255,255,255,.45); margin-bottom:.7rem;">
+                <p style="font-size:.74rem; color:var(--text-dim); margin-bottom:.7rem;">
                     Old v5 slots remain withdrawable here while the new v6 flow runs on the current contract. Top-ups and new deposits should go to v6; this panel is only for legacy v5 withdrawals.
                 </p>
                 <div id="legacyV5ActiveList" class="dep-list">
@@ -498,11 +662,11 @@
                     id="legacyV5WithdrawnToggle"
                     onclick="toggleLegacyV5Withdrawn()"
                     style="width:100%; background:transparent; border:none; padding:0; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:.75rem;">
-                <span style="font-size:.95rem; font-weight:600; color:#ddd6fe;">
+                <span style="font-size:.95rem; font-weight:600; color:#2b241a;">
                     ⏪Legacy v5 Withdrawn
                     <span id="legacyV5WithdrawnCount" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(167,139,250,.18); color:#c4b5fd; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
                 </span>
-                <span id="legacyV5WithdrawnChevron" style="color:rgba(255,255,255,.35); font-size:.9rem;">▾</span>
+                <span id="legacyV5WithdrawnChevron" style="color:var(--text-muted); font-size:.9rem;">▾</span>
             </button>
             <div id="legacyV5WithdrawnBody" style="display:none; margin-top:.75rem;">
                 <div id="legacyV5WithdrawnList" class="dep-list">
@@ -518,15 +682,15 @@
                     id="withdrawnToggle"
                     onclick="toggleWithdrawn()"
                     style="width:100%; background:transparent; border:none; padding:0; cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:.75rem;">
-                <span style="font-size:1.05rem; font-weight:600; color:#f5f5f7;">
+                <span style="font-size:1.05rem; font-weight:600; color:#2b241a;">
                     📜 Withdrawn History
                     <span id="withdrawnCount" style="display:inline-block; margin-left:.4rem; padding:.05rem .5rem; background:rgba(148,163,184,.22); color:#cbd5e1; border-radius:999px; font-size:.7rem; font-weight:600;">0</span>
-                    <span style="display:inline-block; margin-left:.35rem; padding:.05rem .45rem; background:rgba(167,139,250,.16); color:#c4b5fd; border-radius:6px; font-size:.62rem; font-weight:700; letter-spacing:.04em; vertical-align:middle;">ON-CHAIN</span>
+                    <span style="display:inline-block; margin-left:.35rem; padding:.05rem .45rem; background:rgba(124,58,237,0.10); color:#6d28d9; border-radius:6px; font-size:.62rem; font-weight:700; letter-spacing:.04em; vertical-align:middle;">ON-CHAIN</span>
                 </span>
-                <span id="withdrawnChevron" style="color:rgba(255,255,255,.45); font-size:.9rem;">▾</span>
+                <span id="withdrawnChevron" style="color:var(--text-muted); font-size:.9rem;">▾</span>
             </button>
             <div id="withdrawnBody" style="display:none; margin-top:.95rem;">
-                <p style="font-size:.74rem; color:rgba(255,255,255,.45); margin-bottom:.7rem;">
+                <p style="font-size:.74rem; color:var(--text-dim); margin-bottom:.7rem;">
                     Saves you've already withdrawn from the current contract. Each row links to the matching <strong>CeloScan</strong> transaction so the full history is auditable on any device — no browser cache required.
                 </p>
                 <div id="withdrawnList" class="dep-list">
@@ -2150,7 +2314,7 @@
                     "function approve(address spender, uint256 amount) returns (bool)",
                     [SAVINGS_CONTRACT, amtWei]);
                 showAlert('saveAlert', 'success',
-                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
                 document.getElementById('saveBtn').disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
                 return;
@@ -2162,7 +2326,7 @@
                     "function approve(address spender, uint256 amount) returns (bool)",
                     [SAVINGS_CONTRACT, amtWei]);
                 showAlert('saveAlert', 'success',
-                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
                 document.getElementById('saveBtn').disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
                 return;
@@ -2174,7 +2338,7 @@
                     "function approve(address spender, uint256 amount) returns (bool)",
                     [SAVINGS_CONTRACT, amtWei]);
                 showAlert('saveAlert', 'success',
-                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View ↗</a><br>Now click "Lock ${_selectedPeriod().label} ${sym}".`);
                 document.getElementById('saveBtn').disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
                 return;
@@ -2273,7 +2437,7 @@
                     (existingSlot ? ' (added to existing slot)' : '') + '!<br>' +
                     planLine +
                     `Unlocks: <strong>${unlockDate.toDateString()}</strong><br>` +
-                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 document.getElementById('saveAmount').value = '';
                 updateSummary();
@@ -2363,7 +2527,7 @@
                 showAlert('depositsAlert', 'info', '<span class="spinner"></span> Signing withdrawal server-side…');
                 const txHash = await serverSignedTx(contractAddr, fn, args);
                 showAlert('depositsAlert', 'success',
-                    `✅ Withdrawn! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `✅ Withdrawn! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 loadDeposits(); loadStats(); refreshMySlots();
                 return;
@@ -2373,7 +2537,7 @@
                 showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in MiniPay…');
                 const txHash = await _miniPayTx(contractAddr, fn, args);
                 showAlert('depositsAlert', 'success',
-                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 loadDeposits(); loadStats(); refreshMySlots();
                 return;
@@ -2383,7 +2547,7 @@
                 showAlert('depositsAlert', 'info', '<span class="spinner"></span> Confirm withdrawal in Trust Wallet…');
                 const txHash = await _trustWalletTx(contractAddr, fn, args);
                 showAlert('depositsAlert', 'success',
-                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 loadDeposits(); loadStats(); refreshMySlots();
                 return;
@@ -2399,7 +2563,7 @@
             const receipt = await tx.wait();
 
             showAlert('depositsAlert', 'success',
-                `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${receipt.hash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                `✅ Withdrawn successfully! <a href="https://celoscan.io/tx/${receipt.hash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
             );
             loadDeposits();
             loadStats();
@@ -2657,8 +2821,8 @@
             el.className = 'dep-card withdrawn';
             const wdDate = d.withdrawn_at ? new Date(d.withdrawn_at * 1000).toDateString() : '—';
             const txLink = d.tx_hash
-                ? `<a href="https://celoscan.io/tx/${d.tx_hash}" target="_blank" rel="noopener" style="color:#86efac; font-weight:600;">View tx ↗</a>`
-                : `<a href="https://celoscan.io/address/${SAVINGS_CONTRACT}" target="_blank" rel="noopener" style="color:#86efac; font-weight:600;">View on CeloScan ↗</a>`;
+                ? `<a href="https://celoscan.io/tx/${d.tx_hash}" target="_blank" rel="noopener" style="color:#15803d; font-weight:600;">View tx ↗</a>`
+                : `<a href="https://celoscan.io/address/${SAVINGS_CONTRACT}" target="_blank" rel="noopener" style="color:#15803d; font-weight:600;">View on CeloScan ↗</a>`;
             el.innerHTML = `
                 ${planBadge}
                 <div class="dep-amount">${fmtAmt(d.amount_h, sym)}</div>
@@ -2783,7 +2947,7 @@
                     "function approve(address spender, uint256 amount) returns (bool)",
                     [SAVINGS_CONTRACT, amtWei]);
                 showAlert('sponsorAlert', 'success',
-                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View ↗</a><br>Now click "Add to Reward Pool".`);
                 document.getElementById('poolFundBtn').disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
                 return;
@@ -2795,7 +2959,7 @@
                     "function approve(address spender, uint256 amount) returns (bool)",
                     [SAVINGS_CONTRACT, amtWei]);
                 showAlert('sponsorAlert', 'success',
-                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View ↗</a><br>Now click "Add to Reward Pool".`);
                 document.getElementById('poolFundBtn').disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
                 return;
@@ -2807,7 +2971,7 @@
                     "function approve(address spender, uint256 amount) returns (bool)",
                     [SAVINGS_CONTRACT, amtWei]);
                 showAlert('sponsorAlert', 'success',
-                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View ↗</a><br>Now click "Add to Reward Pool".`);
+                    `✅ Approved! <a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View ↗</a><br>Now click "Add to Reward Pool".`);
                 document.getElementById('poolFundBtn').disabled = false;
                 btn.innerHTML = '<i class="fas fa-check-circle"></i> Approved ✓';
                 return;
@@ -2877,7 +3041,7 @@
                     [amtWei]);
                 showAlert('sponsorAlert', 'success',
                     `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
-                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 document.getElementById('sponsorAmount').value = '';
                 document.getElementById('poolApproveBtn').disabled = false;
@@ -2895,7 +3059,7 @@
                     [amtWei]);
                 showAlert('sponsorAlert', 'success',
                     `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
-                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 document.getElementById('sponsorAmount').value = '';
                 document.getElementById('poolApproveBtn').disabled = false;
@@ -2913,7 +3077,7 @@
                     [amtWei]);
                 showAlert('sponsorAlert', 'success',
                     `🎉 <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
-                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                    `<a href="https://celoscan.io/tx/${txHash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
                 );
                 document.getElementById('sponsorAmount').value = '';
                 document.getElementById('poolApproveBtn').disabled = false;
@@ -2935,7 +3099,7 @@
 
             showAlert('sponsorAlert', 'success',
                 `🎉 Thank you! <strong>${parseFloat(amtStr).toLocaleString()} G$</strong> added to the reward pool.<br>` +
-                `<a href="https://celoscan.io/tx/${receipt.hash}" target="_blank" style="color:#86efac;">View on CeloScan ↗</a>`
+                `<a href="https://celoscan.io/tx/${receipt.hash}" target="_blank" style="color:#15803d;">View on CeloScan ↗</a>`
             );
             document.getElementById('sponsorAmount').value = '';
             document.getElementById('poolApproveBtn').disabled = false;
@@ -3001,9 +3165,9 @@
 <div id="savingsWcSection" style="display:none; margin:1rem 0; padding:1rem; background:rgba(124,58,237,0.12); border:1px solid rgba(124,58,237,0.35); border-radius:14px; text-align:center;">
     <div style="font-size:1.5rem; margin-bottom:.4rem;">📱</div>
     <div style="font-weight:700; color:#fbbf24; margin-bottom:.25rem;">Connect Your Wallet</div>
-    <div style="font-size:.85rem; color:rgba(255,255,255,0.6); margin-bottom:.75rem;">Scan with MetaMask, TrustWallet, or any Celo-compatible wallet</div>
+    <div style="font-size:.85rem; color:var(--text-dim); margin-bottom:.75rem;">Scan with MetaMask, TrustWallet, or any Celo-compatible wallet</div>
     <canvas id="savingsWcQr" style="border-radius:10px; background:#fff; padding:8px; max-width:180px;"></canvas>
-    <div id="savingsWcStatus" style="font-size:.8rem; color:rgba(255,255,255,0.5); margin-top:.5rem;"></div>
+    <div id="savingsWcStatus" style="font-size:.8rem; color:var(--text-muted); margin-top:.5rem;"></div>
 </div>
 <script>
 window._wcProjectId = '{{ walletconnect_project_id }}';
@@ -3190,7 +3354,7 @@ window._savingsStartWc = function() {
     }).then(function(session) {
         window._wcSession = session;
         var section = document.getElementById('savingsWcSection');
-        section.innerHTML = '<div style="color:#86efac; font-weight:700;">✅ Wallet Connected! You can now approve and save G$.</div>';
+        section.innerHTML = '<div style="color:#15803d; font-weight:700;">✅ Wallet Connected! You can now approve and save G$.</div>';
         console.log('✅ WC session established in savings');
     }).catch(function(err) {
         statusEl.textContent = 'Connection failed: ' + (err.message || 'Unknown error');
