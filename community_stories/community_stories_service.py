@@ -450,33 +450,44 @@ class CommunityStoriesService:
         except Exception as e:
             logger.warning(f"⚠️ Could not mark notification read for {submission_id} (non-fatal): {e}")
 
-    def _notify_user(self, submission_data: dict, *, approved: bool, amount=None, reason=None):
-        """Best-effort Telegram DM to the submitting user once an admin
-        approves or rejects their Community Story.
+    def _notify_user(self, submission_data: dict, *, approved: bool, amount=None, reason=None, tx_url=None):
+        """Best-effort TG DM to the submitting user once an admin approves or
+        rejects their Community Story.
 
-        Mirrors the GCash cashout / daily-task notify pattern: fire-and-forget
-        via telegram_notify.notify_user_by_wallet_async, never raises, and users
-        who never linked the Telegram bot simply get nothing.
+        Mirrors the GCash cash-out / daily-task notify pattern: fire-and-forget
+        see telegram_notify, never raises, and users who never linked the
+        Telegram bot simply get nothing.
         """
         try:
             wallet = submission_data.get('wallet_address')
             if not wallet:
                 return
+            submission_id = html.escape(str(submission_data.get('submission_id', '')))
             if approved:
-                amount_str = f"{self._format_number(amount)} G$" if amount is not None else "G$"
-                text = (
-                    "✅ <b>Community Story Approved!</b>\n\n"
-                    f"Your story submission <b>{html.escape(str(submission_data.get('submission_id', '')))}</b> "
-                    f"was approved and <b>{amount_str}</b> has been sent to your wallet!\n\n"
-                    "Thank you for sharing and supporting GoodMarket! 💛"
-                )
+                amount_str = f"<b>{self._format_number(amount)} G$</b>" if amount is not None else "<b>G$</b>"
+                lines = [
+                    "🎉 <b>Community Story Approved!</b>",
+                    "",
+                    f"Your story earned you {amount_str} — it's now in your wallet! 🥳",
+                    "",
+                    f"Submission: <code>{submission_id}</code>",
+                ]
+                if tx_url:
+                    lines.append(f"🔗 View on the block: {tx_url}")
+                lines += [
+                    "",
+                    "Thank you for sharing and supporting GoodMarket! 💛",
+                ]
+                text = "\n".join(lines)
             else:
-                reason_line = f"\n📝 Reason: <i>{html.escape(reason)}</i>" if reason else ""
+                reason_line = f"\nReason: <i>{html.escape(reason)}</i>" if reason else ""
                 text = (
-                    "❌ <b>Community Story Rejected</b>\n\n"
-                    f"Your story submission <b>{html.escape(str(submission_data.get('submission_id', '')))}</b> "
-                    f"was rejected.{reason_line}\n\n"
-                    "You can submit a new story next window (or while it's still open). Good luck! 💛"
+                    "📝 <b>Community Story Not Approved</b>\n\n"
+                    "We're sorry, your story didn't qualify this time."
+                    f"{reason_line}\n\n"
+                    f"Submission: <code>{submission_id}</code>\n"
+                    "You can submit a new story next window (Day 26–30). "
+                    "Good luck — and thank you for sharing! 💛"
                 )
             from telegram_notify import notify_user_by_wallet_async
             notify_user_by_wallet_async(wallet, text)
@@ -586,7 +597,10 @@ class CommunityStoriesService:
             self._mark_notification_read(submission_id, admin_wallet)
 
             # Tell the submitting user (if they linked the Telegram bot).
-            self._notify_user(sub_data, approved=True, amount=amount)
+            tx_url = result.get('explorer_url') or (
+                f"https://celoscan.io/tx/{result['tx_hash']}" if result.get('tx_hash') else None
+            )
+            self._notify_user(sub_data, approved=True, amount=amount, tx_url=tx_url)
 
             logger.info(f"✅ Approved submission {submission_id}: {amount} G$ to {wallet_address[:8]}...")
 
