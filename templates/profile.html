@@ -249,6 +249,105 @@
             .total-banner .amount { font-size: 2rem; }
             .earnings-grid { grid-template-columns: repeat(2, 1fr); }
         }
+
+        /* ═══════════════════════════════════════════════════════════════
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet page. Overrides the legacy dark navy look so
+           the profile feels like part of the same warm, light app.
+           ═══════════════════════════════════════════════════════════════ */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .navbar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .logo { color: #ea580c; }
+        .nav-links a { color: #57534e; }
+        .nav-links a:hover { color: #b45309; background: rgba(var(--accent-rgb),0.12); }
+        .nav-links a.active { color: #b45309; background: rgba(var(--accent-rgb),0.16); font-weight: 700; }
+        .nav-sep { background: var(--card-border); }
+        .wallet-tag {
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.28);
+            color: #b45309;
+        }
+        .logout-btn {
+            background: rgba(239,68,68,0.08) !important;
+            border: 1px solid rgba(239,68,68,0.22) !important;
+            color: #dc2626 !important;
+        }
+        .logout-btn:hover { background: rgba(239,68,68,0.16) !important; color: #b91c1c !important; }
+
+        .profile-header {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 8px 28px rgba(67,56,43,0.06);
+        }
+        .avatar { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .profile-info h1 { color: var(--text); font-family: var(--serif); font-weight: 700; }
+        .wallet-badge {
+            color: #b45309;
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.28);
+        }
+        .join-date { color: var(--text-muted); }
+
+        .total-banner {
+            background: linear-gradient(135deg, rgba(var(--accent-rgb),0.18), rgba(var(--gold-rgb),0.12));
+            border-color: rgba(var(--accent-rgb),0.30);
+        }
+        .total-banner .label { color: #7a6a52; }
+        .total-banner .amount {
+            background: linear-gradient(135deg, #f97316, #f5a623);
+            -webkit-background-clip: text;
+            background-clip: text;
+            font-family: var(--serif);
+        }
+        .total-banner .sub { color: var(--text-muted); }
+
+        .section-title { color: #78705f; }
+
+        .earnings-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .earnings-card:hover { border-color: rgba(var(--accent-rgb),0.40); }
+        .earnings-card .name { color: var(--text-muted); }
+        .earnings-card .value { color: #ea580c; }
+        .earnings-card .count { color: var(--text-muted); }
+
+        .activity-section {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .activity-item { background: #ffffff; }
+        .activity-item:last-child { border-bottom-color: transparent; }
+        .activity-icon { background: rgba(var(--accent-rgb),0.14); }
+        .activity-type { color: var(--text); }
+        .activity-date { color: var(--text-muted); }
+        .activity-amount { color: #16a34a; }
+        .empty-state { color: var(--text-muted); }
+        .loading-text { color: var(--text-muted); }
     </style>
 </head>
 <body>
