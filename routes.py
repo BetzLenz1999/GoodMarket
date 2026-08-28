@@ -3513,6 +3513,24 @@ def telegram_broadcast_diagnostics():
         logger.error(f"❌ Telegram diagnostics error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+
+@routes.route("/api/admin/double-ubi-diagnostics", methods=["GET"])
+@admin_required
+def double_ubi_diagnostics():
+    """Health check for every link in the DOUBLE UBI bonus chain (admin only).
+
+    Each check maps to ONE concrete failure (env flag off, missing funding key,
+    DB migration not applied, RPC unreachable, DOUBLEUBI_KEY wallet low on
+    CELO/G$) so a "users aren't getting their DOUBLE UBI bonus" report is
+    diagnosable without log access. Never exposes the private key.
+    """
+    try:
+        from double_ubi import get_double_ubi_diagnostics
+        return jsonify({"success": True, "diagnostics": get_double_ubi_diagnostics()})
+    except Exception as e:
+        logger.error(f"❌ DOUBLE UBI diagnostics error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @routes.route("/api/admin/broadcast-messages", methods=["GET"])
 @admin_required
 def get_broadcast_messages():
