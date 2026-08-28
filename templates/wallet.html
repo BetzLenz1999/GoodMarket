@@ -1801,10 +1801,10 @@
             width: 100%;
             max-width: 480px;
             display: grid;
-            /* 5 items (Earn / Wallet / Services / News / GCash): a 4-column
-               grid wraps the 5th onto a second row, where it lands under the
-               floating GoodMarket Agent chatbox and becomes untappable. */
-            grid-template-columns: repeat(5, 1fr);
+            /* 6 items (Earn / Wallet / Services / News / GCash / Profile): a
+               3-column grid wraps them 2x3 so every tab stays tappable above
+               the floating GoodMarket Agent chatbox. */
+            grid-template-columns: repeat(3, 1fr);
             gap: 0.15rem;
             padding: 0.5rem 0.4rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
             
@@ -3673,6 +3673,10 @@
         <button type="button" class="bn-item" onclick="openModal('gcashModal')">
             <span class="bn-icon">💸</span>
             <span class="bn-label">GCash<br>Cashout</span>
+        </button>
+        <button type="button" class="bn-item" onclick="navigateWithFeedback('/profile', 'Opening Profile…')">
+            <span class="bn-icon">👤</span>
+            <span class="bn-label">Profile</span>
         </button>
     </nav>
 
