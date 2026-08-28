@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Learn & Earn - GoodMarket</title>
+    <meta name="theme-color" content="#f97316">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
           integrity="sha384-3B6NwesSXE7YJlcLI9RpRqGf2p/EgVH8BgoKTaUrmKNDkHPStTQ3EyoYjCGXaOTS"
           crossorigin="anonymous" referrerpolicy="no-referrer">
@@ -861,6 +862,119 @@
                 opacity: 0.8;
             }
         }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited. (The PDF-guide overlay and the gradient
+           achievement-card keep their dark spotlight look on purpose.)
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --green: #16a34a;
+            --green-rgb: 22,163,74;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            background-size: auto;
+            animation: none;
+            color: var(--text);
+        }
+
+        .header {
+            background: rgba(255,255,255,0.9);
+            border: 1px solid var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+        .header h1 {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+        }
+        .header p { color: var(--text-dim); }
+
+        .quiz-info, .quiz-section {
+            background: rgba(255,255,255,0.95);
+            border: 1px solid var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.05);
+        }
+        .quiz-section h2, .quiz-history h2 { color: var(--text); }
+        .quiz-section h2::after, .quiz-history h2::after {
+            background: linear-gradient(135deg, #f97316, #f5a623);
+        }
+
+        .start-quiz-btn {
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            border-color: rgba(var(--accent-rgb),0.5);
+            box-shadow: 0 6px 20px rgba(var(--accent-rgb),0.4);
+        }
+        .start-quiz-btn:hover { box-shadow: 0 15px 40px rgba(var(--accent-rgb),0.45); }
+
+        .quiz-history {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.88));
+            border: 2px solid var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+
+        .history-table th, .history-table td {
+            color: var(--text) !important;
+            text-shadow: none;
+            border-bottom: 1px solid var(--card-border);
+        }
+        .history-table th {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            color: #ffffff !important;
+        }
+        .history-table tbody tr { background: transparent; }
+        .history-table tbody tr:hover {
+            background: rgba(var(--accent-rgb),0.08);
+            box-shadow: none;
+        }
+
+        .back-btn {
+            background: linear-gradient(135deg, #f97316, #d97e0a);
+        }
+        .back-btn:hover { background: linear-gradient(135deg, #ea580c, #b45309); }
+
+        .loading p { color: var(--text-dim); }
+        .spinner { border-color: #e9e2d6; border-top-color: #f97316; }
+
+        #quiz-container {
+            background: rgba(255,255,255,0.95);
+            border: 1px solid var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.05);
+        }
+        #quiz-container label:hover { background: rgba(var(--accent-rgb),0.10) !important; }
+        #quiz-container input[type="radio"]:checked + label {
+            background: rgba(var(--accent-rgb),0.10) !important;
+            border-left-color: #ea580c;
+        }
+
+        .timer-display {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            border-color: rgba(var(--accent-rgb),0.35);
+            box-shadow: 0 5px 15px rgba(var(--accent-rgb),0.35);
+        }
+
+        .btn-share {
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            box-shadow: 0 4px 15px rgba(var(--accent-rgb),0.3);
+        }
+        .btn-share:hover { box-shadow: 0 6px 20px rgba(var(--accent-rgb),0.4); }
     </style>
 </head>
 <body>
@@ -1259,9 +1373,9 @@
             <p>Complete quizzes about GoodDollar and earn G$ rewards!</p>
             <button onclick="openGuide()" style="
                 margin-top: 12px;
-                background: linear-gradient(135deg, #7c3aed22, #4f46e522);
-                border: 1.5px solid #7c3aed88;
-                color: #c4b5fd;
+                background: rgba(var(--accent-rgb),0.10);
+                border: 1.5px solid rgba(var(--accent-rgb),0.45);
+                color: #b45309;
                 padding: 8px 18px;
                 border-radius: 20px;
                 font-size: 0.82rem;
@@ -1271,8 +1385,8 @@
                 align-items: center;
                 gap: 6px;
                 transition: all 0.2s;
-            " onmouseover="this.style.background='linear-gradient(135deg,#7c3aed44,#4f46e544)';this.style.color='#fff'"
-               onmouseout="this.style.background='linear-gradient(135deg,#7c3aed22,#4f46e522)';this.style.color='#c4b5fd'">
+            " onmouseover="this.style.background='rgba(var(--accent-rgb),0.20)';this.style.color='#7c2d12'"
+               onmouseout="this.style.background='rgba(var(--accent-rgb),0.10)';this.style.color='#b45309'">
                 📖 View Feature Guide
             </button>
         </div>
@@ -1299,23 +1413,23 @@
         </div>
 
         <!-- Collaboration Partnership Banner -->
-        <div id="sponsorship-banner" style="margin-bottom: 12px; background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.2)); border: 2px solid rgba(139,92,246,0.5); border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(99,102,241,0.2);">
+        <div id="sponsorship-banner" style="margin-bottom: 12px; background: linear-gradient(135deg, rgba(var(--accent-rgb),0.12), rgba(var(--gold-rgb),0.12)); border: 1.5px solid rgba(var(--accent-rgb),0.35); border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(var(--accent-rgb),0.08);">
             <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
                 <div style="flex:1; min-width:0;">
-                    <div style="color:#a78bfa; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">
+                    <div style="color:#c2410c; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">
                         <i class="fas fa-hand-holding-heart"></i> Collaboration Partnership
                     </div>
-                    <p style="color:rgba(255,255,255,0.9); font-size:0.83rem; margin:0; line-height:1.5;">
+                    <p style="color:var(--text); font-size:0.83rem; margin:0; line-height:1.5;">
                         Anyone can sponsor our Learn &amp; Earn contract with a minimum of
-                        <strong style="color:#34d399;">100,000 G$</strong> and receive a personalized recognition certificate!
+                        <strong style="color:#15803d;">100,000 G$</strong> and receive a personalized recognition certificate!
                     </p>
                 </div>
                 <button onclick="openCollaborationWizard()" style="
-                    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                    background: linear-gradient(135deg, #f97316, #ea580c);
                     color: white; border: none; padding: 9px 14px;
                     border-radius: 10px; font-size: 0.82rem; font-weight: bold;
                     cursor: pointer; white-space: nowrap;
-                    box-shadow: 0 4px 12px rgba(99,102,241,0.45);
+                    box-shadow: 0 4px 12px rgba(var(--accent-rgb),0.4);
                     transition: all 0.3s ease; flex-shrink:0;">
                     <i class="fas fa-star"></i> Collaborate Now
                 </button>
@@ -1330,20 +1444,20 @@
             <div id="eligibility-status" class="eligibility-status" style="display: none;"></div>
 
             <!-- Live Countdown Timer -->
-            <div id="cooldown-timer" style="display: none; background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15)); backdrop-filter: blur(15px); border-radius: 12px; padding: 14px; margin-bottom: 12px; text-align: center; border: 2px solid rgba(99, 102, 241, 0.4); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.2);">
-                <div style="font-size: 0.85rem; color: #ffffff; margin-bottom: 8px; font-weight: 700; text-shadow: 1px 1px 3px rgba(0,0,0,0.5);">
+            <div id="cooldown-timer" style="display: none; background: rgba(255,255,255,0.9); border-radius: 12px; padding: 14px; margin-bottom: 12px; text-align: center; border: 1.5px solid var(--card-border); box-shadow: 0 6px 16px rgba(67,56,43,0.06);">
+                <div style="font-size: 0.85rem; color: var(--text); margin-bottom: 8px; font-weight: 700; text-shadow: none;">
                     ⏰ Next Quiz Available In
                 </div>
-                <div id="countdown-display" style="font-size: 3rem; font-weight: 900; color: #a855f7; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); font-family: 'Courier New', monospace; letter-spacing: 2px; margin: 8px 0;">
+                <div id="countdown-display" style="font-size: 3rem; font-weight: 900; color: #ea580c; text-shadow: none; font-family: 'Courier New', monospace; letter-spacing: 2px; margin: 8px 0;">
                     --:--:--:--
                 </div>
-                <div style="font-size: 0.82rem; color: rgba(255,255,255,0.9); margin-top: 8px; font-weight: 600;">
-                    <span style="color: #ef4444; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">Days</span>
-                    <span style="color: rgba(255,255,255,0.5); margin: 0 5px;">:</span>
-                    <span style="color: #f59e0b; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">Hours</span>
-                    <span style="color: rgba(255,255,255,0.5); margin: 0 5px;">:</span>
-                    <span style="color: #10b981; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">Minutes</span>
-                    <span style="color: rgba(255,255,255,0.5); margin: 0 5px;">:</span>
+                <div style="font-size: 0.82rem; color: var(--text-dim); margin-top: 8px; font-weight: 600;">
+                    <span style="color: #dc2626; text-shadow: none;">Days</span>
+                    <span style="color: var(--text-muted); margin: 0 5px;">:</span>
+                    <span style="color: #b45309; text-shadow: none;">Hours</span>
+                    <span style="color: var(--text-muted); margin: 0 5px;">:</span>
+                    <span style="color: #15803d; text-shadow: none;">Minutes</span>
+                    <span style="color: var(--text-muted); margin: 0 5px;">:</span>
                     <span style="color: #3b82f6; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">Seconds</span>
                 </div>
                 <div style="margin-top: 8px; padding: 7px 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
@@ -1417,35 +1531,35 @@
         </div>
 
         <!-- NFT Marketplace Section -->
-        <div id="nft-marketplace-section" style="margin-top: 16px; background: linear-gradient(135deg, rgba(124,58,237,0.15), rgba(79,70,229,0.15)); border: 2px solid rgba(124,58,237,0.4); border-radius: 14px; padding: 14px 12px; backdrop-filter: blur(10px); display: none !important;">
+        <div id="nft-marketplace-section" style="margin-top: 16px; background: rgba(255,255,255,0.95); border: 1.5px solid var(--card-border); border-radius: 14px; padding: 14px 12px; backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(67,56,43,0.05); display: none !important;">
             <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
                 <div>
-                    <h2 style="margin: 0; color: white; font-size: 1rem; font-weight: 800;">🎨 NFT Achievement Marketplace</h2>
-                    <p style="margin: 6px 0 0; color: rgba(255,255,255,0.65); font-size: 0.88rem;">Buy & sell real on-chain Achievement NFTs on Celo — App pays gas for all transactions</p>
+                    <h2 style="margin: 0; color: var(--text); font-size: 1rem; font-weight: 800;">🎨 NFT Achievement Marketplace</h2>
+                    <p style="margin: 6px 0 0; color: var(--text-dim); font-size: 0.88rem;">Buy & sell real on-chain Achievement NFTs on Celo — App pays gas for all transactions</p>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                    <div id="nft-my-balance-badge" style="background: rgba(124,58,237,0.3); border: 1px solid rgba(124,58,237,0.5); border-radius: 8px; padding: 5px 10px; color: white; font-size: 0.78rem; font-weight: 700;">
+                    <div id="nft-my-balance-badge" style="background: rgba(var(--accent-rgb),0.12); border: 1px solid rgba(var(--accent-rgb),0.35); border-radius: 8px; padding: 5px 10px; color: #b45309; font-size: 0.78rem; font-weight: 700;">
                         💎 Balance: <span id="nft-balance-display">--</span> G$
                     </div>
-                    <button onclick="window.loadNFTMarketplace()" style="padding: 5px 10px; background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.78rem;">🔄 Refresh</button>
-                    <button onclick="window.showMyNFTsTab()" style="padding: 5px 10px; background: linear-gradient(135deg, #7c3aed, #4f46e5); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.78rem;">👤 My NFTs</button>
+                    <button onclick="window.loadNFTMarketplace()" style="padding: 5px 10px; background: #fbfaf8; color: var(--text-dim); border: 1px solid var(--card-border); border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.78rem;">🔄 Refresh</button>
+                    <button onclick="window.showMyNFTsTab()" style="padding: 5px 10px; background: linear-gradient(135deg, #f97316, #ea580c); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.78rem;">👤 My NFTs</button>
                 </div>
             </div>
 
             <!-- Tabs -->
-            <div style="display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 0; flex-wrap: wrap;">
-                <button id="tab-market" onclick="window.switchNFTTab('market')" style="padding: 7px 12px; background: linear-gradient(135deg,#7c3aed,#4f46e5); color: white; border: none; border-radius: 8px 8px 0 0; font-weight: 700; cursor: pointer; font-size: 0.78rem;">🏪 Marketplace</button>
-                <button id="tab-mynfts" onclick="window.switchNFTTab('mynfts')" style="padding: 7px 12px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); border: none; border-radius: 8px 8px 0 0; font-weight: 600; cursor: pointer; font-size: 0.78rem;">👤 My NFTs</button>
-                <button id="tab-history" onclick="window.switchNFTTab('history')" style="padding: 7px 12px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); border: none; border-radius: 8px 8px 0 0; font-weight: 600; cursor: pointer; font-size: 0.78rem;">📜 Tx History</button>
+            <div style="display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 2px solid var(--card-border); padding-bottom: 0; flex-wrap: wrap;">
+                <button id="tab-market" onclick="window.switchNFTTab('market')" style="padding: 7px 12px; background: linear-gradient(135deg,#f97316,#ea580c); color: white; border: none; border-radius: 8px 8px 0 0; font-weight: 700; cursor: pointer; font-size: 0.78rem;">🏪 Marketplace</button>
+                <button id="tab-mynfts" onclick="window.switchNFTTab('mynfts')" style="padding: 7px 12px; background: rgba(var(--accent-rgb),0.08); color: #8a8378; border: none; border-radius: 8px 8px 0 0; font-weight: 600; cursor: pointer; font-size: 0.78rem;">👤 My NFTs</button>
+                <button id="tab-history" onclick="window.switchNFTTab('history')" style="padding: 7px 12px; background: rgba(var(--accent-rgb),0.08); color: #8a8378; border: none; border-radius: 8px 8px 0 0; font-weight: 600; cursor: pointer; font-size: 0.78rem;">📜 Tx History</button>
             </div>
 
             <!-- Marketplace Tab -->
             <div id="nft-tab-market">
-                <div id="nft-market-loading" style="text-align: center; padding: 20px; color: rgba(255,255,255,0.6);">
+                <div id="nft-market-loading" style="text-align: center; padding: 20px; color: var(--text-muted);">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⏳</div>
                     <div>Loading marketplace...</div>
                 </div>
-                <div id="nft-market-empty" style="display: none; text-align: center; padding: 20px; color: rgba(255,255,255,0.5);">
+                <div id="nft-market-empty" style="display: none; text-align: center; padding: 20px; color: var(--text-muted);">
                     <div style="font-size: 1.8rem; margin-bottom: 8px;">🏪</div>
                     <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">No NFTs Listed Yet</div>
                     <div style="font-size: 0.9rem;">Complete a quiz and mint your Achievement NFT to be the first seller!</div>
@@ -1455,11 +1569,11 @@
 
             <!-- My NFTs Tab -->
             <div id="nft-tab-mynfts" style="display: none;">
-                <div id="nft-mynfts-loading" style="text-align: center; padding: 20px; color: rgba(255,255,255,0.6);">
+                <div id="nft-mynfts-loading" style="text-align: center; padding: 20px; color: var(--text-muted);">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⏳</div>
                     <div>Loading your NFTs...</div>
                 </div>
-                <div id="nft-mynfts-empty" style="display: none; text-align: center; padding: 20px; color: rgba(255,255,255,0.5);">
+                <div id="nft-mynfts-empty" style="display: none; text-align: center; padding: 20px; color: var(--text-muted);">
                     <div style="font-size: 1.8rem; margin-bottom: 8px;">🎨</div>
                     <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">No NFTs Yet</div>
                     <div style="font-size: 0.9rem;">Complete a quiz and click "Mint as NFT" on your Achievement Card!</div>
@@ -1469,11 +1583,11 @@
 
             <!-- Transaction History Tab -->
             <div id="nft-tab-history" style="display: none;">
-                <div id="nft-history-loading" style="text-align: center; padding: 20px; color: rgba(255,255,255,0.6);">
+                <div id="nft-history-loading" style="text-align: center; padding: 20px; color: var(--text-muted);">
                     <div style="font-size: 1.5rem; margin-bottom: 8px;">⏳</div>
                     <div>Loading transaction history...</div>
                 </div>
-                <div id="nft-history-empty" style="display: none; text-align: center; padding: 20px; color: rgba(255,255,255,0.5);">
+                <div id="nft-history-empty" style="display: none; text-align: center; padding: 20px; color: var(--text-muted);">
                     <div style="font-size: 1.8rem; margin-bottom: 8px;">📜</div>
                     <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 8px;">No Transactions Yet</div>
                     <div style="font-size: 0.9rem;">NFT sale transactions will appear here.</div>
@@ -1654,7 +1768,7 @@
                         <h2 style="color:#fff; font-size:1.1rem; margin-bottom:8px;">Collaboration Partnership</h2>
                         <p style="color:rgba(255,255,255,0.8); font-size:0.88rem; line-height:1.6;">
                             Collaboration partners contribute to our <strong style="color:#a78bfa;">Learn &amp; Earn program</strong>
-                            with a minimum of <strong style="color:#34d399;">100,000 G$</strong>.
+                            with a minimum of <strong style="color:#15803d;">100,000 G$</strong>.
                         </p>
                         <p style="color:rgba(255,255,255,0.7); font-size:0.82rem; margin-top:10px; line-height:1.5;">
                             Your collaboration budget is disbursed to our community who read your platform modules.
