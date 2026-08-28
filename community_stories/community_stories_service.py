@@ -407,7 +407,7 @@ class CommunityStoriesService:
         return ''
 
     def _notify_admins(self, submission_id: str):
-        """Create notifications for all admins"""
+        """Create notifications for all admins (best-effort — the table may be absent)"""
         try:
             # Get all admin wallets
             admins = self.supabase.table('user_data')\
@@ -425,7 +425,23 @@ class CommunityStoriesService:
 
                 logger.info(f"📬 Notified {len(admins.data)} admins about submission {submission_id}")
         except Exception as e:
-            logger.error(f"❌ Error notifying admins: {e}")
+            logger.error(f"❌ Error notifying admins (non-fatal): {e}")
+
+    def _mark_notification_read(self, submission_id: str, admin_wallet: str):
+        """Best-effort mark a notification row as read.
+
+        The community_stories_admin_notifications table is created outside the
+        SQL migrations and is frequently ABSENT in the schema cache (PGRST205) —
+        and the current build reads pending submissions directly, so this table
+        is effectively deprecated. A failure here must NEVER fail the admin's
+        approve/reject action, so the error is swallowed.
+        """
+        try:
+            self.supabase.table('community_stories_admin_notifications').update({
+                'is_read': True
+            }).eq('submission_id', submission_id).ilike('admin_wallet', admin_wallet).execute()
+        except Exception as e:
+            logger.warning(f"⚠️ Could not mark notification read for {submission_id} (non-fatal): {e}")
 
     async def approve_submission(self, submission_id: str, reward_type: str, admin_wallet: str) -> dict:
         """Approve submission and disburse reward"""
@@ -517,11 +533,9 @@ class CommunityStoriesService:
                     'total_submissions': 1
                 }).execute()
 
-            # Mark notification as read (admin_wallet matched case-insensitively:
-            # Telegram-login admins store lowercase, web sessions checksummed)
-            self.supabase.table('community_stories_admin_notifications').update({
-                'is_read': True
-            }).eq('submission_id', submission_id).ilike('admin_wallet', admin_wallet).execute()
+            # Mark notification as read — best-effort so a missing
+            # community_stories_admin_notifications table can't fail the approval.
+            self._mark_notification_read(submission_id, admin_wallet)
 
             logger.info(f"✅ Approved submission {submission_id}: {amount} G$ to {wallet_address[:8]}...")
 
@@ -550,11 +564,9 @@ class CommunityStoriesService:
                 'admin_comment': reason
             }).eq('submission_id', submission_id).execute()
 
-            # Mark notification as read (admin_wallet matched case-insensitively:
-            # Telegram-login admins store lowercase, web sessions checksummed)
-            self.supabase.table('community_stories_admin_notifications').update({
-                'is_read': True
-            }).eq('submission_id', submission_id).ilike('admin_wallet', admin_wallet).execute()
+            # Mark notification as read — best-effort so a missing
+            # community_stories_admin_notifications table can't fail the rejection.
+            self._mark_notification_read(submission_id, admin_wallet)
 
             logger.info(f"❌ Rejected submission {submission_id}")
 
