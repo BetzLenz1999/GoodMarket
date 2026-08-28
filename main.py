@@ -652,20 +652,6 @@ try:
 except Exception as e:
     logger.error(f"❌ Telegram UBI reminder scheduler initialization failed: {e}")
 
-# Daily Telegram appreciation reward (env-gated, default off). Sends a small
-# G$ token (default 10 G$) from DAILYTASK_KEY to every Telegram bot user with a
-# linked wallet, every day at 10:00 AM Philippine time (02:00 UTC), plus a
-# thank-you message. Durable per-wallet-per-day log rows + CAS claims make it
-# restart- and multi-worker-safe. Requires sql/telegram_daily_reward.sql.
-try:
-    from telegram_daily_reward import init_daily_reward_scheduler
-    if init_daily_reward_scheduler(app):
-        logger.info("✅ Telegram daily reward scheduler started")
-    else:
-        logger.info("ℹ️ Telegram daily reward scheduler not started (disabled)")
-except Exception as e:
-    logger.error(f"❌ Telegram daily reward scheduler initialization failed: {e}")
-
 # Durable Telegram broadcast delivery. When an admin broadcasts a message,
 # recipients are queued as per-row delivery records and this scheduler drains
 # them in the background. Survives gunicorn worker recycling so a half-finished
