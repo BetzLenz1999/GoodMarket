@@ -142,12 +142,18 @@ class CommunityStoriesService:
             window_start_iso = window_start.isoformat()
             window_end_iso = window_end.isoformat()
 
-            # Check if user has ANY submission (any status) during the current window
+            # Check if user has ANY submission (any status) during the current window.
+            # A REJECTED submission must NOT block re-participation — the admin
+            # rejected it precisely because it was not eligible, so the user can
+            # submit again in the same window. Cooldown only fires once a reward
+            # was actually granted (approved_low / approved_high / approved) or
+            # while a submission is still pending review.
             existing = _wallet_filter(
                 self.supabase.table('community_stories_submissions')\
                     .select('submission_id, submitted_at, status'),
                 wallet_address,
             )\
+                .neq('status', 'rejected')\
                 .gte('submitted_at', window_start_iso)\
                 .lte('submitted_at', window_end_iso)\
                 .limit(1)\
