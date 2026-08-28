@@ -2560,6 +2560,27 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
+            <!-- DOUBLE UBI Bonus Section -->
+            <section id="double-ubi-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">🎁 DOUBLE UBI Bonus</h1>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Users who claim UBI on Celo receive an extra G$ equal to the claim, funded by DOUBLEUBI_KEY</p>
+                </div>
+
+                <div class="content-box" style="margin-bottom: 2rem; border: 1px solid rgba(124,58,237,0.3); background: rgba(124,58,237,0.05);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1rem;">
+                        <div>
+                            <h2 style="margin:0 0 0.25rem;">🩺 DOUBLE UBI Health</h2>
+                            <p style="margin:0;font-size:0.85rem;color:rgba(241,245,249,0.6);">Diagnose why a bonus isn't arriving — every link in the chain, one fix per check.</p>
+                        </div>
+                        <button onclick="checkDoubleUbiHealth()" class="admin-btn" style="background:rgba(124,58,237,0.2);border:1px solid rgba(124,58,237,0.5);color:#c4b5fd;white-space:nowrap;">
+                            🩺 Check DOUBLE UBI Health
+                        </button>
+                    </div>
+                    <div id="double-ubi-health-panel" style="display:none;padding:1rem;background:rgba(255,255,255,0.05);border-radius:8px;font-size:0.9rem;"></div>
+                </div>
+            </section>
+
             <!-- Daily Voucher Section -->
             <section id="daily-voucher-section" class="section">
                 <div class="page-header">
@@ -5553,6 +5574,54 @@ async function loadMinigamesMaintenance() {
                         + d.hints.map(h => `<li style="margin: 0.25rem 0;">${h}</li>`).join('') + '</ul>';
                 } else {
                     html += '<div style="margin-top: 0.75rem; color: #10b981; font-weight: 600;">All good — broadcasts should reach Telegram users.</div>';
+                }
+                panel.innerHTML = html;
+            } catch (error) {
+                panel.innerHTML = `<span style="color: #ef4444;">❌ Error: ${error.message}</span>`;
+            }
+        }
+
+        async function checkDoubleUbiHealth() {
+            const panel = document.getElementById('double-ubi-health-panel');
+            panel.style.display = 'block';
+            panel.innerHTML = '<span style="color: rgba(241,245,249,0.6);">Checking DOUBLE UBI bonus chain…</span>';
+            try {
+                const response = await fetch('/api/admin/double-ubi-diagnostics');
+                const data = await response.json();
+                if (!data.success) {
+                    panel.innerHTML = `<span style="color: #ef4444;">❌ ${data.error || 'Diagnostics failed'}</span>`;
+                    return;
+                }
+                const d = data.diagnostics;
+                const row = (ok, label, extra) => {
+                    const color = ok ? '#10b981' : '#ef4444';
+                    const icon = ok ? '✅' : '❌';
+                    return `<div style="margin: 0.25rem 0; color: ${color};">${icon} ${label}${extra ? ` <span style="color: rgba(241,245,249,0.7);">— ${extra}</span>` : ''}</div>`;
+                };
+                const gd = (d.fund_gd_balance == null) ? null : d.fund_gd_balance.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                let html = '<div style="font-weight: 600; margin-bottom: 0.5rem; color: #f1f5f9;">DOUBLE UBI bonus chain</div>';
+                html += row(d.double_ubi_enabled, 'Double UBI enabled (DOUBLE_UBI_ENABLED=1)');
+                html += row(d.doubleubi_key_set, 'DOUBLEUBI_KEY configured',
+                    d.funding_wallet ? `funding wallet ${d.funding_wallet}` : '');
+                html += row(d.supabase_available, 'Database reachable');
+                if (d.supabase_available) {
+                    html += row(d.double_ubi_rewards_table_ready ?? false, 'double_ubi_rewards table (migration applied)', d.table_error || '');
+                }
+                html += row(d.celo_rpc_ok, 'Celo RPC reachable');
+                if (d.doubleubi_key_set && d.celo_rpc_ok) {
+                    html += row(!!d.funding_has_celo_gas, `Funding wallet CELO gas: ${d.funding_celo_balance != null ? d.funding_celo_balance.toFixed(4) : 'n/a'} CELO`, d.funding_has_celo_gas ? '' : 'needs top-up');
+                    html += row(d.fund_gd_balance > 0, `Funding wallet G$: ${gd ?? 'n/a'}`, d.fund_gd_balance > 0 ? 'ready to pay' : 'needs top-up');
+                }
+                html += row(d.scheduler_running, 'Retry scheduler running');
+                if (d.pending_rows != null) {
+                    html += row(true, `Pending bonus rows: ${d.pending_rows ? 'yes (being paid)' : 'none'}`);
+                }
+                if (d.hints && d.hints.length) {
+                    html += '<div style="margin-top: 0.75rem; font-weight: 600; color: #fbbf24;">💡 What to fix:</div>';
+                    html += '<ul style="margin: 0.25rem 0 0 1.25rem; color: rgba(241,245,249,0.85);">'
+                        + d.hints.map(h => `<li style="margin: 0.25rem 0;">${h}</li>`).join('') + '</ul>';
+                } else {
+                    html += '<div style="margin-top: 0.75rem; color: #10b981; font-weight: 600;">All links good — DOUBLE UBI bonuses are being paid.</div>';
                 }
                 panel.innerHTML = html;
             } catch (error) {
