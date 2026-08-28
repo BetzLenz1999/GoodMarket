@@ -757,3 +757,148 @@ def init_double_ubi_bonus_scheduler(app=None):
 def shutdown_double_ubi_bonus_scheduler():
     """Signal the scheduler thread to stop (best-effort, for tests)."""
     _scheduler_stop.set()
+
+
+# ── Admin diagnostics ─────────────────────────────────────────────────────
+# A "users aren't getting their DOUBLE UBI bonus" report should never be a
+# guessing game (mirrors get_broadcast_diagnostics in telegram_notify.py).
+# Each check maps to ONE concrete failure (env flag off, missing funding key,
+# DB table not migrated, RPC unreachable, funding wallet short on CELO/G$) and
+# produces a human hint naming the exact fix.
+
+def get_double_ubi_diagnostics() -> dict:
+    """Never-raises health check of every link in the DOUBLE bonus chain.
+
+    Checks (each is independent and best-effort, so one broken link never
+    masks the others):
+
+    * ``double_ubi_enabled``               — feature flag on
+    * ``doubleubi_key_set``              — DOUBLEUBI_KEY present (does NOT expose it)
+    * ``funding_wallet``                — derived DOUBLEUBI_KEY address (first/LAST 6)
+    * ``supabase_available``            — DB reachable
+    * ``double_ubi_rewards_table_ready`` — sql/double_ubi_reward.sql migration
+    * ``celo_rpc_ok``                   — CELO_RPC_URL reachable
+    * ``funding_has_celo_gas``          — enough CELO for (gas_limit x gas_price)
+    * ``fund_gd_balance``              — G$ available in the DOUBLEUBI_KEY wallet
+    * ``scheduler_running``            — the durable retry thread is alive
+    * ``pending_rows``                 — rows waiting to be disbursed right now
+    """
+    # web3 may not be installed in this deploy (it's a heavy dep) — the env/DB
+    # checks must still report even when it's missing.
+    try:
+        from web3 import Web3
+    except Exception:  # pragma: no cover - import guard for dep-free envs
+        Web3 = None
+    diag: dict = {}
+    hints: list = []
+
+    enabled = is_double_ubi_enabled()
+    diag["double_ubi_enabled"] = enabled
+    if not enabled:
+        hints.append(
+            "Double UBI is DISABLED. Set DOUBLE_UBI_ENABLED=1 and DOUBLEUBI_KEY "
+            "in the deployment env, then restart."
+        )
+
+    key = get_double_ubi_key()
+    diag["doubleubi_key_set"] = bool(key)
+    diag["funding_wallet"] = ""
+    if key:
+        try:
+            sender = _account_from_key(key)
+            diag["funding_wallet"] = sender.address[:6] + "…" + sender.address[-4:]
+        except Exception:  # noqa: BLE001
+            diag["funding_wallet"] = "(invalid key)"
+            if enabled:
+                hints.append("DOUBLEUBI_KEY is not a valid private key.")
+    elif enabled:
+        diag["double_ubi_enabled"] = False  # effective state: a flag without a key funds nothing
+        hints.append("DOUBLEUBI_KEY is not set — without it no bonus can be sent.")
+
+    # DB + migration
+    try:
+        from supabase_client import get_supabase_admin_client, get_supabase_client
+        supabase = get_supabase_admin_client() or get_supabase_client()
+    except Exception:  # noqa: BLE001
+        supabase = None
+    diag["supabase_available"] = bool(supabase)
+    if not supabase:
+        hints.append("Database unavailable — check SUPABASE_URL / SUPABASE_KEY.")
+    else:
+        try:
+            supabase.table("double_ubi_rewards").select("id").limit(1).execute()
+            diag["double_ubi_rewards_table_ready"] = True
+        except Exception as exc:  # noqa: BLE001
+            diag["double_ubi_rewards_table_ready"] = False
+            diag["table_error"] = str(exc)[:200]
+            hints.append("Run sql/double_ubi_reward.sql in the Supabase SQL editor.")
+
+    # RPC + funding wallet state
+    w3 = None
+    if Web3 is not None:
+        try:
+            w3 = Web3(Web3.HTTPProvider(CELO_RPC_URL))
+        except Exception:  # noqa: BLE001
+            w3 = None
+    diag["celo_rpc_ok"] = bool(w3 and w3.is_connected())
+    if not diag["celo_rpc_ok"]:
+        if Web3 is None:
+            hints.append("web3 is not installed in this deployment — on-chain funding checks skipped, but env/DB checks still apply.")
+        else:
+            hints.append(f"Could not reach Celo RPC at {CELO_RPC_URL}.")
+
+    if key and w3 and diag["celo_rpc_ok"]:
+        try:
+            sender = _account_from_key(key)
+            token = w3.eth.contract(
+                address=Web3.to_checksum_address(GD_TOKEN),
+                abi=_ERC20_ABI,
+            )
+            celo_wei = w3.eth.get_balance(sender.address)
+            gas_price = int(w3.eth.gas_price * 1.2)
+            need_wei = BONUS_GAS_LIMIT * gas_price
+            diag["funding_celo_balance"] = celo_wei / 10 ** 18
+            diag["funding_has_celo_gas"] = celo_wei >= need_wei
+            if not diag["funding_has_celo_gas"]:
+                hints.append(
+                    f"DOUBLEUBI_KEY wallet {sender.address[:6]}… has only {celo_wei / 10 ** 18:.4f} CELO; "
+                    f"~{need_wei / 10 ** 18:.4f} CELO needed for gas. Top it up."
+                )
+            gd_wei = token.functions.balanceOf(sender.address).call()
+            diag["fund_gd_balance"] = gd_wei / 10 ** 18
+            if gd_wei <= 0:
+                hints.append("DOUBLEUBI_KEY wallet has 0 G$ to give — top it up.")
+        except Exception as exc:  # noqa: BLE001
+            diag["funding_check_error"] = str(exc)[:200]
+            if enabled:
+                hints.append(f"Could not read DOUBLEUBI_KEY wallet balance: {exc}")
+
+    # scheduler + row visibility
+    diag["scheduler_running"] = bool(_scheduler_thread and _scheduler_thread.is_alive())
+    if enabled and not diag["scheduler_running"]:
+        hints.append("Scheduler thread isn't running — app may not have been restarted after setting the env.")
+
+    if supabase:
+        try:
+            res = supabase.table("double_ubi_rewards").select("id").eq("status", "pending").limit(1).execute()
+            diag["pending_rows"] = bool(res.data)
+        except Exception:  # noqa: BLE001
+            diag["pending_rows"] = None
+
+    diag["hints"] = hints
+    diag["ready"] = bool(
+        diag["double_ubi_enabled"]
+        and diag["doubleubi_key_set"]
+        and diag.get("double_ubi_rewards_table_ready")
+        and diag.get("celo_rpc_ok")
+        and diag.get("funding_has_celo_gas")
+        and diag.get("fund_gd_balance", 0) > 0
+        and diag.get("scheduler_running")
+    )
+    return diag
+
+
+def _account_from_key(key: str):
+    """Lazily create a parseable account from a private key (never logs the key)."""
+    from eth_account import Account
+    return Account.from_key(key)
