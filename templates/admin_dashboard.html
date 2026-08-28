@@ -4348,8 +4348,32 @@ async function loadMinigamesMaintenance() {
             }
         }
 
+        // Community Stories reward values come from the admin config, not
+        // from hardcoded literals. We cache them once (they rarely change) and
+        // fall back to the prior hardcoded defaults if the fetch fails.
+        let _communityStoriesRewards = { low: 2000, high: 5000 };
+
+        function _fmtCommunityStoriesReward(value) {
+            const num = parseFloat(value);
+            return Number.isFinite(num) ? num.toLocaleString() : '—';
+        }
+
+        async function loadCommunityStoriesRewards() {
+            try {
+                const response = await fetch('/api/admin/community-stories-settings');
+                const data = await response.json();
+                if (data.success) {
+                    _communityStoriesRewards.low = parseFloat(data.settings.low_reward) || 2000;
+                    _communityStoriesRewards.high = parseFloat(data.settings.high_reward) || 5000;
+                }
+            } catch (error) {
+                console.error('Error loading Community Stories rewards:', error);
+            }
+        }
+
         async function loadCommunityStoriesNotifications() {
             try {
+                await loadCommunityStoriesRewards();
                 const response = await fetch('/community-stories/api/admin/notifications');
                 const data = await response.json();
 
@@ -4428,12 +4452,12 @@ async function loadMinigamesMaintenance() {
                                                     <button class="btn btn-primary" 
                                                         onclick="approveSubmission('${sub.submission_id}', 'low')" 
                                                         style="padding: 0.4rem 0.8rem; font-size: 0.85rem; background: linear-gradient(135deg, #6366f1, #a855f7);">
-                                                        💰 Low (2,000 G$)
+                                                        💰 Low (${_fmtCommunityStoriesReward(_communityStoriesRewards.low)} G$)
                                                     </button>
                                                     <button class="btn btn-primary" 
                                                         onclick="approveSubmission('${sub.submission_id}', 'high')" 
                                                         style="padding: 0.4rem 0.8rem; font-size: 0.85rem; background: linear-gradient(135deg, #10b981, #059669);">
-                                                        💎 High (5,000 G$)
+                                                        💎 High (${_fmtCommunityStoriesReward(_communityStoriesRewards.high)} G$)
                                                     </button>
                                                     <button class="btn btn-danger" 
                                                         onclick="rejectSubmission('${sub.submission_id}')" 
@@ -4466,6 +4490,7 @@ async function loadMinigamesMaintenance() {
 
         async function loadCommunityStoriesHistory() {
             try {
+                await loadCommunityStoriesRewards();
                 const response = await fetch('/community-stories/api/admin/history');
                 const data = await response.json();
 
@@ -4495,11 +4520,15 @@ async function loadMinigamesMaintenance() {
                                     if (h.status === 'approved_low') {
                                         statusBadge = '✅ Approved (Low)';
                                         statusColor = '#10b981';
-                                        amountDisplay = '2,000 G$';
+                                        amountDisplay = (parseFloat(h.reward_amount) != null && !isNaN(parseFloat(h.reward_amount)))
+                                            ? parseFloat(h.reward_amount).toLocaleString() + ' G$'
+                                            : _fmtCommunityStoriesReward(_communityStoriesRewards.low) + ' G$';
                                     } else if (h.status === 'approved_high') {
                                         statusBadge = '✅ Approved (High)';
                                         statusColor = '#10b981';
-                                        amountDisplay = '5,000 G$';
+                                        amountDisplay = (parseFloat(h.reward_amount) != null && !isNaN(parseFloat(h.reward_amount)))
+                                            ? parseFloat(h.reward_amount).toLocaleString() + ' G$'
+                                            : _fmtCommunityStoriesReward(_communityStoriesRewards.high) + ' G$';
                                     } else if (h.status === 'rejected') {
                                         statusBadge = '❌ Rejected';
                                         statusColor = '#ef4444';
@@ -4546,7 +4575,8 @@ async function loadMinigamesMaintenance() {
         }
 
         async function approveSubmission(submissionId, rewardType) {
-            const rewardAmount = rewardType === 'low' ? '2,000' : '5,000';
+            const rewardValue = rewardType === 'low' ? _communityStoriesRewards.low : _communityStoriesRewards.high;
+            const rewardAmount = _fmtCommunityStoriesReward(rewardValue);
 
             if (!confirm(`✅ Approve submission ${submissionId}?\n\n💰 Reward: ${rewardAmount} G$\n🔗 This will send G$ tokens to the user's wallet.`)) {
                 return;
@@ -4709,7 +4739,9 @@ async function loadMinigamesMaintenance() {
                 return;
             }
 
-            const rewardLabel = rewardType === 'low' ? 'Low (2,000 G$)' : 'High (5,000 G$)';
+            const rewardLabel = rewardType === 'low'
+                ? `Low (${_fmtCommunityStoriesReward(_communityStoriesRewards.low)} G$)`
+                : `High (${_fmtCommunityStoriesReward(_communityStoriesRewards.high)} G$)`;
             const delayEl = document.getElementById('bulkDelaySeconds');
             const delay = delayEl ? parseInt(delayEl.value) : 4;
 
