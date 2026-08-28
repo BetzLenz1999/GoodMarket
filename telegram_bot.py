@@ -445,6 +445,92 @@ def _community_stories_status_message(wallet: str) -> tuple[str, bool]:
     return "\n".join(lines), can_submit
 
 
+# ─── Durable Telegram feature sessions (cross-worker) ────────────────────────
+# Pending "submit a URL" states used to live only in the per-process in-memory
+# dicts. The bot runs under gunicorn gthread with several workers (plus Vercel
+# autoscale), so a prompt handled by worker A was invisible to the pasted URL
+# handled by worker B — the URL then fell through to the generic wallet handler
+# ("That does not look like a valid wallet address..."). The state is mirrored
+# to the telegram_feature_sessions table (best-effort) so ANY worker can pick
+# it up; the in-memory dict remains the fallback when the table is missing.
+
+_COMMUNITY_STORIES_FEATURE = "community_stories"
+
+
+def _feature_session_table():
+    """Return the durable feature-session table client, or None if unavailable."""
+    try:
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return None
+        return supabase.table("telegram_feature_sessions")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ telegram_feature_sessions unavailable: %s", exc)
+        return None
+
+
+def _load_feature_session(memory_store, feature: str, telegram_user_id):
+    """Resolve a pending Telegram feature session across workers.
+
+    Tries the durable table first (so a session created on one worker is found
+    by the worker handling the next message), then falls back to the in-memory
+    dict when the table/DB is unavailable.
+    """
+    key = str(telegram_user_id)
+    db = _feature_session_table()
+    if db is not None:
+        try:
+            res = (
+                db.select("chat_id,wallet,state")
+                .eq("telegram_user_id", key)
+                .eq("feature", feature)
+                .limit(1)
+                .execute()
+            )
+            data = (res.data or [None])[0]
+            if data:
+                return {
+                    "chat_id": data.get("chat_id"),
+                    "wallet": data.get("wallet") or "",
+                    "awaiting": data.get("state") or "",
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("⚠️ Could not load feature session from DB: %s", exc)
+    return (memory_store or {}).get(key)
+
+
+def _persist_feature_session(memory_store, feature: str, telegram_user_id, session):
+    """Record a pending Telegram feature session in memory + the durable table."""
+    key = str(telegram_user_id)
+    if memory_store is not None:
+        memory_store[key] = session
+    db = _feature_session_table()
+    if db is not None:
+        try:
+            db.upsert({
+                "telegram_user_id": key,
+                "feature": feature,
+                "chat_id": str(session.get("chat_id") or ""),
+                "wallet": session.get("wallet") or "",
+                "state": session.get("awaiting") or "",
+            }, on_conflict="telegram_user_id,feature").execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("⚠️ Could not persist feature session: %s", exc)
+
+
+def _clear_feature_session(memory_store, feature: str, telegram_id):
+    """Remove a pending Telegram feature session from memory + the durable table."""
+    key = str(telegram_id)
+    if memory_store is not None:
+        memory_store.pop(key, None)
+    db = _feature_session_table()
+    if db is not None:
+        try:
+            db.delete().eq("telegram_user_id", key).eq("feature", feature).execute()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("⚠️ Could not clear feature session: %s", exc)
+
+
 def _clear_wallet_learn_earn_sessions(wallet: str, *, except_user_id=None):
     """Remove active Telegram Learn & Earn sessions for a wallet.
 
@@ -1415,12 +1501,17 @@ def handle_community_stories_submit_prompt(chat_id, telegram_user):
         send_message(chat_id, text, _community_stories_keyboard(False))
         return
 
-    _TELEGRAM_COMMUNITY_STORIES_SESSIONS[str(telegram_user_id)] = {
-        "chat_id": chat_id,
-        "wallet": saved_wallet,
-        "awaiting": "tweet_url",
-        "created_at": time.time(),
-    }
+    _persist_feature_session(
+        _TELEGRAM_COMMUNITY_STORIES_SESSIONS,
+        _COMMUNITY_STORIES_FEATURE,
+        telegram_user_id,
+        {
+            "chat_id": chat_id,
+            "wallet": saved_wallet,
+            "awaiting": "tweet_url",
+            "created_at": time.time(),
+        },
+    )
     send_message(
         chat_id,
         "📝 <b>Submit Community Story</b>\n\n"
@@ -1432,7 +1523,9 @@ def handle_community_stories_submit_prompt(chat_id, telegram_user):
 def handle_community_stories_text(chat_id, telegram_user, text) -> bool:
     """Submit pending Community Stories text input. Returns True if handled."""
     telegram_user_id = str(telegram_user.get("id"))
-    session_data = _TELEGRAM_COMMUNITY_STORIES_SESSIONS.get(telegram_user_id)
+    session_data = _load_feature_session(
+        _TELEGRAM_COMMUNITY_STORIES_SESSIONS, _COMMUNITY_STORIES_FEATURE, telegram_user_id
+    )
     if not session_data or session_data.get("awaiting") != "tweet_url":
         return False
 
@@ -1440,14 +1533,14 @@ def handle_community_stories_text(chat_id, telegram_user, text) -> bool:
 
     wallet = _normalize_wallet(session_data.get("wallet") or "")
     if not wallet:
-        _TELEGRAM_COMMUNITY_STORIES_SESSIONS.pop(telegram_user_id, None)
+        _clear_feature_session(_TELEGRAM_COMMUNITY_STORIES_SESSIONS, _COMMUNITY_STORIES_FEATURE, telegram_user_id)
         send_message(chat_id, "⚠️ Your Community Stories session expired. Please use /stories again.")
         return True
 
     tweet_url = (text or "").strip()
     result = community_stories_service.submit_tweet(wallet, tweet_url)
     if result.get("success"):
-        _TELEGRAM_COMMUNITY_STORIES_SESSIONS.pop(telegram_user_id, None)
+        _clear_feature_session(_TELEGRAM_COMMUNITY_STORIES_SESSIONS, _COMMUNITY_STORIES_FEATURE, telegram_user_id)
         send_message(
             chat_id,
             "✅ <b>Community Story submitted!</b>\n\n"
@@ -2358,6 +2451,20 @@ def handle_wallet_text(chat_id, telegram_user, text):
     """Treat non-command Telegram messages as wallet submissions."""
     wallet = _normalize_wallet(text)
     if not wallet:
+        # A URL here is almost always a Community Stories / Daily Task post that
+        # the user forgot to start with the "Submit" button (or whose pending
+        # prompt landed on another worker). Don't confuse them with a wallet
+        # address error — point them to the right flow instead.
+        if re.match(r"^https?://", (text or "").strip(), re.IGNORECASE):
+            send_message(
+                chat_id,
+                "🌱 <b>That looks like a post link</b>\n\n"
+                "To submit a post, first tap <b>Community Stories</b> → <b>Submit X/Twitter URL</b> "
+                "(or /stories), then send the link.\n\n"
+                "Use /stories or /earn to see the earning options for this wallet.",
+                _community_stories_keyboard(False),
+            )
+            return
         send_message(
             chat_id,
             "❌ That does not look like a valid wallet address. Please send a 42-character address that starts with <code>0x</code>.",
