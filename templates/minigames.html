@@ -5,7 +5,8 @@
     <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minigames - GoodDollar</title>
+    <title>Minigames - GoodMarket</title>
+    <meta name="theme-color" content="#f97316">
     <style>
         * {
             margin: 0;
@@ -210,6 +211,111 @@
             width: 0%;
             transition: width 0.3s ease;
         }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited. (The in-game canvas keeps its dark play surface.)
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .navbar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .nav-brand {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .back-btn {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+        }
+
+        .container { max-width: 1400px; }
+
+        .header h1 {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header p { color: var(--text-dim); }
+
+        .game-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.06);
+        }
+        .game-card:hover {
+            box-shadow: 0 12px 28px rgba(var(--accent-rgb),0.14);
+            border-color: rgba(var(--accent-rgb),0.4);
+        }
+        .game-desc { color: var(--text-dim); }
+        .game-reward {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+        }
+
+        .play-btn {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+        }
+        .play-btn:disabled { background: rgba(120,113,108,0.35); }
+
+        .withdrawal-section {
+            background: linear-gradient(135deg, rgba(var(--gold-rgb),0.16), rgba(var(--accent-rgb),0.10));
+            border-color: rgba(var(--gold-rgb),0.4);
+        }
+
+        .progress-bar { background: rgba(67,56,43,0.12); }
+
+        #withdrawalHistorySection {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        #withdrawalHistorySection h3 { color: #b45309; }
+
+        .notification {
+            background: #ffffff;
+            color: var(--text);
+            border: 1px solid var(--card-border);
+            box-shadow: 0 10px 40px rgba(67,56,43,0.18);
+        }
+
+        .modal-content {
+            background: #ffffff;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 12px 40px rgba(67,56,43,0.18);
+        }
+        .close-modal {
+            background: rgba(var(--accent-rgb),0.12);
+            color: #b45309;
+        }
+
+        #gameCanvas {
+            background: #1e293b;
+            border-color: rgba(var(--accent-rgb),0.5);
+        }
     </style>
 </head>
 <body>
@@ -228,14 +334,14 @@
         {% else %}
         <div class="header">
             <h1>🎮 Play & Earn G$</h1>
-            <p style="font-size: 0.85rem; color: rgba(255,255,255,0.7);">Play fun games and earn GoodDollar rewards!</p>
+            <p style="font-size: 0.85rem; color: var(--text-dim);">Play fun games and earn GoodDollar rewards!</p>
 
             <!-- Community Initiative Disclaimer -->
-            <div style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.1)); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 0.75rem 1rem; margin-top: 0.75rem; text-align: left; max-width: 800px; margin-left: auto; margin-right: auto;">
+            <div style="background: rgba(255,255,255,0.7); border: 1px solid var(--card-border); border-radius: 12px; padding: 0.75rem 1rem; margin-top: 0.75rem; text-align: left; max-width: 800px; margin-left: auto; margin-right: auto;">
                 <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
                     <span style="font-size: 1.1rem;">ℹ️</span>
-                    <span style="color: #6366f1; font-weight: 700; font-size: 0.85rem;">Community Initiative</span>
-                    <span style="color: rgba(255,255,255,0.5); font-size: 0.78rem;">— Built by GIMT · NOT an official GoodDollar product</span>
+                    <span style="color: #b45309; font-weight: 700; font-size: 0.85rem;">Community Initiative</span>
+                    <span style="color: var(--text-muted); font-size: 0.78rem;">— Built by GIMT · NOT an official GoodDollar product</span>
                 </div>
             </div>
         </div>
@@ -245,16 +351,16 @@
             <div style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
                 <span style="font-size: 1.5rem;">💰</span>
                 <div>
-                    <div style="font-size: 0.85rem; color: #fbbf24; font-weight: 700;">Your Play & Earn Balance</div>
-                    <div style="font-size: 0.75rem; color: rgba(255,255,255,0.5);">All minigames combined · Total withdrawn: <span id="totalWithdrawn">0</span> G$</div>
+                    <div style="font-size: 0.85rem; color: #b45309; font-weight: 700;">Your Play & Earn Balance</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">All minigames combined · Total withdrawn: <span id="totalWithdrawn">0</span> G$</div>
                 </div>
-                <div style="font-size: 1.8rem; font-weight: 800; color: #fbbf24;" id="balanceAmount">— G$</div>
+                <div style="font-size: 1.8rem; font-weight: 800; color: #c2410c;" id="balanceAmount">— G$</div>
             </div>
 
             <div class="progress-bar" style="max-width: 400px; margin: 0 auto 0.3rem;">
                 <div class="progress-fill" id="balanceProgress"></div>
             </div>
-            <div style="color: rgba(255,255,255,0.5); font-size: 0.78rem; margin-bottom: 0.75rem;">
+            <div style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 0.75rem;">
                 <span id="progressLabel">Loading...</span>
             </div>
 
@@ -272,32 +378,32 @@
         </div>
 
         <!-- Game Info Section -->
-        <div style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(168, 85, 247, 0.08)); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 1rem; text-align: center;">
-            <span style="font-size: 1rem; font-weight: 700; color: #10b981;">🎮 FREE Minigames!</span>
-            <span style="color: rgba(255,255,255,0.7); font-size: 0.85rem; margin-left: 0.5rem;">Click on any game below to play and view your history!</span>
+        <div style="background: rgba(var(--accent-rgb),0.08); border: 1px solid rgba(var(--accent-rgb),0.25); border-radius: 12px; padding: 0.75rem 1rem; margin-bottom: 1rem; text-align: center;">
+            <span style="font-size: 1rem; font-weight: 700; color: #15803d;">🎮 FREE Minigames!</span>
+            <span style="color: var(--text-dim); font-size: 0.85rem; margin-left: 0.5rem;">Click on any game below to play and view your history!</span>
         </div>
 
         <div class="games-grid">
 
             <!-- CoinClick Game -->
-            <div class="game-card" style="border-color: rgba(251, 191, 36, 0.45);">
+            <div class="game-card" style="border-color: rgba(245,166,35,0.5);">
                 <div class="game-icon">🪙</div>
-                <div class="game-title" style="color: #fbbf24;">CoinClick</div>
+                <div class="game-title" style="color: #b45309;">CoinClick</div>
                 <div class="game-desc">Click falling GoodDollar coins, avoid bombs, and collect G$ rewards before time runs out!</div>
                 <div class="game-reward">Up to 50 G$ per day</div>
-                <div style="color: rgba(241,245,249,0.5); font-size: 0.78rem; margin-bottom: 0.75rem;">
+                <div style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 0.75rem;">
                     ⏱ 37 sec rounds &nbsp;|&nbsp; Max 10 plays/day &nbsp;|&nbsp; GoodDollar logo coins
                 </div>
                 <button class="play-btn" onclick="startCoinClick()" style="background: linear-gradient(135deg, #f59e0b, #06b6d4);">Play CoinClick →</button>
             </div>
 
             <!-- Jumble Words Game -->
-            <div class="game-card" style="border-color: rgba(168, 85, 247, 0.4);">
+            <div class="game-card" style="border-color: rgba(124,58,237,0.35);">
                 <div class="game-icon">🔤</div>
-                <div class="game-title" style="color: #a855f7;">Jumble Words</div>
+                <div class="game-title" style="color: #7c3aed;">Jumble Words</div>
                 <div class="game-desc">Unscramble the letters to form the correct word and earn G$ rewards!</div>
                 <div class="game-reward">5 G$ per correct answer</div>
-                <div style="color: rgba(241,245,249,0.5); font-size: 0.78rem; margin-bottom: 0.75rem;">
+                <div style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 0.75rem;">
                     ⏱ 30 sec timer &nbsp;|&nbsp; Max 10 wins/day &nbsp;|&nbsp; Min withdraw 200 G$
                 </div>
                 <a href="/jumble/" style="display: block; text-decoration: none;">
@@ -306,12 +412,12 @@
             </div>
 
             <!-- Price Prediction Game -->
-            <div class="game-card" style="border-color: rgba(16, 185, 129, 0.4);">
+            <div class="game-card" style="border-color: rgba(22,163,74,0.35);">
                 <div class="game-icon">📈</div>
-                <div class="game-title" style="color: #10b981;">Price Prediction</div>
+                <div class="game-title" style="color: #15803d;">Price Prediction</div>
                 <div class="game-desc">Predict whether BTC, ETH, or CELO will go UP or DOWN. Get it right and earn G$ rewards!</div>
                 <div class="game-reward">50 G$ for correct prediction</div>
-                <div style="color: rgba(241,245,249,0.5); font-size: 0.78rem; margin-bottom: 0.75rem;">
+                <div style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 0.75rem;">
                     ⏱ 5h / 12h / 24h timeframes &nbsp;|&nbsp; FREE to play &nbsp;|&nbsp; 1 prediction at a time
                 </div>
                 <a href="/price-prediction/" style="display: block; text-decoration: none;">
