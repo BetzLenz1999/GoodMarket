@@ -2,6 +2,7 @@ import logging
 import uuid
 import json
 import re
+import html
 from datetime import datetime, timedelta, timezone
 from supabase_client import get_supabase_client, safe_supabase_operation
 from .blockchain import community_stories_blockchain
@@ -449,6 +450,47 @@ class CommunityStoriesService:
         except Exception as e:
             logger.warning(f"⚠️ Could not mark notification read for {submission_id} (non-fatal): {e}")
 
+    def _notify_user(self, submission_data: dict, *, approved: bool, amount=None, reason=None):
+        """Best-effort Telegram DM to the submitting user once an admin
+        approves or rejects their Community Story.
+
+        Mirrors the GCash cashout / daily-task notify pattern: fire-and-forget
+        via telegram_notify.notify_user_by_wallet_async, never raises, and users
+        who never linked the Telegram bot simply get nothing.
+        """
+        try:
+            wallet = submission_data.get('wallet_address')
+            if not wallet:
+                return
+            if approved:
+                amount_str = f"{self._format_number(amount)} G$" if amount is not None else "G$"
+                text = (
+                    "✅ <b>Community Story Approved!</b>\n\n"
+                    f"Your story submission <b>{html.escape(str(submission_data.get('submission_id', '')))}</b> "
+                    f"was approved and <b>{amount_str}</b> has been sent to your wallet!\n\n"
+                    "Thank you for sharing and supporting GoodMarket! 💛"
+                )
+            else:
+                reason_line = f"\n📝 Reason: <i>{html.escape(reason)}</i>" if reason else ""
+                text = (
+                    "❌ <b>Community Story Rejected</b>\n\n"
+                    f"Your story submission <b>{html.escape(str(submission_data.get('submission_id', '')))}</b> "
+                    f"was rejected.{reason_line}\n\n"
+                    "You can submit a new story next window (or while it's still open). Good luck! 💛"
+                )
+            from telegram_notify import notify_user_by_wallet_async
+            notify_user_by_wallet_async(wallet, text)
+        except Exception as e:  # noqa: BLE001 - notify is best-effort
+            self.logger.warning(f"⚠️ Community Stories notify failed for {str(submission_data.get('wallet_address', ''))[:10]}...: {e}")
+
+    @staticmethod
+    def _format_number(value):
+        """Thousands-separated number for user-facing copy."""
+        try:
+            return f"{float(value):,.0f}"
+        except (TypeError, ValueError):
+            return str(value)
+
     async def approve_submission(self, submission_id: str, reward_type: str, admin_wallet: str) -> dict:
         """Approve submission and disburse reward"""
         config = self.get_config()
@@ -543,6 +585,9 @@ class CommunityStoriesService:
             # community_stories_admin_notifications table can't fail the approval.
             self._mark_notification_read(submission_id, admin_wallet)
 
+            # Tell the submitting user (if they linked the Telegram bot).
+            self._notify_user(sub_data, approved=True, amount=amount)
+
             logger.info(f"✅ Approved submission {submission_id}: {amount} G$ to {wallet_address[:8]}...")
 
             return {
@@ -562,6 +607,13 @@ class CommunityStoriesService:
             return {'success': False, 'error': 'Database not available'}
 
         try:
+            # Fetch the submission first so we can DM the submitting user.
+            submission = self.supabase.table('community_stories_submissions')\
+                .select('*')\
+                .eq('submission_id', submission_id)\
+                .execute()
+            sub_data = (submission.data or [{}])[0] if submission.data else {}
+
             # Update submission
             self.supabase.table('community_stories_submissions').update({
                 'status': 'rejected',
@@ -573,6 +625,9 @@ class CommunityStoriesService:
             # Mark notification as read — best-effort so a missing
             # community_stories_admin_notifications table can't fail the rejection.
             self._mark_notification_read(submission_id, admin_wallet)
+
+            # Tell the submitting user (if they linked the Telegram bot).
+            self._notify_user(sub_data, approved=False, reason=reason)
 
             logger.info(f"❌ Rejected submission {submission_id}")
 
