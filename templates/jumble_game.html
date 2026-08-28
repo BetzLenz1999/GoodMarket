@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Jumble Words - GoodMarket</title>
+    <meta name="theme-color" content="#f97316">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -273,6 +274,7 @@
             border-radius: 8px;
             transition: width 0.4s ease;
         }
+
         #review-screen, #idle-screen, #playing-screen, #limit-screen { display: none; }
         #review-screen.visible, #idle-screen.visible, #playing-screen.visible, #limit-screen.visible { display: block; }
 
@@ -389,6 +391,149 @@
 
             .wins-progress { height: 7px; margin-top: 0.3rem; }
         }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited.
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .navbar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .nav-brand {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .back-btn { background: linear-gradient(135deg, #f97316, #ea580c); }
+
+        .game-header h1 {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .game-header p { color: var(--text-dim); }
+
+        .stat-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .stat-label { color: var(--text-muted); }
+        .stat-value { color: #c2410c; }
+        .stat-value.green { color: #15803d; }
+        .stat-value.yellow { color: #b45309; }
+
+        .game-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+
+        .timer-inner {
+            background: #ffffff;
+            color: var(--text);
+        }
+        .timer-circle {
+            background: conic-gradient(#f97316 0deg, rgba(67,56,43,0.10) 0deg);
+        }
+
+        .jumbled-word { color: #ea580c; }
+        .word-hint { color: var(--text-muted); }
+
+        .answer-input {
+            background: #fbfaf8;
+            border-color: rgba(var(--accent-rgb),0.4);
+            color: var(--text);
+        }
+        .answer-input:focus { border-color: #ea580c; }
+        .answer-input::placeholder { color: var(--text-muted); }
+        .answer-input.correct {
+            border-color: #16a34a;
+            background: rgba(22,163,74,0.08);
+        }
+        .answer-input.wrong {
+            border-color: #dc2626;
+            background: rgba(220,38,38,0.08);
+        }
+
+        .submit-btn, .start-btn, .continue-btn {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+        }
+        .submit-btn:disabled { background: rgba(120,113,108,0.35); }
+
+        .result-banner.correct {
+            background: rgba(22,163,74,0.10);
+            border-color: rgba(22,163,74,0.4);
+            color: #15803d;
+        }
+        .result-banner.wrong {
+            background: rgba(220,38,38,0.10);
+            border-color: rgba(220,38,38,0.4);
+            color: #b91c1c;
+        }
+        .result-banner.timeout {
+            background: rgba(217,119,6,0.10);
+            border-color: rgba(217,119,6,0.4);
+            color: #92400e;
+        }
+
+        .next-btn { background: linear-gradient(135deg, #16a34a, #15803d); }
+
+        .limit-reached-card {
+            background: linear-gradient(135deg, rgba(var(--gold-rgb),0.16), rgba(var(--accent-rgb),0.10));
+            border-color: rgba(var(--gold-rgb),0.4);
+        }
+        .limit-title { color: #b45309; }
+        .limit-text { color: var(--text-dim); }
+
+        .info-box {
+            background: rgba(var(--accent-rgb),0.07);
+            border-color: rgba(var(--accent-rgb),0.2);
+            color: var(--text-dim);
+        }
+        .info-box strong { color: #b45309; }
+
+        .wins-progress { background: rgba(67,56,43,0.12); }
+        .wins-fill { background: linear-gradient(90deg, #f97316, #f5a623); }
+
+        .review-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+        .review-card h2 { color: #b45309; }
+        .review-card .review-subtitle { color: var(--text-muted); }
+        .review-content-block {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+            color: var(--text);
+        }
+        .review-empty { color: var(--text-muted); }
     </style>
 </head>
 <body>
@@ -481,7 +626,7 @@
                     Come back tomorrow to earn more G$.<br><br>
                     Your earnings have been added to your balance. You can withdraw when your balance reaches <strong>200 G$</strong>.
                 </p>
-                <a href="/minigames" style="display: inline-block; margin-top: 1.5rem; background: linear-gradient(135deg, #6366f1, #a855f7); color: white; padding: 0.8rem 2rem; border-radius: 12px; font-weight: 700; text-decoration: none;">Back to Games</a>
+                <a href="/minigames" style="display: inline-block; margin-top: 1.5rem; background: linear-gradient(135deg, #f97316, #ea580c); color: white; padding: 0.8rem 2rem; border-radius: 12px; font-weight: 700; text-decoration: none;">Back to Games</a>
             </div>
         </div>
     </div>
