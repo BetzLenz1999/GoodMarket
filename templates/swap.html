@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Swap - GoodMarket</title>
-    <meta name="theme-color" content="#7c3aed">
+    <meta name="theme-color" content="#f97316">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="GoodMarket">
@@ -699,7 +699,254 @@
             margin-bottom: 0.85rem;
         }
 
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited.
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
 
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .navbar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .logo { color: #ea580c; }
+        .back-wallet-btn {
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.28);
+            color: #b45309;
+        }
+        .back-wallet-btn:hover { background: rgba(var(--accent-rgb),0.16); }
+        .nav-links a { color: #57534e; }
+        .nav-links a:hover { color: #b45309; background: rgba(var(--accent-rgb),0.12); }
+        .nav-links a.active { color: #b45309; background: rgba(var(--accent-rgb),0.16); font-weight: 700; }
+        .nav-sep { background: var(--card-border); }
+        .wallet-tag {
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.28);
+            color: #b45309;
+        }
+        .logout-btn {
+            background: rgba(239,68,68,0.08) !important;
+            border: 1px solid rgba(239,68,68,0.22) !important;
+            color: #dc2626 !important;
+        }
+        .logout-btn:hover { background: rgba(239,68,68,0.16) !important; color: #b91c1c !important; }
+
+        .page-title { color: var(--text); font-family: var(--serif); }
+        .page-subtitle { color: var(--text-dim); }
+
+        /* ── Swap card ── */
+        .swap-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 8px 28px rgba(67,56,43,0.06);
+        }
+
+        .network-badge {
+            background: linear-gradient(135deg, rgba(22,163,74,0.10), rgba(var(--accent-rgb),0.08));
+            border-color: rgba(22,163,74,0.28);
+            color: #15803d;
+        }
+        .network-dot { background: #16a34a; }
+
+        .token-box {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+        }
+        .token-box:focus-within { border-color: rgba(var(--accent-rgb),0.55); }
+        .token-box-label { color: var(--text-muted); }
+
+        .token-selector {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text);
+        }
+        .token-selector:hover { background: #fff7ed; }
+        .token-chevron { color: var(--text-muted); }
+
+        .amount-input { color: var(--text); }
+        .amount-input::placeholder { color: var(--text-muted); }
+
+        .token-balance { color: var(--text-muted); }
+        .max-btn {
+            background: rgba(var(--accent-rgb),0.10);
+            border-color: rgba(var(--accent-rgb),0.32);
+            color: #c2410c;
+        }
+        .max-btn:hover { background: rgba(var(--accent-rgb),0.18); }
+
+        .swap-direction-btn {
+            background: rgba(var(--accent-rgb),0.14);
+            border-color: rgba(var(--accent-rgb),0.4);
+            color: #c2410c;
+        }
+        .swap-direction-btn:hover { background: rgba(var(--accent-rgb),0.22); border-color: #ea580c; }
+
+        .quote-box {
+            background: #fff7ed;
+            border-color: rgba(var(--accent-rgb),0.25);
+        }
+        .quote-row { color: var(--text-dim); }
+        .quote-row strong { color: var(--text); }
+
+        .slippage-row { color: var(--text-dim); }
+        .slippage-btn {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .slippage-btn.active {
+            background: rgba(var(--accent-rgb),0.14);
+            border-color: #ea580c;
+            color: #c2410c;
+        }
+
+        .swap-btn {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+        }
+        .swap-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #ea580c, #c2410c);
+            box-shadow: 0 8px 25px rgba(var(--accent-rgb),0.3);
+        }
+
+        .alert-error { background: rgba(220,38,38,0.07); border-color: rgba(220,38,38,0.25); color: #b91c1c; }
+        .alert-success { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.28); color: #15803d; }
+        .alert-info { background: rgba(var(--accent-rgb),0.08); border-color: rgba(var(--accent-rgb),0.28); color: #c2410c; }
+
+        .spinner-inline { border-color: rgba(var(--accent-rgb),0.25); border-top-color: var(--accent); }
+
+        .info-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .info-card-title { color: var(--text-muted); }
+        .info-link { color: #ea580c; }
+
+        .route-tip {
+            background: linear-gradient(135deg, rgba(var(--gold-rgb),0.14), rgba(var(--accent-rgb),0.08));
+            border-color: rgba(var(--gold-rgb),0.35);
+            color: var(--text-dim);
+        }
+        .route-tip-title { color: #b45309; }
+        .route-step-badge {
+            background: rgba(var(--gold-rgb),0.16);
+            border-color: rgba(var(--gold-rgb),0.32);
+            color: #92400e;
+        }
+        .route-step-arrow { color: #b45309; }
+        .route-tip-note { color: var(--text-muted); }
+
+        .warn-box {
+            background: rgba(217,119,6,0.10);
+            border-color: rgba(217,119,6,0.28);
+            color: #92400e;
+        }
+
+        .step {
+            background: #fbfaf8;
+            color: var(--text-muted);
+        }
+        .step.active {
+            background: rgba(var(--accent-rgb),0.12);
+            color: #c2410c;
+            border-color: rgba(var(--accent-rgb),0.35);
+        }
+        .step.done {
+            background: rgba(22,163,74,0.10);
+            color: #15803d;
+            border-color: rgba(22,163,74,0.3);
+        }
+
+        /* ── Tabs ── */
+        .swap-tabs {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .swap-tab-btn { color: var(--text-muted); }
+        .swap-tab-btn:hover { color: var(--text); }
+        .swap-tab-btn.active {
+            background: rgba(var(--accent-rgb),0.14);
+            color: #c2410c;
+        }
+
+        .bridge-sub-tabs, .goodswap-sub-tabs {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .bridge-sub-tab-btn, .goodswap-sub-tab-btn { color: var(--text-muted); }
+        .bridge-sub-tab-btn:hover, .goodswap-sub-tab-btn:hover { color: var(--text); }
+        .bridge-sub-tab-btn.active, .goodswap-sub-tab-btn.active {
+            background: rgba(var(--accent-rgb),0.14);
+            color: #c2410c;
+        }
+
+        .reserve-dir-btn {
+            background: #ffffff;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .reserve-dir-btn:hover { color: var(--text); }
+        .reserve-dir-btn.active {
+            background: rgba(var(--accent-rgb),0.14);
+            border-color: rgba(var(--accent-rgb),0.4);
+            color: #c2410c;
+        }
+        .reserve-info-pill {
+            background: rgba(var(--gold-rgb),0.14);
+            border-color: rgba(var(--gold-rgb),0.32);
+            color: #92400e;
+        }
+
+        /* ── Token picker modal ── */
+        .token-picker-modal {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 12px 40px rgba(67,56,43,0.18);
+        }
+        .token-picker-title { color: var(--text-muted); }
+        .token-picker-item {
+            background: #ffffff;
+            border-color: var(--card-border);
+        }
+        .token-picker-item:hover { background: #faf7f2; border-color: rgba(var(--accent-rgb),0.35); }
+        .token-picker-item.selected {
+            background: #fff7ed;
+            border-color: rgba(var(--accent-rgb),0.45);
+        }
+        .token-picker-symbol { color: var(--text); }
+        .token-picker-name { color: var(--text-muted); }
+        .token-picker-close {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .token-picker-close:hover { background: #faf7f2; }
     </style>
     <!-- WalletConnect bridge for users without injected wallet -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
@@ -982,7 +1229,7 @@
         <!-- Info -->
         <div class="info-card">
             <div class="info-card-title">How it works</div>
-            Swaps are executed on-chain via <strong style="color:#e2e8f0;">Uniswap V3</strong> on the Celo network.
+            Swaps are executed on-chain via <strong style="color:#2b241a;">Uniswap V3</strong> on the Celo network.
             You need a Web3 wallet (MetaMask, MiniPay, or any Celo-compatible wallet) to confirm the transaction.
             Make sure you have enough CELO for gas fees.
             <br><br>
@@ -1098,7 +1345,7 @@
             <!-- Info -->
             <div class="info-card" style="margin-top:1rem;">
                 <div class="info-card-title">About GoodReserve</div>
-                Buy and sell G$ directly to/from the <strong style="color:#e2e8f0;">GoodDollar Reserve</strong> (Mento-based) on Celo.
+                Buy and sell G$ directly to/from the <strong style="color:#2b241a;">GoodDollar Reserve</strong> (Mento-based) on Celo.
                 Prices come from the protocol bonding curve — no DEX slippage from thin pools.
                 Sells include an automatic <strong style="color:#fbbf24;">exit contribution</strong> that goes back into the reserve and grows the GoodDollar economy.
                 <br><br>
@@ -1133,7 +1380,7 @@
                     🌉 Celo Mainnet → XDC Network · LayerZero Bridge
                 </div>
 
-                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); color:rgba(255,255,255,0.78); font-size:0.84rem; line-height:1.55;">
+                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
                     Bridging <strong>Celo → XDC</strong>: keep at least <strong>0.20 CELO</strong> for gas/fees,
                     click <strong>Estimate Fee</strong> before submit, and leave headroom when using <strong>MAX</strong>.
                     (Max per bridge request: <strong>300M G$</strong>)
@@ -1186,20 +1433,20 @@
                     </div>
                     <div class="token-balance">
                         <span>Balance: <span id="bridgeFeeBalance">—</span></span>
-                        <span style="font-size:0.75rem; color:rgba(255,255,255,0.55);">Source: <span id="bridgeFeeSourceCeloToXdc" style="color:#bfdbfe;">manual</span></span>
+                        <span style="font-size:0.75rem; color:#8a8378;">Source: <span id="bridgeFeeSourceCeloToXdc" style="color:#0e7490;">manual</span></span>
                     </div>
                 </div>
 
                 <!-- Destination + Summary -->
-                <div class="info-box-bridge" style="margin-top:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(15,23,42,0.5); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.85); font-size:0.83rem; line-height:1.6;">
-                    Destination wallet: <code id="bridgeDestinationWalletCeloToXdc" style="color:#c4b5fd;">{{ wallet }}</code><br>
+                <div class="info-box-bridge" style="margin-top:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:#fbfaf8; border:1px solid #e9e2d6; color:#3a3226; font-size:0.83rem; line-height:1.6;">
+                    Destination wallet: <code id="bridgeDestinationWalletCeloToXdc" style="color:#7c3aed;">{{ wallet }}</code><br>
                     Destination chain: <strong>XDC Network (Chain ID {{ xdc_chain_id }})</strong><br>
-                    <div style="font-size:0.74rem; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:0.05em; margin-top:0.55rem; margin-bottom:0.35rem;">Bridge Summary</div>
-                    <div id="bridgeLimitsHintCeloToXdc" style="color:rgba(255,255,255,0.55); font-size:0.78rem; margin-bottom:0.25rem;"></div>
-                    <div style="color:rgba(255,255,255,0.65);">Gross amount: <strong id="bridgeGrossReceiveCeloToXdc" style="color:#e2e8f0;">0.000000 G$</strong></div>
-                    <div style="color:rgba(255,255,255,0.65);">Bridge fee (CELO, max): <strong id="bridgeFeeDeductionDisplayCeloToXdc" style="color:#bfdbfe;">0.150000 CELO</strong></div>
-                    <div id="bridgeProtocolFeeDisplayCeloToXdc" style="color:rgba(255,255,255,0.65); display:none;"></div>
-                    <div style="color:rgba(255,255,255,0.8);">Net estimated receive on XDC: <strong id="bridgeNetReceiveCeloToXdc" style="color:#a7f3d0;">0.000000 G$</strong></div>
+                    <div style="font-size:0.74rem; color:#8a8378; text-transform:uppercase; letter-spacing:0.05em; margin-top:0.55rem; margin-bottom:0.35rem;">Bridge Summary</div>
+                    <div id="bridgeLimitsHintCeloToXdc" style="color:#8a8378; font-size:0.78rem; margin-bottom:0.25rem;"></div>
+                    <div style="color:#6b5d48;">Gross amount: <strong id="bridgeGrossReceiveCeloToXdc" style="color:#2b241a;">0.000000 G$</strong></div>
+                    <div style="color:#6b5d48;">Bridge fee (CELO, max): <strong id="bridgeFeeDeductionDisplayCeloToXdc" style="color:#0e7490;">0.150000 CELO</strong></div>
+                    <div id="bridgeProtocolFeeDisplayCeloToXdc" style="color:#6b5d48; display:none;"></div>
+                    <div style="color:#3a3226;">Net estimated receive on XDC: <strong id="bridgeNetReceiveCeloToXdc" style="color:#a7f3d0;">0.000000 G$</strong></div>
                 </div>
 
                 <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.9rem;">
@@ -1239,7 +1486,7 @@
                     🌉 XDC Network → Celo Mainnet · LayerZero Bridge
                 </div>
 
-                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); color:rgba(255,255,255,0.78); font-size:0.84rem; line-height:1.55;">
+                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
                     Bridging <strong>XDC → Celo</strong>: minimum <strong>2,000 G$</strong>, keep at least <strong>2.1 XDC</strong>
                     for gas/fees, click <strong>Estimate Fee</strong>, and leave headroom when using <strong>MAX</strong>.
                 </div>
@@ -1291,18 +1538,18 @@
                     </div>
                     <div class="token-balance">
                         <span>Balance: <span id="bridgeFeeBalanceXdcToCelo">—</span></span>
-                        <span style="font-size:0.75rem; color:rgba(255,255,255,0.55);">Source: <span id="bridgeFeeSourceXdcToCelo" style="color:#bfdbfe;">manual</span></span>
+                        <span style="font-size:0.75rem; color:#8a8378;">Source: <span id="bridgeFeeSourceXdcToCelo" style="color:#0e7490;">manual</span></span>
                     </div>
                 </div>
 
                 <!-- Destination + Summary -->
-                <div class="info-box-bridge" style="margin-top:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(15,23,42,0.5); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.85); font-size:0.83rem; line-height:1.6;">
-                    Destination wallet: <code id="bridgeDestinationWalletXdcToCelo" style="color:#c4b5fd;">{{ wallet }}</code><br>
+                <div class="info-box-bridge" style="margin-top:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:#fbfaf8; border:1px solid #e9e2d6; color:#3a3226; font-size:0.83rem; line-height:1.6;">
+                    Destination wallet: <code id="bridgeDestinationWalletXdcToCelo" style="color:#7c3aed;">{{ wallet }}</code><br>
                     Destination chain: <strong>Celo Mainnet (Chain ID {{ celo_chain_id }})</strong><br>
-                    <div style="font-size:0.74rem; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:0.05em; margin-top:0.55rem; margin-bottom:0.35rem;">Bridge Summary</div>
-                    <div style="color:rgba(255,255,255,0.65);">Gross amount: <strong id="bridgeGrossReceiveXdcToCelo" style="color:#e2e8f0;">0.000000 G$</strong></div>
-                    <div style="color:rgba(255,255,255,0.65);">Fee sent (max): <strong id="bridgeFeeDeductionDisplayXdcToCelo" style="color:#bfdbfe;">1.617600 XDC (actual fee may be lower; excess can be refunded)</strong></div>
-                    <div style="color:rgba(255,255,255,0.8);">Net estimated receive on Celo: <strong id="bridgeNetReceiveXdcToCelo" style="color:#a7f3d0;">0.000000 G$</strong></div>
+                    <div style="font-size:0.74rem; color:#8a8378; text-transform:uppercase; letter-spacing:0.05em; margin-top:0.55rem; margin-bottom:0.35rem;">Bridge Summary</div>
+                    <div style="color:#6b5d48;">Gross amount: <strong id="bridgeGrossReceiveXdcToCelo" style="color:#2b241a;">0.000000 G$</strong></div>
+                    <div style="color:#6b5d48;">Fee sent (max): <strong id="bridgeFeeDeductionDisplayXdcToCelo" style="color:#0e7490;">1.617600 XDC (actual fee may be lower; excess can be refunded)</strong></div>
+                    <div style="color:#3a3226;">Net estimated receive on Celo: <strong id="bridgeNetReceiveXdcToCelo" style="color:#a7f3d0;">0.000000 G$</strong></div>
                 </div>
 
                 <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.9rem;">
@@ -5411,7 +5658,7 @@
                 showCeloBridgeAlert(
                     'alert-success',
                     `✅ Bridge submitted to XDC!<br>
-                    <div style="margin:0.45rem 0 0.35rem; padding:0.45rem 0.55rem; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(15,23,42,0.4); color:rgba(255,255,255,0.86); font-size:0.79rem; line-height:1.5;">
+                    <div style="margin:0.45rem 0 0.35rem; padding:0.45rem 0.55rem; border-radius:8px; border:1px solid #e9e2d6; background:#fbfaf8; color:#3a3226; font-size:0.79rem; line-height:1.5;">
                         <strong>From:</strong> ${sourceToken} (Celo Mainnet)<br>
                         <strong>To:</strong> ${targetToken} (XDC Network)<br>
                         <strong>Gross:</strong> ${_formatBridgeAmountCelo(parseFloat(amountStr) || 0)}<br>
@@ -5419,7 +5666,7 @@
                     </div>
                     <a class="info-link" href="https://celoscan.io/tx/${bridgeTx.hash}" target="_blank" rel="noopener">View on CeloScan ↗</a><br>
                     <a class="info-link" href="https://layerzeroscan.com/tx/${bridgeTx.hash}" target="_blank" rel="noopener">Track on LayerZeroScan ↗</a><br>
-                    <span style="color:rgba(255,255,255,0.7);font-size:0.8rem;">Final mint on XDC may take a few minutes.</span>`
+                    <span style="color:#6b5d48;font-size:0.8rem;">Final mint on XDC may take a few minutes.</span>`
                 );
 
                 try { await loadBalances(); } catch (_) {}
@@ -6276,7 +6523,7 @@
                 showBridgeAlertXdcToCelo(
                     'alert-success',
                     `${preflightWarning ? `${preflightWarning}<br>` : ''}✅ Bridge submitted to Celo!<br>
-                    <div style="margin:0.45rem 0 0.35rem; padding:0.45rem 0.55rem; border-radius:8px; border:1px solid rgba(255,255,255,0.14); background:rgba(15,23,42,0.4); color:rgba(255,255,255,0.86); font-size:0.79rem; line-height:1.5;">
+                    <div style="margin:0.45rem 0 0.35rem; padding:0.45rem 0.55rem; border-radius:8px; border:1px solid #e9e2d6; background:#fbfaf8; color:#3a3226; font-size:0.79rem; line-height:1.5;">
                         <strong>From:</strong> ${sourceToken} (XDC Network)<br>
                         <strong>To:</strong> ${targetToken} (Celo Mainnet)<br>
                         <strong>Gross:</strong> ${_fmtBridgeAmountXdcToCelo(grossReceive)}<br>
@@ -6284,7 +6531,7 @@
                         <strong>Net Est. Receive:</strong> ${_fmtBridgeAmountXdcToCelo(netReceive)}
                     </div>
                     <a class="tx-link" href="https://xdcscan.com/tx/${bridgeTx}" target="_blank" rel="noopener">View on XDCScan ↗ ${bridgeTx.substring(0,10)}...${bridgeTx.slice(-8)}</a><br>
-                    <span style="color:rgba(255,255,255,0.7);font-size:0.8rem;">Final mint on Celo may take a few minutes.</span>`
+                    <span style="color:#6b5d48;font-size:0.8rem;">Final mint on Celo may take a few minutes.</span>`
                 );
                 setTimeout(() => { loadXdcGdBalance(); loadXdcNativeBalance(); }, 4000);
             } catch (err) {
