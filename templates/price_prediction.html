@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Price Prediction - GoodMarket</title>
+    <meta name="theme-color" content="#f97316">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -744,6 +745,193 @@
             .live-tf { font-size: 0.68rem; }
             .live-timer { font-size: 0.7rem; }
         }
+
+        /* ─────────────────────────────────────────────────────────────
+           Soft Sunrise — light theme (2026-08)
+           Matches the wallet/profile pages: warm cream canvas, white
+           cards, soft orange accents. Appended AFTER the original dark
+           theme so equal-specificity rules here win — no original rule
+           was edited.
+           ───────────────────────────────────────────────────────────── */
+        :root {
+            --accent-rgb: 232,114,10;
+            --gold: #f5a623;
+            --gold-rgb: 245,166,35;
+            --gold-deep: #d97e0a;
+            --text: #292524;
+            --text-dim: #6b5d48;
+            --text-muted: #8a8378;
+            --card-border: #e9e2d6;
+            --serif: 'Fraunces', 'Georgia', serif;
+        }
+
+        body {
+            background: #f7f4ef;
+            background-image: radial-gradient(circle at 85% 0%, rgba(var(--accent-rgb),0.10), transparent 40%);
+            color: var(--text);
+        }
+
+        .navbar {
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--card-border);
+            box-shadow: 0 1px 12px rgba(67,56,43,0.06);
+        }
+        .nav-brand {
+            background: linear-gradient(135deg, #10b981, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .back-btn { background: linear-gradient(135deg, #f97316, #ea580c); }
+
+        .header h1 {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header p { color: var(--text-dim); }
+        .reward-badge { background: linear-gradient(135deg, #f5a623, #ea580c); }
+
+        .price-card {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 4px 16px rgba(67,56,43,0.05);
+        }
+        .price-card:hover, .price-card.selected {
+            border-color: #16a34a;
+            background: rgba(22,163,74,0.08);
+        }
+        .price-card .symbol { color: #15803d; }
+        .price-card .price-value { color: var(--text); }
+        .price-card .price-label { color: var(--text-muted); }
+
+        .price-card.trend-up .sparkline path.line,
+        .price-card.trend-up .change { color: #16a34a; stroke: #16a34a; fill: #16a34a; }
+
+        .price-error {
+            background: rgba(220,38,38,0.08);
+            border-color: rgba(220,38,38,0.3);
+            color: #b91c1c;
+        }
+
+        .prediction-form {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+        .prediction-form h2 { color: #15803d; }
+        .form-label { color: var(--text-dim); }
+
+        .opt-btn {
+            border-color: var(--card-border);
+            background: #fbfaf8;
+            color: var(--text-dim);
+        }
+        .opt-btn:hover {
+            border-color: rgba(22,163,74,0.5);
+            color: var(--text);
+        }
+        .opt-btn.selected-up { border-color: #16a34a; background: rgba(22,163,74,0.15); color: #15803d; }
+        .opt-btn.selected-down { border-color: #dc2626; background: rgba(220,38,38,0.12); color: #b91c1c; }
+        .opt-btn.selected-crypto { border-color: #0891b2; background: rgba(8,145,178,0.12); color: #0e7490; }
+        .opt-btn.selected-time { border-color: #7c3aed; background: rgba(124,58,237,0.12); color: #6d28d9; }
+
+        .submit-btn { background: linear-gradient(135deg, #16a34a, #0d9488); }
+        .submit-btn:hover:not(:disabled) { box-shadow: 0 8px 25px rgba(22,163,74,0.35); }
+
+        .active-prediction {
+            background: linear-gradient(135deg, rgba(22,163,74,0.10), rgba(8,145,178,0.10));
+            border-color: rgba(22,163,74,0.4);
+        }
+        .active-prediction h2 { color: #15803d; }
+        .detail-item { background: #ffffff; }
+        .detail-label { color: var(--text-muted); }
+        .detail-value { color: var(--text); }
+        .countdown { color: #c2410c; }
+        .countdown-label { color: var(--text-muted); }
+
+        .progress-track { background: rgba(67,56,43,0.12); }
+        .progress-fill { background: linear-gradient(90deg, #16a34a, #0d9488); }
+
+        .pl-tracker {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+        }
+        .pl-tracker .pl-label { color: var(--text-muted); }
+        .pl-tracker .pl-price { color: var(--text); }
+        .pl-tracker.winning { border-color: rgba(22,163,74,0.45); }
+        .pl-tracker.winning .pl-change, .pl-tracker.winning .pl-status { color: #15803d; }
+        .pl-tracker.winning .pl-status { background: rgba(22,163,74,0.15); }
+        .pl-tracker.losing { border-color: rgba(220,38,38,0.45); }
+        .pl-tracker.losing .pl-change, .pl-tracker.losing .pl-status { color: #b91c1c; }
+        .pl-tracker.losing .pl-status { background: rgba(220,38,38,0.12); }
+        .pl-tracker.neutral .pl-change, .pl-tracker.neutral .pl-status { color: var(--text-dim); }
+        .pl-tracker.neutral .pl-status { background: rgba(67,56,43,0.10); }
+
+        .result-banner.won {
+            background: linear-gradient(135deg, rgba(22,163,74,0.15), rgba(13,148,136,0.15));
+            border-color: #16a34a;
+        }
+        .result-banner.lost {
+            background: linear-gradient(135deg, rgba(220,38,38,0.12), rgba(220,38,38,0.06));
+            border-color: #dc2626;
+        }
+        .result-banner.won h3 { color: #15803d; }
+        .result-banner.lost h3 { color: #b91c1c; }
+
+        .history-section {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+        .history-section h2 { color: #b45309; }
+        .history-item { background: #fbfaf8; }
+        .history-crypto { color: #0e7490; }
+        .history-direction.up { background: rgba(22,163,74,0.15); color: #15803d; }
+        .history-direction.down { background: rgba(220,38,38,0.12); color: #b91c1c; }
+        .history-prices { color: var(--text-muted); }
+        .status-won { background: rgba(22,163,74,0.15); color: #15803d; }
+        .status-lost { background: rgba(220,38,38,0.12); color: #b91c1c; }
+        .status-pending { background: rgba(217,119,6,0.12); color: #92400e; }
+        .history-timeframe { color: var(--text-muted); }
+        .empty-history { color: var(--text-muted); }
+
+        .notification {
+            background: #ffffff;
+            border-color: rgba(22,163,74,0.5);
+            color: var(--text);
+            box-shadow: 0 8px 30px rgba(67,56,43,0.18);
+        }
+
+        .mute-toggle {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+            color: var(--text-dim);
+        }
+        .mute-toggle:hover { border-color: rgba(22,163,74,0.5); color: var(--text); }
+
+        .live-section {
+            background: #ffffff;
+            border-color: var(--card-border);
+            box-shadow: 0 6px 24px rgba(67,56,43,0.06);
+        }
+        .live-section h2 { color: var(--text); }
+        .live-count-badge { background: rgba(22,163,74,0.12); color: #15803d; }
+        .live-item {
+            background: #fbfaf8;
+            border-color: var(--card-border);
+        }
+        .live-item.is-me { border-color: rgba(22,163,74,0.4); background: rgba(22,163,74,0.08); }
+        .live-wallet { color: var(--text-muted); }
+        .live-item.is-me .live-wallet { color: #15803d; }
+        .live-crypto { color: var(--text); }
+        .live-dir.up { background: rgba(22,163,74,0.15); color: #15803d; }
+        .live-dir.down { background: rgba(220,38,38,0.12); color: #b91c1c; }
+        .live-tf { color: var(--text-muted); }
+        .live-timer { color: #b45309; }
+        .live-timer.resolving { color: var(--text-muted); }
+        .live-empty { color: var(--text-muted); }
     </style>
 </head>
 <body>
@@ -861,13 +1049,13 @@
                 </div>
             </div>
 
-            <div id="selectionSummary" style="background: rgba(0,0,0,0.2); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; display: none; text-align: center; color: rgba(255,255,255,0.8); font-size: 0.95rem;">
+            <div id="selectionSummary" style="background: rgba(67,56,43,0.06); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; display: none; text-align: center; color: var(--text-dim); font-size: 0.95rem;">
             </div>
 
             <button type="button" class="submit-btn" id="submitBtn" disabled>
                 Submit Prediction
             </button>
-            <p id="formMsg" style="text-align: center; margin-top: 0.75rem; font-size: 0.85rem; color: rgba(255,255,255,0.5);"></p>
+            <p id="formMsg" style="text-align: center; margin-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted);"></p>
         </div>
 
         <!-- Live Players -->
@@ -1235,7 +1423,7 @@
                 const reward = TIMEFRAME_REWARDS[selectedTimeframe];
                 const label = TIMEFRAME_LABELS[selectedTimeframe];
                 summary.style.display = 'block';
-                summary.innerHTML = `You predict <strong>${selectedCrypto}</strong> will go <strong>${dirIcon} ${selectedDirection}</strong> from <strong>${price}</strong> in <strong>${label}</strong>. Reward: <strong style="color:#10b981;">+${reward} G$</strong>`;
+                summary.innerHTML = `You predict <strong>${selectedCrypto}</strong> will go <strong>${dirIcon} ${selectedDirection}</strong> from <strong>${price}</strong> in <strong>${label}</strong>. Reward: <strong style="color:#15803d;">+${reward} G$</strong>`;
                 btn.disabled = false;
             } else {
                 summary.style.display = 'none';
