@@ -1937,6 +1937,239 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         });
     }
 
+    // ── Daily Task (Twitter/Telegram) ──────────────────────────
+    // Surfaced ONLY from the "More Ways To Earn G$" bottom sheet, mirroring
+    // the Referral modal: the status banner, platform selection, submission
+    // form and transaction history all live inside the one wallet modal.
+    // Reuses the same /api/daily-task/* endpoints as the dashboard section.
+    let _wlDailySelectedPlatform = null;
+
+    function _wlDailyEl(id) { return document.getElementById(id); }
+
+    function _wlDailyStatusBanner(statusData) {
+        const banner = _wlDailyEl('wlDailyTaskStatusBanner');
+        if (!banner) return;
+        if (!statusData) { banner.style.display = 'none'; return; }
+        let color, label, text;
+        if (statusData.has_pending_submission) {
+            color = '#d97706'; label = '⏳ Under Review';
+            text = statusData.status_message || 'Your ' + (statusData.pending_platform || '') + ' submission is under review. You can only submit to ONE platform per day.';
+        } else if (!statusData.can_claim) {
+            color = '#dc2626'; label = '🔒 On Cooldown';
+            if (statusData.next_claim_time) {
+                const nct = new Date(statusData.next_claim_time);
+                if (!isNaN(nct.getTime())) {
+                    text = 'Next claim available ' + nct.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '.';
+                } else {
+                    text = 'Already claimed today — come back tomorrow.';
+                }
+            } else {
+                text = 'Already claimed today — come back tomorrow.';
+            }
+        } else {
+            color = '#15803d'; label = '✅ Available';
+            text = 'Claim your 100 G$ daily reward now!';
+        }
+        banner.innerHTML = '<div style="display:flex;align-items:center;gap:0.5rem;background:var(--card-soft);border:1px solid ' + color + '55;border-radius:12px;padding:0.7rem 0.85rem;font-size:0.82rem;line-height:1.5;color:var(--text);">'
+            + '<span style="font-weight:700;color:' + color + ';flex-shrink:0;">' + label + '</span>'
+            + '<span style="color:var(--text-dim);flex:1;">' + text + '</span></div>';
+        banner.style.display = 'block';
+    }
+
+    function _wlDailyLoadHistory() {
+        const listEl = _wlDailyEl('wlDailyTaskHistoryList');
+        const section = _wlDailyEl('wlDailyTaskHistorySection');
+        if (!listEl || !section) return;
+        section.style.display = 'block';
+        listEl.innerHTML = '<div class="spinner" style="width:22px;height:22px;margin:0.5rem auto;"></div>';
+        fetch('/api/daily-task/history?limit=50').then(function (resp) { return resp.json(); }).then(function (data) {
+            if (!data || !data.success) throw new Error((data && data.error) || 'Failed to load history');
+            if (!data.transactions || data.transactions.length === 0) {
+                listEl.innerHTML = '<div style="text-align:center;padding:1.5rem 0.5rem;color:var(--text-muted);font-size:0.82rem;">📭 No transaction history yet. Complete a daily task to earn 100 G$!</div>';
+                return;
+            }
+            const statusColors = {
+                completed: { bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', text: '#16a34a' },
+                approved:  { bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', text: '#16a34a' },
+                pending:   { bg: 'rgba(217,119,6,0.12)', border: 'rgba(217,119,6,0.3)', text: '#d97706' },
+                rejected:  { bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.3)', text: '#dc2626' },
+                failed:    { bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.3)', text: '#dc2626' }
+            };
+            listEl.innerHTML = data.transactions.map(function (tx) {
+                const platformIcon = tx.platform === 'twitter' ? '🐦' : (tx.platform === 'telegram' ? '📱' : '💬');
+                const platformName = tx.platform === 'twitter' ? 'Twitter' : (tx.platform === 'telegram' ? 'Telegram' : (tx.platform || 'Task'));
+                const sc = statusColors[tx.status] || { bg: 'rgba(67,56,43,0.06)', border: 'var(--card-border)', text: 'var(--text-dim)' };
+                const labelMap = { completed: 'Approved', approved: 'Approved', pending: 'Pending', rejected: 'Rejected', failed: 'Failed' };
+                const badge = '<span style="font-size:0.62rem;padding:0.15rem 0.4rem;border-radius:10px;background:' + sc.bg + ';border:1px solid ' + sc.border + ';color:' + sc.text + ';font-weight:600;">' + (labelMap[tx.status] || tx.status) + '</span>';
+                const reason = tx.status === 'rejected' && tx.rejection_reason
+                    ? '<div style="font-size:0.68rem;color:#dc2626;margin-top:0.25rem;">Reason: ' + tx.rejection_reason + '</div>' : '';
+                const link = tx.explorer_url
+                    ? '<a href="' + tx.explorer_url + '" target="_blank" rel="noopener" style="font-size:0.68rem;color:#2563eb;text-decoration:none;">View TX ↗</a>' : '';
+                const amt = parseFloat(tx.reward_amount) || 0;
+                return '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:0.55rem 0.25rem;border-bottom:1px solid var(--card-border);gap:0.5rem;">'
+                    + '<div style="flex:1;min-width:0;">'
+                    + '<div style="display:flex;align-items:center;gap:0.4rem;font-size:0.8rem;font-weight:600;color:var(--text);">' + platformIcon + ' ' + platformName + ' ' + badge + '</div>'
+                    + '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.15rem;">' + (tx.created_at ? new Date(tx.created_at).toLocaleString() : '') + '</div>'
+                    + reason + link
+                    + '</div>'
+                    + '<div style="flex-shrink:0;text-align:right;font-size:0.82rem;font-weight:700;color:' + (tx.status === 'completed' || tx.status === 'approved' ? '#16a34a' : 'var(--text-dim)') + ';">'
+                    + (tx.status === 'completed' || tx.status === 'approved' ? '+' : '') + amt + ' G$</div>'
+                    + '</div>';
+            }).join('');
+        }).catch(function (err) {
+            listEl.innerHTML = '<div style="text-align:center;padding:1.25rem 0.5rem;color:#dc2626;font-size:0.82rem;">❌ Failed to load history: ' + (err && err.message ? err.message : 'network error') + '</div>';
+        });
+    }
+
+    function openDailyTaskModal() {
+        openModal('dailyTaskModal');
+        _wlDailySelectedPlatform = null;
+        _wlDailyEl('wlPlatformSelection').style.display = 'block';
+        _wlDailyEl('wlTaskSubmissionForm').style.display = 'none';
+        const urlInput = _wlDailyEl('wlTaskUrlInput');
+        if (urlInput) urlInput.value = '';
+        _wlDailyEl('wlDailyTaskStatusMessage').style.display = 'none';
+        // Live status + transaction history, exactly like the referral modal
+        // loads its stats on open.
+        fetch('/api/daily-task/status').then(function (resp) { return resp.json(); })
+            .then(function (data) { _wlDailyStatusBanner(data); })
+            .catch(function () { _wlDailyStatusBanner(null); });
+        _wlDailyLoadHistory();
+    }
+
+    function selectDailyTaskPlatform(platform) {
+        _wlDailySelectedPlatform = platform;
+        _wlDailyEl('wlPlatformSelection').style.display = 'none';
+        _wlDailyEl('wlTaskSubmissionForm').style.display = 'block';
+        _wlDailyEl('wlDailyTaskStatusMessage').style.display = 'none';
+
+        const platformName = platform === 'twitter' ? 'Twitter/X' : 'Telegram';
+        _wlDailyEl('wlSelectedPlatformName').textContent = platformName;
+        _wlDailyEl('wlPlatformUrlLabel').textContent = platformName;
+
+        const urlInput = _wlDailyEl('wlTaskUrlInput');
+        urlInput.placeholder = platform === 'twitter' ? 'https://twitter.com/user/status/123456' : 'https://t.me/GoodDollarX/123456';
+
+        loadDailyTaskMessage(platform);
+    }
+
+    function goBackToDailyTaskPlatformSelection() {
+        _wlDailySelectedPlatform = null;
+        _wlDailyEl('wlPlatformSelection').style.display = 'block';
+        _wlDailyEl('wlTaskSubmissionForm').style.display = 'none';
+    }
+
+    async function loadDailyTaskMessage(platform) {
+        const messageDisplay = _wlDailyEl('wlTaskMessageDisplay');
+        if (!messageDisplay) return;
+        messageDisplay.innerHTML = '<div class="spinner" style="width:22px;height:22px;"></div>';
+        const endpoint = platform === 'twitter' ? '/api/twitter-task/custom-message' : '/api/telegram-task/custom-message';
+        try {
+            const resp = await fetch(endpoint);
+            const result = await resp.json();
+            if (result && result.success) {
+                window._wlDailyCustomMessage = result.custom_message;
+                messageDisplay.textContent = result.custom_message;
+            } else {
+                messageDisplay.innerHTML = '<span style="color:#dc2626;">Error loading message. Please try again.</span>';
+            }
+        } catch (e) {
+            messageDisplay.innerHTML = '<span style="color:#dc2626;">Network error loading message. Please try again.</span>';
+        }
+    }
+
+    function copyDailyTaskMessage() {
+        const msg = window._wlDailyCustomMessage;
+        if (!msg) return;
+        navigator.clipboard.writeText(msg).then(function () {
+            _wlDailyFlash('✅ Message copied to clipboard!', '#15803d');
+        }).catch(function () {
+            const ta = document.createElement('textarea');
+            ta.value = msg;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus(); ta.select();
+            try { document.execCommand('copy'); _wlDailyFlash('✅ Message copied to clipboard!', '#15803d'); }
+            catch (e) { _wlDailyFlash('❌ Failed to copy message. Please copy it manually.', '#dc2626'); }
+            document.body.removeChild(ta);
+        });
+    }
+
+    function _wlDailyFlash(msg, color) {
+        const statusEl = _wlDailyEl('wlDailyTaskStatusMessage');
+        if (!statusEl) return;
+        statusEl.style.display = 'block';
+        statusEl.style.color = color || 'var(--text-dim)';
+        statusEl.textContent = msg;
+        setTimeout(function () { statusEl.style.display = 'none'; }, 3000);
+    }
+
+    async function submitWalletDailyTask(event) {
+        if (!_wlDailySelectedPlatform) {
+            _wlDailyFlash('⚠️ Please select a platform first.', '#d97706');
+            return;
+        }
+        const taskUrl = _wlDailyEl('wlTaskUrlInput').value.trim();
+        if (!taskUrl) {
+            _wlDailyFlash('⚠️ Please enter your ' + (_wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram') + ' post URL.', '#d97706');
+            return;
+        }
+        if (_wlDailySelectedPlatform === 'twitter') {
+            if (!taskUrl.startsWith('https://twitter.com/') && !taskUrl.startsWith('https://x.com/')) {
+                _wlDailyFlash('⚠️ Please enter a valid Twitter post URL.', '#d97706');
+                return;
+            }
+        } else if (_wlDailySelectedPlatform === 'telegram') {
+            if (!taskUrl.startsWith('https://t.me/')) {
+                _wlDailyFlash('⚠️ Please enter a valid Telegram post URL.', '#d97706');
+                return;
+            }
+        }
+
+        const btn = _wlDailyEl('wlSubmitDailyTaskBtn');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '⏳ Verifying...';
+        try {
+            const resp = await fetch('/api/daily-task/claim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ platform: _wlDailySelectedPlatform, post_url: taskUrl })
+            });
+            const result = await resp.json();
+            if (result && result.success) {
+                if (result.pending) {
+                    const displayName = _wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram';
+                    _wlDailyFlash('✅ Submission successful! Your ' + displayName + ' post is waiting for admin approval.', '#15803d');
+                    _wlDailyEl('wlTaskSubmissionForm').style.display = 'none';
+                    _wlDailyEl('wlPlatformSelection').style.display = 'none';
+                    const statusData = { has_pending_submission: true, pending_platform: _wlDailySelectedPlatform, can_claim: false };
+                    _wlDailyStatusBanner(statusData);
+                    _wlDailyLoadHistory();
+                } else {
+                    _wlDailyFlash('🎉 Successfully earned 100 G$ from ' + (_wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram') + ' task!', '#15803d');
+                    _wlDailySelectedPlatform = null;
+                    _wlDailyEl('wlTaskSubmissionForm').style.display = 'none';
+                    _wlDailyEl('wlPlatformSelection').style.display = 'block';
+                    _wlDailyEl('wlTaskUrlInput').value = '';
+                    fetch('/api/daily-task/status').then(function (r) { return r.json(); })
+                        .then(function (data) { _wlDailyStatusBanner(data); })
+                        .catch(function () {});
+                    _wlDailyLoadHistory();
+                }
+            } else {
+                const errMsg = (result && (result.error || result.message)) || 'Failed to claim task';
+                _wlDailyFlash('❌ ' + errMsg, '#dc2626');
+            }
+        } catch (e) {
+            _wlDailyFlash('❌ Network error. Please check your connection and try again.', '#dc2626');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
     function clearAlert(id) {
         const el = document.getElementById(id);
         el.className = 'alert';
