@@ -1047,8 +1047,11 @@
         }
         /* The floating GoodMarket Agent launcher (z-index 9999) outranks the
            modal overlay (200) and lands right on top of the submit button.
-           Hide it while any bottom-sheet modal is open. */
-        body.gm-modal-open .gm-ai-agent { display: none; }
+           Hide it while any modal OR bottom navigation sheet is open. The
+           :has() selector covers both the modal-overlay modals (gm-modal-open
+           body class) and the bn-sheet bottom sheets (their own .open class). */
+        body.gm-modal-open .gm-ai-agent,
+        body:has(.bn-sheet-overlay.open) .gm-ai-agent { display: none; }
         @keyframes slideUp {
             from { transform: translateY(100%); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
