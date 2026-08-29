@@ -3375,6 +3375,70 @@
             </div>
         </div>
     </div>
+
+    <!-- Daily Task Modal (Twitter/Telegram choice) — surfaced only from the
+         "More Ways To Earn G$" bottom sheet, same pattern as the Referral
+         modal. Status, platform selection, submission form and transaction
+         history all live inside this single modal (wallet-scoped wl* ids). -->
+    <div class="modal-overlay" id="dailyTaskModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">📱 Daily Task</div>
+
+            <!-- Status banner (Available / Under Review / On Cooldown) -->
+            <div id="wlDailyTaskStatusBanner" style="display:none;margin-bottom:1rem;"></div>
+
+            <!-- Platform Selection -->
+            <div id="wlPlatformSelection" style="margin-bottom:1rem;">
+                <div style="font-size:0.82rem;color:var(--text-dim);line-height:1.5;margin-bottom:0.75rem;">
+                    Choose ONE platform to post and earn <strong style="color:#16a34a;">100 G$</strong> today:
+                </div>
+                <div style="display:flex;gap:0.6rem;flex-direction:column;">
+                    <button onclick="selectDailyTaskPlatform('twitter')" class="platform-btn" style="padding:0.9rem;background:linear-gradient(135deg,#1da1f2,#0d8bd9);border:none;color:#fff;border-radius:14px;cursor:pointer;font-weight:700;font-size:0.95rem;display:flex;align-items:center;justify-content:center;gap:0.5rem;">
+                        🐦 Twitter/X
+                    </button>
+                    <button onclick="selectDailyTaskPlatform('telegram')" class="platform-btn" style="padding:0.9rem;background:linear-gradient(135deg,#0088cc,#006699);border:none;color:#fff;border-radius:14px;cursor:pointer;font-weight:700;font-size:0.95rem;display:flex;align-items:center;justify-content:center;gap:0.5rem;">
+                        📱 Telegram
+                    </button>
+                </div>
+            </div>
+
+            <!-- Task Submission Form (hidden until a platform is chosen) -->
+            <div id="wlTaskSubmissionForm" style="display:none;">
+                <div style="font-size:0.82rem;color:var(--text-dim);line-height:1.5;margin-bottom:0.75rem;">
+                    Post the message below to <strong id="wlSelectedPlatformName"></strong>,
+                    then copy your post link and submit it here to claim your 100 G$ reward!
+                </div>
+                <div id="wlTaskMessageDisplay" style="background:var(--card-soft);border:1px solid var(--card-border);padding:0.9rem;border-radius:12px;margin-bottom:0.75rem;position:relative;cursor:text;user-select:text;font-size:0.85rem;color:var(--text);white-space:pre-wrap;line-height:1.6;">
+                    <div class="spinner" style="width:22px;height:22px;"></div>
+                </div>
+                <button onclick="copyDailyTaskMessage()" class="btn-secondary" style="margin-bottom:0.75rem;width:100%;padding:0.7rem;">📋 Copy Message</button>
+
+                <div style="margin-bottom:0.75rem;">
+                    <label style="display:block;margin-bottom:0.4rem;color:var(--text);font-size:0.85rem;"><span id="wlPlatformUrlLabel"></span> Post URL:</label>
+                    <input type="url" id="wlTaskUrlInput" placeholder="" style="width:100%;padding:0.7rem;background:var(--card-soft);border:1px solid var(--card-border);border-radius:10px;color:var(--text);margin-bottom:0.75rem;font-size:0.9rem;-webkit-appearance:none;" />
+                </div>
+
+                <div style="display:flex;gap:0.6rem;flex-direction:column;">
+                    <button onclick="goBackToDailyTaskPlatformSelection()" class="btn-secondary" style="padding:0.7rem;font-size:0.9rem;">← Back to Platform Selection</button>
+                    <button id="wlSubmitDailyTaskBtn" onclick="submitWalletDailyTask(event)" class="btn-primary" style="padding:0.9rem;font-size:0.95rem;cursor:pointer;touch-action:manipulation;">✅ Submit &amp; Claim 100 G$</button>
+                </div>
+            </div>
+
+            <!-- Status message shown after a submission attempt -->
+            <div id="wlDailyTaskStatusMessage" style="display:none;font-size:0.85rem;line-height:1.5;margin-bottom:0.75rem;"></div>
+
+            <!-- Transaction history (loaded when the modal opens) -->
+            <div id="wlDailyTaskHistorySection" style="margin-top:0.75rem;display:none;">
+                <div style="font-size:0.78rem;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.4rem;">📋 Transaction History</div>
+                <div id="wlDailyTaskHistoryList" style="max-height:200px;overflow-y:auto;"></div>
+            </div>
+
+            <div class="modal-sheet-footer">
+                <button class="btn-secondary" onclick="closeModal('dailyTaskModal')">Close</button>
+            </div>
+        </div>
+    </div>
 <!--
       DOUBLE UBI bonus modal — a DEDICATED, prominent notification that shows
       AFTER a Celo claim when the extra G$ bonus (equal to the claimed amount,
@@ -3582,6 +3646,10 @@
             <div class="bn-sheet-item" onclick="bnGo(function(){ handleDashboardFromWallet(); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#6366f1,#2563eb);color:#fff;">📊</div>
                 <div class="bn-sheet-name">Dashboard</div>
+            </div>
+            <div class="bn-sheet-item" onclick="bnGo(function(){ openDailyTaskModal(); })">
+                <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#1da1f2,#0d8bd9);color:#fff;">📱</div>
+                <div class="bn-sheet-name">Daily Task</div>
             </div>
             <div class="bn-sheet-item" onclick="bnGo(function(){ openReferralModal(); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;">🤝</div>
