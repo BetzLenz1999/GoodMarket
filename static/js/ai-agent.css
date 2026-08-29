@@ -1,7 +1,7 @@
 .gm-ai-agent {
   position: fixed;
   right: 18px;
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--gm-ai-bottom, 24px) + env(safe-area-inset-bottom, 0px));
   z-index: 9999;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -176,7 +176,11 @@
 @media (max-width: 640px) {
   .gm-ai-agent {
     right: 10px;
-    bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+    /* The launcher must never cover the wallet bottom nav. The exact nav
+       height is set at runtime from the nav's measured height (see
+       positionAgentLauncher in ai-agent.js) so it stays correct when the
+       nav re-wraps or grows on this page. */
+    bottom: calc(var(--gm-ai-bottom, 92px) + env(safe-area-inset-bottom, 0px));
   }
 
   .gm-ai-panel {
