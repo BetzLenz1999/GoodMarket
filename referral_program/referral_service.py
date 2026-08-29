@@ -578,14 +578,17 @@ class ReferralService:
                 logger.info(f"Reward already logged for {wallet_address[:8]}... ({reward_type}) - skipping duplicate")
                 return {"success": True, "skipped": True, "existing": existing.data[0]}
 
-        # Check if there's a pending reward log entry
+        # Check if there's a pending reward log entry. 'failed' is included so
+        # an auto-retry (background reconciler) or admin retry of a previously
+        # failed leg updates THE SAME row in place (failed -> completed /
+        # pending_disbursed) instead of inserting a duplicate log row.
         def _pending_reward_query():
             query = supabase.table('referral_rewards_log') \
                 .select('id') \
                 .eq('wallet_address', wallet_address) \
                 .eq('reward_type', reward_type) \
                 .eq('referral_code', referral_code) \
-                .in_('status', ['pending', 'pending_disbursed', 'pending_face_verification'])
+                .in_('status', ['pending', 'pending_disbursed', 'pending_face_verification', 'failed'])
             if referral_id is not None:
                 query = query.eq('referral_id', referral_id)
             return query.limit(1).execute()
@@ -938,14 +941,25 @@ class ReferralService:
                     f"referrer={referrer_wallet[:8]}... referee={referee_wallet[:8]}..."
                 )
             elif referrer_result.get('pending') or referee_result.get('pending'):
+                # The row lands in pending_disbursed (auto-retried by the
+                # reconciler). Record WHY — it is not always the G$ balance: it
+                # can be insufficient_gas, a nonce collision, or a
+                # submitted_unconfirmed tx. Store the specific reason so the
+                # admin dashboard doesn't blame "Insufficient REFERRAL_KEY
+                # balance" when gas/nonce was the actual cause.
+                pending_reasons = []
+                for label, result in (('Referrer', referrer_result), ('Referee', referee_result)):
+                    if result.get('pending'):
+                        pending_reasons.append(f"{label}: {result.get('error', 'pending')}")
+                detail = " | ".join(pending_reasons) or 'Insufficient REFERRAL_KEY balance'
                 self.update_referral_status(
                     referee_wallet, 'pending_disbursed',
-                    'Insufficient REFERRAL_KEY balance',
+                    detail[:500],
                     referral_id
                 )
                 logger.warning(
-                    f"⚠️ Referral reward pending disbursement (insufficient balance) "
-                    f"for {referral_code} | referrer_status={referrer_status} "
+                    f"⚠️ Referral reward pending disbursement for {referral_code} | "
+                    f"detail={detail} referrer_status={referrer_status} "
                     f"referee_status={referee_status}"
                 )
             else:
@@ -996,12 +1010,39 @@ class ReferralService:
                 )
             return {"success": False, "error": str(e)}
 
+    def _should_retry_failed_rewards(self) -> bool:
+        """Whether previously 'failed' reward legs are picked up for auto-retry.
+
+        Env knob ``REFERRAL_RETRY_FAILED_AFTER_SEC``: when set (default 900),
+        failed legs are retried automatically by the reconciler once they are at
+        least that old. Set it to 0 to disable entirely (failed stays
+        admin-retry-only)."""
+        try:
+            return int(os.getenv('REFERRAL_RETRY_FAILED_AFTER_SEC', '900')) > 0
+        except (TypeError, ValueError):
+            return True
+
+    def _failed_retry_cutoff_iso(self) -> str:
+        """ISO timestamp cutoff for auto-retrying a 'failed' reward leg: now
+        minus ``REFERRAL_RETRY_FAILED_AFTER_SEC`` (default 900s). Rows failed
+        more recently are left alone (likely still failing / being retried by
+        another process)."""
+        from datetime import timedelta
+        try:
+            seconds = int(os.getenv('REFERRAL_RETRY_FAILED_AFTER_SEC', '900'))
+        except (TypeError, ValueError):
+            seconds = 900
+        return (datetime.now(timezone.utc) - timedelta(seconds=max(0, seconds))).isoformat()
+
     def process_pending_disbursements(self) -> dict:
         """
         Attempt to disburse all pending_disbursed referral rewards.
         Called when admin triggers it or automatically when REFERRAL_KEY is topped up.
-        Retries rewards with status 'pending' (awaiting face verification) and 'pending_disbursed' (awaiting balance).
-        
+        Retries rewards with status 'pending' (awaiting face verification),
+        'pending_disbursed' (awaiting balance / gas) AND 'failed' (a prior
+        attempt hit a transient error such as a nonce collision — safe to retry
+        because disbursement is duplicate-protected).
+
         Uses duplicate protection to prevent double disbursement when the same referral
         appears in both referrer and referee pending rewards.
         """
@@ -1011,11 +1052,20 @@ class ReferralService:
         if not supabase:
             return {"success": False, "error": "Database not available"}
 
-        # Fetch both 'pending' (awaiting face verification) and 'pending_disbursed' (awaiting balance) rewards
+        retry_failed_rewards = self._should_retry_failed_rewards()
+
+        # Fetch 'pending' (awaiting face verification), 'pending_disbursed'
+        # (awaiting balance) and — when enabled — previously 'failed' legs. A
+        # failed leg from a nonce collision or gas hiccup is transient; once the
+        # REFERRAL_KEY wallet is funded/healthy the reconciler pays it out
+        # automatically instead of leaving it visible only as "Failed (retry)".
+        statuses = ['pending', 'pending_disbursed']
+        if retry_failed_rewards:
+            statuses.append('failed')
         pending_rewards = _safe(
             lambda: supabase.table('referral_rewards_log')
                 .select('*')
-                .in_('status', ['pending', 'pending_disbursed'])
+                .in_('status', statuses)
                 .order('created_at', desc=False)
                 .execute(),
             op="get pending referral rewards"
@@ -1037,7 +1087,9 @@ class ReferralService:
         failed = 0
         still_pending = 0
         skipped_duplicates = 0
-        
+        now_iso = datetime.now(timezone.utc).isoformat()
+        retry_failed_cutoff = self._failed_retry_cutoff_iso()
+
         for reward in pending_rewards.data:
             wallet = reward.get('wallet_address')
             amount = float(reward.get('reward_amount', 0))
@@ -1047,6 +1099,16 @@ class ReferralService:
             
             referral_id = reward.get('referral_id')
 
+            # A 'failed' leg is only retried after a cooldown so a row that keeps
+            # failing (e.g. a genuinely reverted tx) isn't hammered every 15-min
+            # reconciler tick. The cooldown is measured from the last attempt
+            # (completed_at is stamped on every failure write below).
+            if reward.get('status') == 'failed':
+                last_attempt = reward.get('completed_at') or reward.get('updated_at') or reward.get('created_at')
+                if not last_attempt or str(last_attempt) < retry_failed_cutoff:
+                    skipped_duplicates += 1
+                    continue
+
             # Check if the OTHER side of this exact referral was already completed
             existing = self._is_referral_already_disbursed(referral_code, referral_id=referral_id)
             
@@ -1055,7 +1117,7 @@ class ReferralService:
                 _safe(
                     lambda r_id=reward_id: supabase.table('referral_rewards_log').update({
                         'status': 'completed',
-                        'completed_at': datetime.now(timezone.utc).isoformat()
+                        'completed_at': now_iso
                     }).eq('id', r_id).execute(),
                     op="mark already disbursed reward as completed"
                 )
@@ -1082,6 +1144,33 @@ class ReferralService:
                 skipped_duplicates += 1
                 continue
 
+            # Double-pay guard: a previous attempt may have BROADCAST a tx whose
+            # receipt never confirmed (submitted_unconfirmed). Re-check that
+            # hash on-chain BEFORE re-sending — confirmed → finalize, still
+            # pending → leave queued for the next run, reverted → re-send.
+            prior_tx = reward.get('tx_hash')
+            if prior_tx:
+                prior_status = referral_blockchain_service.check_referral_tx_status(prior_tx)
+                if prior_status == "confirmed":
+                    _safe(
+                        lambda r_id=reward_id, tx=prior_tx: supabase.table('referral_rewards_log').update({
+                            'status': 'completed',
+                            'tx_hash': tx,
+                            'completed_at': now_iso
+                        }).eq('id', r_id).execute(),
+                        op="finalize already-confirmed prior referral tx"
+                    )
+                    processed += 1
+                    logger.info(f"Referral reward already confirmed on-chain: {amount} G$ to {wallet[:8]}... TX: {prior_tx}")
+                    if reward_type == 'referrer':
+                        self.increment_referrer_stats(wallet, amount, referral_code)
+                    continue
+                if prior_status == "pending":
+                    still_pending += 1
+                    logger.info(f"Referral reward prior tx {prior_tx} still confirming on-chain - leaving queued")
+                    continue
+                # reverted → fall through and re-send
+
             # Send blockchain transaction
             result = referral_blockchain_service.disburse_referral_reward(wallet, amount, reward_type)
 
@@ -1090,7 +1179,7 @@ class ReferralService:
                     lambda r_id=reward_id, tx=result.get('tx_hash'): supabase.table('referral_rewards_log').update({
                         'status': 'completed',
                         'tx_hash': tx,
-                        'completed_at': datetime.now(timezone.utc).isoformat()
+                        'completed_at': now_iso
                     }).eq('id', r_id).execute(),
                     op="update pending reward to completed"
                 )
@@ -1112,14 +1201,34 @@ class ReferralService:
                             self.update_referral_status_by_code(referral_code, 'completed')
 
             elif result.get('pending'):
+                # Keep the row queued (pending_disbursed) for the next run. If a
+                # tx was actually broadcast (submitted_unconfirmed), preserve its
+                # hash so the next run re-checks it on-chain instead of re-sending.
+                # Only column-guaranteed fields are written to this table — the
+                # reason detail lives on the `referrals` row error_message.
+                update_data = {
+                    'status': 'pending_disbursed',
+                    'completed_at': now_iso,
+                }
+                if result.get('tx_hash'):
+                    update_data['tx_hash'] = result.get('tx_hash')
+                _safe(
+                    lambda r_id=reward_id, ud=dict(update_data): supabase.table('referral_rewards_log').update(ud).eq('id', r_id).execute(),
+                    op="keep pending reward queued"
+                )
                 still_pending += 1
-                logger.warning(f"Still insufficient balance for {amount} G$ to {wallet[:8]}...")
-                break
+                logger.warning(f"Referral reward still pending ({result.get('error')}) for {amount} G$ to {wallet[:8]}...")
+                # A balance/gas shortfall affects every row in the batch (they
+                # share the one REFERRAL_KEY wallet) — stop hammering the RPC.
+                # Transient nonce/mempool pending results are unrelated to wallet
+                # funding, so keep going for the rest of the batch.
+                if result.get('error') in ('insufficient_balance', 'insufficient_gas'):
+                    break
             else:
                 _safe(
                     lambda r_id=reward_id: supabase.table('referral_rewards_log').update({
                         'status': 'failed',
-                        'completed_at': datetime.now(timezone.utc).isoformat()
+                        'completed_at': now_iso,
                     }).eq('id', r_id).execute(),
                     op="mark reward as failed"
                 )
