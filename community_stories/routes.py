@@ -24,6 +24,19 @@ def community_stories_page():
     return render_template('community_stories.html', 
                          wallet=wallet if wallet and verified else None)
 
+@community_stories_bp.route('/<story_date>')
+def community_stories_showcase_page(story_date):
+    """Public dated page for admin-featured Community Stories tweets."""
+    import re
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', story_date or ''):
+        return redirect('/community-stories')
+    return render_template('community_tweet_showcase.html', story_date=story_date)
+
+@community_stories_bp.route('/featured')
+def community_stories_showcase_latest_page():
+    """Public page for all admin-featured Community Stories tweets."""
+    return render_template('community_tweet_showcase.html', story_date=None)
+
 @community_stories_bp.route('/api/config', methods=['GET'])
 def get_config():
     """Get Community Stories configuration"""
