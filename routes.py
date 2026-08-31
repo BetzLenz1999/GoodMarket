@@ -3553,32 +3553,63 @@ import time as _time_mod
 _featured_tweets_cache = {"data": None, "expires": 0}
 FEATURED_TWEETS_CACHE_TTL = 30  # 30 seconds — fast reflect after admin adds tweet
 
+def _featured_tweet_story_date(tweet):
+    """Return YYYY-MM-DD used for each featured tweet's public story URL."""
+    raw = (tweet or {}).get("showcase_date") or (tweet or {}).get("created_at") or (tweet or {}).get("inserted_at") or ""
+    return str(raw)[:10] if raw else None
+
+def _featured_tweet_public_url(tweet):
+    story_date = _featured_tweet_story_date(tweet)
+    return f"/community-stories/{story_date}" if story_date else "/community-stories/featured"
+
+def _with_featured_tweet_urls(tweets):
+    enriched = []
+    for tweet in tweets or []:
+        item = dict(tweet or {})
+        item["story_date"] = _featured_tweet_story_date(item)
+        item["story_url"] = _featured_tweet_public_url(item)
+        enriched.append(item)
+    return enriched
+
 @routes.route("/api/featured-tweets", methods=["GET"])
 def get_featured_tweets():
-    """Public — returns active featured tweets with in-memory cache."""
+    """Public — returns active featured tweets, optionally filtered by upload date."""
     global _featured_tweets_cache
+    requested_date = (request.args.get("date") or "").strip()
     now = _time_mod.time()
     if _featured_tweets_cache["data"] is not None and now < _featured_tweets_cache["expires"]:
-        return jsonify({"success": True, "tweets": _featured_tweets_cache["data"], "cached": True})
-    try:
-        supabase = get_supabase_client()
-        if not supabase:
-            return jsonify({"success": True, "tweets": [], "cached": False})
-        result = safe_supabase_operation(
-            lambda: supabase.table("community_tweet_showcases")
-                .select("id, tweet_url, tweet_id, label, display_order")
-                .eq("is_active", True)
-                .order("display_order", desc=False)
-                .execute(),
-            fallback_result=type("r", (), {"data": []})(),
-            operation_name="get featured tweets"
-        )
-        tweets = result.data or []
-        _featured_tweets_cache = {"data": tweets, "expires": now + FEATURED_TWEETS_CACHE_TTL}
-        return jsonify({"success": True, "tweets": tweets, "cached": False})
-    except Exception as e:
-        logger.error(f"❌ get_featured_tweets: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        tweets = _featured_tweets_cache["data"]
+    else:
+        try:
+            supabase = get_supabase_client()
+            if not supabase:
+                return jsonify({"success": True, "tweets": [], "cached": False})
+            result = safe_supabase_operation(
+                lambda: supabase.table("community_tweet_showcases")
+                    .select("*")
+                    .eq("is_active", True)
+                    .order("display_order", desc=False)
+                    .execute(),
+                fallback_result=type("r", (), {"data": []})(),
+                operation_name="get featured tweets"
+            )
+            tweets = _with_featured_tweet_urls(result.data or [])
+            _featured_tweets_cache = {"data": tweets, "expires": now + FEATURED_TWEETS_CACHE_TTL}
+        except Exception as e:
+            logger.error(f"❌ get_featured_tweets: {e}")
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    filtered = [t for t in tweets if t.get("story_date") == requested_date] if requested_date else tweets
+    return jsonify({"success": True, "tweets": filtered, "cached": now < _featured_tweets_cache.get("expires", 0)})
+
+@routes.route("/api/featured-tweets/dates", methods=["GET"])
+def get_featured_tweet_dates():
+    """Public — return upload dates that have active featured tweets."""
+    resp = get_featured_tweets()
+    data = resp.get_json() if hasattr(resp, "get_json") else {}
+    tweets = (data or {}).get("tweets") or []
+    dates = sorted({t.get("story_date") for t in tweets if t.get("story_date")}, reverse=True)
+    return jsonify({"success": True, "dates": dates})
 
 @routes.route("/api/admin/featured-tweets", methods=["GET"])
 @admin_required
@@ -3594,7 +3625,7 @@ def admin_get_featured_tweets():
             fallback_result=type("r", (), {"data": []})(),
             operation_name="admin get featured tweets"
         )
-        return jsonify({"success": True, "tweets": result.data or []})
+        return jsonify({"success": True, "tweets": _with_featured_tweet_urls(result.data or [])})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -3609,26 +3640,33 @@ def admin_add_featured_tweet():
         tweet_url = (data.get("tweet_url") or "").strip()
         label = (data.get("label") or "").strip()
         display_order = int(data.get("display_order", 0))
+        showcase_date = (data.get("showcase_date") or "").strip()
+        if showcase_date and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", showcase_date):
+            return jsonify({"success": False, "error": "showcase_date must use YYYY-MM-DD"}), 400
         if not tweet_url:
             return jsonify({"success": False, "error": "tweet_url is required"}), 400
         match = _re.search(r"/status/(\d+)", tweet_url)
         tweet_id = match.group(1) if match else None
         supabase = get_supabase_client()
         wallet = session.get("wallet")
+        insert_payload = {
+            "tweet_url": tweet_url,
+            "tweet_id": tweet_id,
+            "label": label or None,
+            "display_order": display_order,
+            "is_active": True,
+            "added_by": wallet
+        }
+        if showcase_date:
+            insert_payload["showcase_date"] = showcase_date
         result = safe_supabase_operation(
-            lambda: supabase.table("community_tweet_showcases").insert({
-                "tweet_url": tweet_url,
-                "tweet_id": tweet_id,
-                "label": label or None,
-                "display_order": display_order,
-                "is_active": True,
-                "added_by": wallet
-            }).execute(),
+            lambda: supabase.table("community_tweet_showcases").insert(insert_payload).execute(),
             fallback_result=None,
             operation_name="add featured tweet"
         )
         _featured_tweets_cache["data"] = None
-        return jsonify({"success": True, "tweet": result.data[0] if result and result.data else {}})
+        tweet = result.data[0] if result and result.data else {}
+        return jsonify({"success": True, "tweet": _with_featured_tweet_urls([tweet])[0] if tweet else {}})
     except Exception as e:
         logger.error(f"❌ admin_add_featured_tweet: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
