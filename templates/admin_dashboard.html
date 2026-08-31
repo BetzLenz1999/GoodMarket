@@ -1261,6 +1261,11 @@
                             <input type="text" id="ft-label" placeholder="e.g. Community winner April 2025" style="width:100%; padding:0.75rem; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#f1f5f9; font-size:1rem;">
                         </div>
                         <div>
+                            <label style="display: block; margin-bottom: 0.5rem; color: rgba(241,245,249,0.9); font-weight: 600;">Story Date (optional)</label>
+                            <input type="date" id="ft-story-date" style="width:100%; padding:0.75rem; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#f1f5f9; font-size:1rem;">
+                            <small style="color:rgba(241,245,249,0.6); display:block; margin-top:0.35rem;">This creates a public URL like /community-stories/YYYY-MM-DD.</small>
+                        </div>
+                        <div>
                             <label style="display: block; margin-bottom: 0.5rem; color: rgba(241,245,249,0.9); font-weight: 600;">Display Order (lower = first)</label>
                             <input type="number" id="ft-order" value="0" min="0" style="width:100%; padding:0.75rem; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#f1f5f9; font-size:1rem;">
                         </div>
@@ -7870,6 +7875,7 @@ async function loadMinigamesMaintenance() {
                         <div style="flex:1; min-width:0;">
                             <div style="font-weight:700; color:#a78bfa; margin-bottom:0.3rem;">Order #${t.display_order}${t.label ? ' — ' + t.label : ''}</div>
                             <a href="${t.tweet_url}" target="_blank" style="color:#60a5fa; font-size:0.88rem; word-break:break-all;">${t.tweet_url}</a>
+                            <div style="font-size:0.8rem; margin-top:0.45rem; color:rgba(241,245,249,0.7);">📅 Story URL: <a href="${t.story_url || '/community-stories/featured'}" target="_blank" style="color:#c4b5fd;">${t.story_url || '/community-stories/featured'}</a></div>
                             <div style="font-size:0.8rem; margin-top:0.3rem; color:${t.is_active ? '#34d399' : '#f87171'};">${t.is_active ? '✅ Active' : '⛔ Hidden'}</div>
                         </div>
                         <div style="display:flex; gap:0.5rem; flex-shrink:0;">
@@ -7890,6 +7896,7 @@ async function loadMinigamesMaintenance() {
         async function addFeaturedTweet() {
             const url = document.getElementById('ft-tweet-url').value.trim();
             const label = document.getElementById('ft-label').value.trim();
+            const storyDate = document.getElementById('ft-story-date').value;
             const order = parseInt(document.getElementById('ft-order').value) || 0;
             const status = document.getElementById('ft-add-status');
             if (!url) { status.innerHTML = '<p style="color:#f87171;">⚠️ Tweet URL is required.</p>'; return; }
@@ -7898,13 +7905,14 @@ async function loadMinigamesMaintenance() {
                 const res = await fetch('/api/admin/featured-tweets', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({tweet_url: url, label, display_order: order})
+                    body: JSON.stringify({tweet_url: url, label, display_order: order, showcase_date: storyDate})
                 });
                 const data = await res.json();
                 if (data.success) {
                     status.innerHTML = '<p style="color:#34d399;">✅ Tweet added successfully!</p>';
                     document.getElementById('ft-tweet-url').value = '';
                     document.getElementById('ft-label').value = '';
+                    document.getElementById('ft-story-date').value = '';
                     document.getElementById('ft-order').value = '0';
                     loadFeaturedTweets();
                 } else {
