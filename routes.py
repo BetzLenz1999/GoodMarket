@@ -3616,14 +3616,14 @@ def get_featured_tweet_dates():
 def admin_get_featured_tweets():
     """Admin — list all featured tweets."""
     try:
-        supabase = get_supabase_client()
-        result = safe_supabase_operation(
-            lambda: supabase.table("community_tweet_showcases")
-                .select("*")
-                .order("display_order", desc=False)
-                .execute(),
-            fallback_result=type("r", (), {"data": []})(),
-            operation_name="admin get featured tweets"
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase is not configured"}), 500
+        result = (
+            supabase.table("community_tweet_showcases")
+            .select("*")
+            .order("display_order", desc=False)
+            .execute()
         )
         return jsonify({"success": True, "tweets": _with_featured_tweet_urls(result.data or [])})
     except Exception as e:
@@ -3647,7 +3647,9 @@ def admin_add_featured_tweet():
             return jsonify({"success": False, "error": "tweet_url is required"}), 400
         match = _re.search(r"/status/(\d+)", tweet_url)
         tweet_id = match.group(1) if match else None
-        supabase = get_supabase_client()
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase is not configured"}), 500
         wallet = session.get("wallet")
         insert_payload = {
             "tweet_url": tweet_url,
@@ -3659,14 +3661,16 @@ def admin_add_featured_tweet():
         }
         if showcase_date:
             insert_payload["showcase_date"] = showcase_date
-        result = safe_supabase_operation(
-            lambda: supabase.table("community_tweet_showcases").insert(insert_payload).execute(),
-            fallback_result=None,
-            operation_name="add featured tweet"
-        )
+        result = supabase.table("community_tweet_showcases").insert(insert_payload).execute()
+        tweet = result.data[0] if result and getattr(result, "data", None) else None
+        if not tweet:
+            logger.error("❌ admin_add_featured_tweet: insert returned no row for community_tweet_showcases")
+            return jsonify({
+                "success": False,
+                "error": "Tweet was not saved. Please verify the community_tweet_showcases table/RLS policy and try again."
+            }), 500
         _featured_tweets_cache["data"] = None
-        tweet = result.data[0] if result and result.data else {}
-        return jsonify({"success": True, "tweet": _with_featured_tweet_urls([tweet])[0] if tweet else {}})
+        return jsonify({"success": True, "tweet": _with_featured_tweet_urls([tweet])[0]})
     except Exception as e:
         logger.error(f"❌ admin_add_featured_tweet: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -3677,12 +3681,10 @@ def admin_delete_featured_tweet(ft_id):
     """Admin — delete a tweet entry."""
     global _featured_tweets_cache
     try:
-        supabase = get_supabase_client()
-        safe_supabase_operation(
-            lambda: supabase.table("community_tweet_showcases").delete().eq("id", ft_id).execute(),
-            fallback_result=None,
-            operation_name="delete featured tweet"
-        )
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase is not configured"}), 500
+        supabase.table("community_tweet_showcases").delete().eq("id", ft_id).execute()
         _featured_tweets_cache["data"] = None
         return jsonify({"success": True})
     except Exception as e:
@@ -3696,12 +3698,12 @@ def admin_toggle_featured_tweet(ft_id):
     try:
         data = request.get_json() or {}
         is_active = bool(data.get("is_active", True))
-        supabase = get_supabase_client()
-        safe_supabase_operation(
-            lambda: supabase.table("community_tweet_showcases")
-                .update({"is_active": is_active}).eq("id", ft_id).execute(),
-            fallback_result=None,
-            operation_name="toggle featured tweet"
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if not supabase:
+            return jsonify({"success": False, "error": "Supabase is not configured"}), 500
+        (
+            supabase.table("community_tweet_showcases")
+            .update({"is_active": is_active}).eq("id", ft_id).execute()
         )
         _featured_tweets_cache["data"] = None
         return jsonify({"success": True})
