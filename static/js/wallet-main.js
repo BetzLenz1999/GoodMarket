@@ -1262,60 +1262,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     document.querySelectorAll('.modal-overlay').forEach(el => {
         el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
     });
-// ── DOUBLE UBI bonus notice ───────────────────────────────────
-    // A DEDICATED success modal, separate from the claim celebration banner,
-    // shown once the extra G$ (equal to the claimed amount, funded by
-    // DOUBLEUBI_KEY) has actually CONFIRMED on-chain. Polls the DB-backed
-    // /api/double-ubi/status endpoint; the bonus row flips to "sent" only after
-    // its Celoscan receipt confirms, so this is a true "you got your bonus"
-    // notice, not a promise.
-    let _duPollTimer = null;
-    function _duFormat(amount) {
-        let n = Number(amount || 0);
-        if (!isFinite(n)) n = 0;
-        return n.toLocaleString(undefined, {
-            minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
-            maximumFractionDigits: 4
-        });
-    }
-    async function checkDoubleUbiBonus() {
-        try {
-            const resp = await fetch('/api/double-ubi/status', { headers: { 'Accept': 'application/json' } });
-            const data = await resp.json().catch(() => ({}));
-            const bonus = data && data.bonus;
-            if (!bonus) return false;
-            if (bonus.status === 'sent' && Number(bonus.bonus_amount_gd) > 0) {
-                const amtEl = document.getElementById('duBonusAmount');
-                const exEl = document.getElementById('duBonusExplorer');
-                const txRow = document.getElementById('duBonusTxRow');
-                if (amtEl) amtEl.textContent = '+' + _duFormat(Number(bonus.bonus_amount_gd)) + ' G$';
-                if (bonus.bonus_tx_hash && exEl) exEl.href = 'https://celoscan.io/tx/' + bonus.bonus_tx_hash.replace(/^0x/i, '');
-                if (!bonus.bonus_tx_hash && txRow) txRow.style.display = 'none';
-                openModal('doubleUbiModal');
-                return true;
-            }
-            return false;
-        } catch (e) {
-            console.warn('[double-ubi] check failed:', e);
-            return false;
-        }
-    }
-    // Poll /api/double-ubi/status a few times after a Celo claim; show the
-    // dedicated bonus modal once the bonus receipt confirms ("sent").
-    function _pollDoubleUbiNotice(attempts) {
-        attempts = attempts || 0;
-        if (attempts > 12) return; // ~24s ceiling
-        checkDoubleUbiBonus().then(shown => {
-            if (shown) return;
-            if (_duPollTimer) clearTimeout(_duPollTimer);
-            _duPollTimer = setTimeout(() => _pollDoubleUbiNotice(attempts + 1), 2000);
-        }).catch(() => {
-            if (_duPollTimer) clearTimeout(_duPollTimer);
-            _duPollTimer = setTimeout(() => _pollDoubleUbiNotice(attempts + 1), 2000);
-        });
-    }
-    window.checkDoubleUbiBonus = checkDoubleUbiBonus;
-
     // ── Face Verification status + expiry tracking ───────────
     // Reads live from the GoodDollar Identity contract via /api/fv-status.
     // Powers both the Settings modal card and the wallet-page warning banner.
@@ -2578,7 +2524,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             });
             const txData = await prepRes.json();
             if (!txData.success) {
-                showAlert('gcashAlert', 'alert-error', '❌ ' + (txData.error || 'Failed to prepare transaction'));
+                showAlert('gcashAlert', 'alert-error', '��� ' + (txData.error || 'Failed to prepare transaction'));
                 return;
             }
 
@@ -4512,12 +4458,8 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         try {
                             window.showClaimCelebration && window.showClaimCelebration({
                                 networks: ['celo'],
-                                double_ubi_bonus: window.__doubleUbiBonus || null
-                            });
+                                                          });
                         } catch (_) {}
-                        // Dedicated DOUBLE UBI notice: poll the DB-backed status a
-                        // few times (the bonus confirms a moment after the claim).
-                        _pollDoubleUbiNotice();
                         setTimeout(openSavingsPopupAfterClaim, 900);
                     } else {
                         btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
@@ -4589,13 +4531,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         console.log('[claim-log] recorded', data);
                     } catch (_) {}
                 }
-                // Stash any DOUBLE UBI bonus reported by the confirm endpoint so
-                // the claim celebration modal can show "(+X G$ bonus)".
-                try {
-                    const data = await resp.clone().json();
-                    if (data && data.double_ubi_bonus) window.__doubleUbiBonus = data.double_ubi_bonus;
-                } catch (_) {}
-            } catch (e) {
+                } catch (e) {
                 console.warn('[claim-log] failed to record claim metric:', e);
             }
         }
@@ -6426,12 +6362,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
         loadBalances();
         loadPortfolioCardholder();
-        // One-time DOUBLE UBI notice on page load: if a bonus was sent since the
-        // last visit (e.g. the claim modal was dismissed before it confirmed),
-        // surface the dedicated bonus modal so the user sees they got extra G$.
-        setTimeout(() => {
-            try { checkDoubleUbiBonus(); } catch (_) {}
-        }, 6000);
         // Keep GoodSwap and Bridge visible in all wallet environments.
         // GoodReserve is no longer a top-level action — it lives as a
         // sub-tab inside GoodSwap (see /swap → GoodSwap → GoodReserve).
