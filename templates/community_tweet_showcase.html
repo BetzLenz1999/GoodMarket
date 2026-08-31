@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Community Stories{% if story_date %} — {{ story_date }}{% endif %} | GoodMarket</title>
+    <style>
+        body { margin:0; min-height:100vh; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: radial-gradient(circle at top, #312e81 0%, #111827 46%, #020617 100%); color:#f8fafc; }
+        .wrap { width:min(760px, calc(100% - 32px)); margin:0 auto; padding:32px 0 56px; }
+        .top { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+        a { color:#a78bfa; }
+        .back { text-decoration:none; color:#c4b5fd; font-weight:700; }
+        .hero { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:24px; padding:24px; box-shadow:0 18px 60px rgba(0,0,0,0.25); margin-bottom:20px; }
+        h1 { margin:0 0 8px; font-size:clamp(2rem, 6vw, 3.5rem); line-height:1; }
+        .muted { color:rgba(248,250,252,0.68); }
+        .date-row { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:16px; }
+        .date-pill { text-decoration:none; border:1px solid rgba(167,139,250,.35); background:rgba(167,139,250,.12); color:#ddd6fe; border-radius:999px; padding:.45rem .8rem; font-size:.9rem; }
+        .date-pill.active { background:#7c3aed; color:white; border-color:#a78bfa; }
+        .tweet-card { background:rgba(15,23,42,.78); border:1px solid rgba(255,255,255,.1); border-radius:18px; overflow:hidden; margin:0 0 18px; }
+        .tweet-label { padding:.75rem 1rem 0; color:#c4b5fd; font-weight:800; font-size:.9rem; }
+        iframe { width:100%; border:0; display:block; min-height:520px; }
+        .empty { text-align:center; padding:48px 20px; background:rgba(255,255,255,.04); border:1px dashed rgba(255,255,255,.16); border-radius:18px; }
+    </style>
+</head>
+<body>
+    <main class="wrap">
+        <div class="top">
+            <a class="back" href="/">← Back to GoodMarket</a>
+            <a class="back" href="/community-stories">Submit your story</a>
+        </div>
+        <section class="hero">
+            <h1>🌟 Community Stories</h1>
+            <p class="muted">Featured Twitter/X stories from GoodDollar community members{% if story_date %} uploaded on <strong>{{ story_date }}</strong>{% endif %}.</p>
+            <div id="date-row" class="date-row"></div>
+        </section>
+        <section id="tweets"><div class="empty">Loading stories...</div></section>
+    </main>
+    <script>
+        const STORY_DATE = {{ (story_date or '')|tojson }};
+        function extractTweetId(url) {
+            const m = String(url || '').match(/\/status\/(\d+)/);
+            return m ? m[1] : null;
+        }
+        function escapeHtml(v) {
+            return String(v || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+        }
+        async function loadDates() {
+            const row = document.getElementById('date-row');
+            try {
+                const res = await fetch('/api/featured-tweets/dates');
+                const data = await res.json();
+                const dates = data.success ? (data.dates || []) : [];
+                row.innerHTML = dates.map(d => `<a class="date-pill ${d === STORY_DATE ? 'active' : ''}" href="/community-stories/${encodeURIComponent(d)}">${escapeHtml(d)}</a>`).join('');
+            } catch (e) { row.innerHTML = ''; }
+        }
+        async function loadTweets() {
+            const mount = document.getElementById('tweets');
+            try {
+                const url = STORY_DATE ? `/api/featured-tweets?date=${encodeURIComponent(STORY_DATE)}` : '/api/featured-tweets';
+                const res = await fetch(url);
+                const data = await res.json();
+                const tweets = (data.success ? (data.tweets || []) : []).filter(t => t.tweet_id || extractTweetId(t.tweet_url));
+                if (!tweets.length) {
+                    mount.innerHTML = '<div class="empty">No featured stories found for this date yet.</div>';
+                    return;
+                }
+                mount.innerHTML = tweets.map(t => {
+                    const id = t.tweet_id || extractTweetId(t.tweet_url);
+                    const label = t.label ? `<div class="tweet-label">🏷 ${escapeHtml(t.label)}</div>` : '';
+                    return `<article class="tweet-card">${label}<iframe loading="eager" src="https://platform.twitter.com/embed/Tweet.html?id=${encodeURIComponent(id)}&theme=dark&dnt=true&lang=en"></iframe></article>`;
+                }).join('');
+            } catch (e) {
+                mount.innerHTML = `<div class="empty">Could not load stories: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => { loadDates(); loadTweets(); });
+    </script>
+</body>
+</html>
