@@ -742,20 +742,6 @@ try:
 except Exception as e:
     logger.error(f"❌ GCash auto-refund scheduler initialization failed: {e}")
 
-# Double UBI bonus retry scheduler (env-gated, default off). When a user
-# confirms a Celo UBI claim, they are sent an extra G$ equal to the claimed
-# amount from the DOUBLEUBI_KEY wallet (see double_ubi.py). The per-claim
-# trigger already fires the payout on a daemon thread; this scheduler is the
-# durable safety net that retries any funding-stalled / crashed bonus rows.
-try:
-    from double_ubi import init_double_ubi_bonus_scheduler
-    if init_double_ubi_bonus_scheduler(app):
-        logger.info("✅ DOUBLE bonus retry scheduler started")
-    else:
-        logger.info("ℹ️ DOUBLE bonus scheduler not started (disabled)")
-except Exception as e:
-    logger.error(f"❌ DOUBLE bonus scheduler initialization failed: {e}")
-
 # Initialize Jumble Words System
 logger.info("🔤 Initializing Jumble Words system...")
 from jumble import init_jumble
