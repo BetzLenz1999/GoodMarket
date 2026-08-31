@@ -2865,6 +2865,7 @@
                 🌟 Community Stories from <span style="color:#a78bfa;">Twitter/X</span>
             </div>
             <div style="font-size:0.88rem; color:rgba(241,245,249,0.5); margin-top:0.4rem;">Real stories from our GoodDollar community members</div>
+            <a id="community-tweets-page-link" href="/community-stories/featured" style="display:inline-block; margin-top:0.75rem; color:#c4b5fd; font-weight:700; text-decoration:none;">Open stories page →</a>
         </div>
         <div id="community-tweets-loading" style="text-align:center; padding:2rem; color:rgba(241,245,249,0.5);">Loading tweets...</div>
         <!-- Carousel wrapper -->
@@ -5677,6 +5678,10 @@
 
                 validTweets.forEach(function(tweet, i) {
                     var tweetId = tweet.tweet_id || extractTweetId(tweet.tweet_url);
+                    if (i === 0 && tweet.story_url) {
+                        var pageLink = document.getElementById('community-tweets-page-link');
+                        if (pageLink) pageLink.href = tweet.story_url;
+                    }
 
                     // Slide
                     var slide = document.createElement('div');
