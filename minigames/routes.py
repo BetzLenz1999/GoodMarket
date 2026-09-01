@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import re
+from datetime import date, datetime, timedelta
 from flask import Blueprint, request, jsonify, render_template, session, redirect
 from .minigames_manager import minigames_manager, normalize_tx_hash
 from maintenance_service import maintenance_service
@@ -21,6 +22,98 @@ def _normalize_withdrawal_tx_hash(value) -> str:
         return ''
 
     return normalize_tx_hash(tx_hash_match.group(0))
+
+
+def _parse_report_date(value, parameter_name):
+    """Parse a strict UTC calendar date used by a public game report."""
+    if not value or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        raise ValueError(f'{parameter_name} must use YYYY-MM-DD format')
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f'{parameter_name} must be a valid calendar date') from exc
+
+
+@minigames_bp.route('/participants/<report_date>')
+def minigames_participants_report(report_date):
+    """Public, shareable Play & Earn participation report for a UTC range."""
+    try:
+        start_day = _parse_report_date(report_date, 'date')
+        end_day = _parse_report_date(request.args.get('end_date', report_date), 'end_date')
+    except ValueError:
+        return redirect('/minigames/participants/' + date.today().isoformat())
+
+    if end_day < start_day:
+        return redirect('/minigames/participants/' + start_day.isoformat())
+
+    return render_template(
+        'minigames_participants_report.html',
+        report_date=start_day.isoformat(),
+        report_end_date=end_day.isoformat(),
+    )
+
+
+@minigames_bp.route('/api/participants')
+def minigames_participants():
+    """Return completed Play & Earn rewards for an inclusive UTC date range."""
+    try:
+        start_day = _parse_report_date(request.args.get('start_date') or request.args.get('date') or datetime.utcnow().date().isoformat(), 'start_date')
+        end_day = _parse_report_date(request.args.get('end_date') or start_day.isoformat(), 'end_date')
+        if end_day < start_day:
+            return jsonify({'success': False, 'participants': [], 'error': 'end_date must be on or after start_date'}), 400
+
+        from supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+        if not supabase:
+            return jsonify({'success': False, 'participants': [], 'error': 'Database not available'}), 500
+
+        start_datetime = f'{start_day.isoformat()}T00:00:00Z'
+        end_datetime = f'{(end_day + timedelta(days=1)).isoformat()}T00:00:00Z'
+        rows, page_size, offset = [], 1000, 0
+        while True:
+            result = supabase.table('minigame_rewards_log')\
+                .select('wallet_address, game_type, reward_amount, transaction_hash, created_at')\
+                .gte('created_at', start_datetime)\
+                .lt('created_at', end_datetime)\
+                .order('created_at', desc=False)\
+                .range(offset, offset + page_size - 1)\
+                .execute()
+            page = result.data or []
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+
+        participants, total_rewards = [], 0.0
+        for row in rows:
+            wallet = row.get('wallet_address', '')
+            amount = float(row.get('reward_amount') or 0)
+            total_rewards += amount
+            game_type = str(row.get('game_type') or 'Minigame').replace('_', ' ').title()
+            participants.append({
+                'wallet_address': wallet,
+                'display_name': f'{wallet[:6]}...{wallet[-4:]}' if wallet else 'Unknown wallet',
+                'game_type': game_type,
+                'reward_amount': amount,
+                'reward_formatted': f'{amount:,.2f} G$',
+                'transaction_hash': _normalize_withdrawal_tx_hash(row.get('transaction_hash')) or 'N/A',
+                'timestamp': row.get('created_at'),
+            })
+
+        return jsonify({
+            'success': True,
+            'participants': participants,
+            'total_count': len(participants),
+            'total_rewards': total_rewards,
+            'total_rewards_formatted': f'{total_rewards:,.2f} G$',
+            'start_date': start_day.isoformat(),
+            'end_date': end_day.isoformat(),
+        })
+    except ValueError as exc:
+        return jsonify({'success': False, 'participants': [], 'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception('Error getting minigame participants')
+        return jsonify({'success': False, 'participants': [], 'error': 'Could not load minigame participants'}), 500
 
 
 @minigames_bp.route('/')
@@ -301,4 +394,3 @@ def get_quiz_questions():
     except Exception as e:
         logger.error(f"❌ Error getting quiz questions: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
