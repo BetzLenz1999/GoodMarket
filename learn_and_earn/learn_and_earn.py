@@ -1588,7 +1588,7 @@ def learn_earn_dashboard():
 
 @learn_earn_bp.route('/participants/<report_date>')
 def learn_earn_participants_report(report_date):
-    """Public, shareable daily Learn & Earn participation report."""
+    """Public, shareable Learn & Earn participation report for a UTC date range."""
     import re
     from datetime import date
 
@@ -1601,7 +1601,21 @@ def learn_earn_participants_report(report_date):
     except ValueError:
         return redirect('/learn-earn/participants/' + date.today().isoformat())
 
-    return render_template('learn_earn_participants_report.html', report_date=report_date)
+    end_date = request.args.get('end_date', report_date)
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', end_date or ''):
+        return redirect('/learn-earn/participants/' + report_date)
+    try:
+        parsed_end_date = date.fromisoformat(end_date)
+    except ValueError:
+        return redirect('/learn-earn/participants/' + report_date)
+    if parsed_end_date < date.fromisoformat(report_date):
+        return redirect('/learn-earn/participants/' + report_date)
+
+    return render_template(
+        'learn_earn_participants_report.html',
+        report_date=report_date,
+        report_end_date=parsed_end_date.isoformat(),
+    )
 
 @learn_earn_bp.route('/start-quiz', methods=['POST'])
 @learn_earn_token_required
