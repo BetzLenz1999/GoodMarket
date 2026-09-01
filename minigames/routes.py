@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from flask import Blueprint, request, jsonify, render_template, session, redirect
 from .minigames_manager import minigames_manager, normalize_tx_hash
 from maintenance_service import maintenance_service
@@ -55,7 +55,7 @@ def minigames_participants_report(report_date):
 
 @minigames_bp.route('/api/participants')
 def minigames_participants():
-    """Return completed Play & Earn rewards for an inclusive UTC date range."""
+    """Return completed Play & Earn withdrawals for an inclusive date range."""
     try:
         start_day = _parse_report_date(request.args.get('start_date') or request.args.get('date') or datetime.utcnow().date().isoformat(), 'start_date')
         end_day = _parse_report_date(request.args.get('end_date') or start_day.isoformat(), 'end_date')
@@ -67,15 +67,17 @@ def minigames_participants():
         if not supabase:
             return jsonify({'success': False, 'participants': [], 'error': 'Database not available'}), 500
 
-        start_datetime = f'{start_day.isoformat()}T00:00:00Z'
-        end_datetime = f'{(end_day + timedelta(days=1)).isoformat()}T00:00:00Z'
+        # Play & Earn's user-facing history records actual payouts in
+        # minigame_withdrawals_log. The older minigame_rewards_log is only for
+        # direct game rewards and is not the withdrawal history shown to users.
+        # withdrawal_date is a database DATE, so use both endpoints inclusively.
         rows, page_size, offset = [], 1000, 0
         while True:
-            result = supabase.table('minigame_rewards_log')\
-                .select('wallet_address, game_type, reward_amount, transaction_hash, created_at')\
-                .gte('created_at', start_datetime)\
-                .lt('created_at', end_datetime)\
-                .order('created_at', desc=False)\
+            result = supabase.table('minigame_withdrawals_log')\
+                .select('wallet_address, amount, tx_hash, withdrawal_date, session_id')\
+                .gte('withdrawal_date', start_day.isoformat())\
+                .lte('withdrawal_date', end_day.isoformat())\
+                .order('withdrawal_date', desc=False)\
                 .range(offset, offset + page_size - 1)\
                 .execute()
             page = result.data or []
@@ -84,28 +86,32 @@ def minigames_participants():
                 break
             offset += page_size
 
-        participants, total_rewards = [], 0.0
+        participants, total_withdrawn = [], 0.0
         for row in rows:
             wallet = row.get('wallet_address', '')
-            amount = float(row.get('reward_amount') or 0)
-            total_rewards += amount
-            game_type = str(row.get('game_type') or 'Minigame').replace('_', ' ').title()
+            amount = float(row.get('amount') or 0)
+            tx_hash = _normalize_withdrawal_tx_hash(row.get('tx_hash'))
+            # Withdrawal rows are created only after the on-chain payout is
+            # successful. Still exclude legacy rows without a valid hash.
+            if not tx_hash:
+                continue
+            total_withdrawn += amount
             participants.append({
                 'wallet_address': wallet,
                 'display_name': f'{wallet[:6]}...{wallet[-4:]}' if wallet else 'Unknown wallet',
-                'game_type': game_type,
-                'reward_amount': amount,
-                'reward_formatted': f'{amount:,.2f} G$',
-                'transaction_hash': _normalize_withdrawal_tx_hash(row.get('transaction_hash')) or 'N/A',
-                'timestamp': row.get('created_at'),
+                'withdrawal_amount': amount,
+                'withdrawal_formatted': f'{amount:,.2f} G$',
+                'transaction_hash': tx_hash,
+                'timestamp': row.get('withdrawal_date'),
+                'session_id': row.get('session_id') or '—',
             })
 
         return jsonify({
             'success': True,
             'participants': participants,
             'total_count': len(participants),
-            'total_rewards': total_rewards,
-            'total_rewards_formatted': f'{total_rewards:,.2f} G$',
+            'total_withdrawn': total_withdrawn,
+            'total_withdrawn_formatted': f'{total_withdrawn:,.2f} G$',
             'start_date': start_day.isoformat(),
             'end_date': end_day.isoformat(),
         })
