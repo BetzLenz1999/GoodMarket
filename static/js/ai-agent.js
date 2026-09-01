@@ -89,6 +89,68 @@
     return 'View on explorer ↗';
   }
 
+  function _formatNativeAmount(wei) {
+    // Avoid converting a wei value to Number: a LayerZero fee is an integer
+    // and Number can silently round it before the user reviews the preview.
+    try {
+      const value = BigInt(wei);
+      const whole = value / 1000000000000000000n;
+      const fraction = (value % 1000000000000000000n).toString().padStart(18, '0').slice(0, 6).replace(/0+$/, '');
+      return whole.toString() + (fraction ? '.' + fraction : '');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function _addReviewRow(dl, label, value) {
+    if (!value) return;
+    dl.appendChild(el('dt', '', label));
+    dl.appendChild(el('dd', '', String(value)));
+  }
+
+  async function _hydrateBridgePreview(action, dl, button) {
+    const payload = action.payload || {};
+    const direction = payload.bridge_direction;
+    if (action.action_type !== 'bridge' || !direction || !payload.amount) return;
+
+    const sourceChainId = direction === 'xdc_to_celo' ? 50 : 42220;
+    const targetChainId = direction === 'xdc_to_celo' ? 42220 : 50;
+    const nativeSymbol = direction === 'xdc_to_celo' ? 'XDC' : 'CELO';
+    _addReviewRow(dl, 'Estimated network fee', 'Calculating…');
+    const feeValue = dl.lastElementChild;
+    // The bridge transfers the requested G$ amount 1:1. Its LayerZero fee is
+    // paid separately in the native token, so the amount shown here is not
+    // reduced by the fee.
+    _addReviewRow(dl, 'You receive', payload.amount + ' G$ on ' + (direction === 'xdc_to_celo' ? 'Celo' : 'XDC'));
+    try {
+      const query = new URLSearchParams({
+        sourceChainId: String(sourceChainId),
+        targetChainId: String(targetChainId),
+        amount: String(payload.amount)
+      });
+      const response = await fetch('/api/xdc/bridge/estimate-fee?' + query.toString());
+      const data = await response.json();
+      const feeWei = data && (data.recommended_bridge_fee_wei || data.bridge_fee_wei);
+      if (!response.ok || !data || !data.success || !feeWei || BigInt(feeWei) <= 0n) {
+        throw new Error((data && data.error) || 'Bridge fee estimate unavailable');
+      }
+      const recommended = _formatNativeAmount(feeWei);
+      feeValue.textContent = recommended + ' ' + nativeSymbol;
+      // The XDC → Celo execution deliberately sends a 30% fee headroom to
+      // match the manual bridge preflight. Make that maximum explicit instead
+      // of making the chat look arbitrarily more expensive than /swap.
+      if (direction === 'xdc_to_celo') {
+        const maximum = _formatNativeAmount((BigInt(feeWei) * 130n) / 100n);
+        _addReviewRow(dl, 'Fee sent (maximum)', maximum + ' XDC (30% safety buffer; unused value may be refunded)');
+      }
+    } catch (_) {
+      feeValue.textContent = 'Unavailable — confirm only after checking your wallet fee';
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Confirm action';
+    }
+  }
+
   function renderActionCard(action) {
     const card = el('div', 'gm-ai-card');
     const title = el('strong', '', 'Review before signing');
@@ -110,8 +172,10 @@
       dl.appendChild(el('dd', '', String(row[1])));
     });
     const note = el('p', '', payload.safety_note || 'No transaction will run until you confirm and sign.');
-    const button = el('button', '', 'Confirm action');
+    const isBridge = action.action_type === 'bridge';
+    const button = el('button', '', isBridge ? 'Calculating fee…' : 'Confirm action');
     button.type = 'button';
+    button.disabled = isBridge;
     button.addEventListener('click', async function () {
       button.disabled = true;
       button.textContent = 'Confirming…';
@@ -141,6 +205,9 @@
     card.appendChild(dl);
     card.appendChild(note);
     card.appendChild(button);
+    // Fetch the same backend estimate used by the /swap bridge tabs before
+    // enabling confirmation, so the chat review has no hidden bridge cost.
+    _hydrateBridgePreview(action, dl, button);
     if (action && action.id) _actionCards.set(action.id, card);
     return card;
   }
