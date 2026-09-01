@@ -974,7 +974,8 @@ def get_recent_daily_tasks():
 def get_learn_earn_participants():
     """Get Learn & Earn participants for a specific date or date range"""
     try:
-        from datetime import datetime
+        from datetime import datetime, date
+        import re
         from supabase_client import get_supabase_client
 
         supabase = get_supabase_client()
@@ -985,6 +986,12 @@ def get_learn_earn_participants():
         target_date = request.args.get('date')
 
         if target_date:
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', target_date):
+                return jsonify({"success": False, "participants": [], "error": "date must use YYYY-MM-DD format"}), 400
+            try:
+                date.fromisoformat(target_date)
+            except ValueError:
+                return jsonify({"success": False, "participants": [], "error": "date must be a valid calendar date"}), 400
             # Query for specific date with proper UTC timezone format
             start_datetime = f"{target_date}T00:00:00Z"
             end_datetime = f"{target_date}T23:59:59Z"
