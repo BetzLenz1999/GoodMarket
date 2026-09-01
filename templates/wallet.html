@@ -1804,10 +1804,9 @@
             width: 100%;
             max-width: 480px;
             display: grid;
-            /* 6 items (Earn / Wallet / Services / News / GCash / Profile): a
-               3-column grid wraps them 2x3 so every tab stays tappable above
-               the floating GoodMarket Agent chatbox. */
-            grid-template-columns: repeat(3, 1fr);
+            /* A single centered launcher opens the six primary destinations. */
+            grid-template-columns: minmax(170px, 240px);
+            justify-content: center;
             gap: 0.15rem;
             padding: 0.5rem 0.4rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
             
@@ -1900,6 +1899,8 @@
             border: 1px solid rgba(255,255,255,0.08);
             
             cursor: pointer;
+            font-family: inherit;
+            color: inherit;
             transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
         }
         .bn-sheet-item:hover {
@@ -2441,6 +2442,16 @@
         .bn-item:hover .bn-label { color: #b45309; }
         .bn-item:hover .bn-icon { transform: translateY(-1px); }
         .bn-item.active .bn-label { color: #b45309; }
+
+        /* Keep the new GoodMarket Menu launcher visually centered and easy to
+           reach, without making the compact bottom navigation feel empty. */
+        .bn-menu-launcher {
+            width: 100%;
+            background: linear-gradient(135deg, rgba(var(--gold-rgb),0.20), rgba(var(--accent-rgb),0.14));
+            box-shadow: inset 0 0 0 1px rgba(var(--gold-rgb),0.32), 0 4px 14px rgba(67,56,43,0.10);
+        }
+        .bn-menu-launcher .bn-label { color: #9a3412; }
+        .bn-menu-launcher:hover { background: linear-gradient(135deg, rgba(var(--gold-rgb),0.30), rgba(var(--accent-rgb),0.22)); }
 
     </style>
 </head>
@@ -3693,31 +3704,44 @@
         </div>
     </div>
 
+    <!-- One centered launcher keeps the primary wallet navigation tidy while
+         preserving every existing destination as a tap-friendly submenu item. -->
+    <div class="bn-sheet" id="bnSheetMenu" role="dialog" aria-label="GoodMarket menu" aria-modal="true">
+        <div class="bn-sheet-handle"></div>
+        <div class="bn-sheet-title">✨ GoodMarket Menu</div>
+        <div class="bn-sheet-grid">
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openBottomSheet('bnSheetEarn'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#f59e0b,#e11d48);color:#fff;">💰</span>
+                <span class="bn-sheet-name">More Ways To Earn</span>
+            </button>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openBottomSheet('bnSheetWallet'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;">👛</span>
+                <span class="bn-sheet-name">GoodMarket Wallet</span>
+            </button>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openBottomSheet('bnSheetServices'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;">🛠️</span>
+                <span class="bn-sheet-name">Services</span>
+            </button>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/news', 'Opening News…'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;">📰</span>
+                <span class="bn-sheet-name">News</span>
+            </button>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openModal('gcashModal'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;">💸</span>
+                <span class="bn-sheet-name">GCash Cashout</span>
+            </button>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/profile', 'Opening Profile…'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#ec4899,#be185d);color:#fff;">👤</span>
+                <span class="bn-sheet-name">Profile</span>
+            </button>
+        </div>
+    </div>
+
     <!-- ── Bottom Navigation Bar ── -->
     <nav class="wallet-bottom-nav" aria-label="Wallet navigation">
-        <button type="button" class="bn-item" onclick="openBottomSheet('bnSheetEarn')">
-            <span class="bn-icon">💰</span>
-            <span class="bn-label">More Ways<br>To Earn</span>
-        </button>
-        <button type="button" class="bn-item" onclick="openBottomSheet('bnSheetWallet')">
-            <span class="bn-icon">👛</span>
-            <span class="bn-label">GoodMarket<br>Wallet</span>
-        </button>
-        <button type="button" class="bn-item" onclick="openBottomSheet('bnSheetServices')">
-            <span class="bn-icon">🛠️</span>
-            <span class="bn-label">Services</span>
-        </button>
-        <button type="button" class="bn-item" onclick="navigateWithFeedback('/news', 'Opening News…')">
-            <span class="bn-icon">📰</span>
-            <span class="bn-label">News</span>
-        </button>
-        <button type="button" class="bn-item" onclick="openModal('gcashModal')">
-            <span class="bn-icon">💸</span>
-            <span class="bn-label">GCash<br>Cashout</span>
-        </button>
-        <button type="button" class="bn-item" onclick="navigateWithFeedback('/profile', 'Opening Profile…')">
-            <span class="bn-icon">👤</span>
-            <span class="bn-label">Profile</span>
+        <button type="button" class="bn-item bn-menu-launcher" onclick="openBottomSheet('bnSheetMenu')" aria-haspopup="dialog" aria-controls="bnSheetMenu">
+            <span class="bn-icon">✨</span>
+            <span class="bn-label">GoodMarket Menu</span>
         </button>
     </nav>
 
