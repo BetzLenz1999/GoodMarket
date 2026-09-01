@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Learn &amp; Earn participants — {{ report_date }} | GoodMarket</title>
+    <title>Learn &amp; Earn participants — {{ report_date }} to {{ report_end_date }} | GoodMarket</title>
     <style>
         :root { color-scheme: dark; }
         * { box-sizing: border-box; }
@@ -44,31 +44,40 @@
         </div>
         <section class="hero">
             <h1>📚 Learn &amp; Earn participants</h1>
-            <p class="muted">Daily participation history for <strong id="report-date-label">{{ report_date }}</strong> (UTC). Choose another date to open its own shareable report URL.</p>
+            <p class="muted">Participation history from <strong id="report-date-label">{{ report_date }} to {{ report_end_date }}</strong> (UTC). Choose a start and end date to view every completed reward in that inclusive date range.</p>
             <div class="picker">
-                <label>Report date<input id="report-date" type="date" value="{{ report_date }}"></label>
+                <label>Start date<input id="report-start-date" type="date" value="{{ report_date }}"></label>
+                <label>End date<input id="report-end-date" type="date" value="{{ report_end_date }}"></label>
                 <button type="button" id="open-report">Open report</button>
             </div>
         </section>
         <div class="share">Shareable report URL: <code id="share-url"></code></div>
-        <section class="summary-grid" aria-label="Daily summary">
+        <section class="summary-grid" aria-label="Date-range summary">
             <div class="summary"><span>Total participants</span><strong id="participant-count">—</strong></div>
             <div class="summary"><span>Total rewards distributed</span><strong id="reward-total">—</strong></div>
         </section>
         <section id="participants"><div class="empty">Loading participants…</div></section>
     </main>
     <script>
-        const REPORT_DATE = {{ report_date|tojson }};
+        const REPORT_START_DATE = {{ report_date|tojson }};
+        const REPORT_END_DATE = {{ report_end_date|tojson }};
         const escapeHtml = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         const formatTime = value => value ? new Date(value).toLocaleString() : '—';
         function openReport() {
-            const date = document.getElementById('report-date').value;
-            if (date) window.location.assign('/learn-earn/participants/' + encodeURIComponent(date));
+            const startDate = document.getElementById('report-start-date').value;
+            const endDate = document.getElementById('report-end-date').value;
+            if (!startDate || !endDate) return;
+            if (endDate < startDate) {
+                window.alert('End date must be on or after the start date.');
+                return;
+            }
+            window.location.assign('/learn-earn/participants/' + encodeURIComponent(startDate) + '?end_date=' + encodeURIComponent(endDate));
         }
         async function loadReport() {
             document.getElementById('share-url').textContent = window.location.href;
             try {
-                const response = await fetch('/api/learn-earn-participants?date=' + encodeURIComponent(REPORT_DATE));
+                const params = new URLSearchParams({ start_date: REPORT_START_DATE, end_date: REPORT_END_DATE });
+                const response = await fetch('/api/learn-earn-participants?' + params.toString());
                 const data = await response.json();
                 if (!data.success) throw new Error(data.error || 'Could not load participants.');
                 document.getElementById('participant-count').textContent = data.total_count || 0;
@@ -76,7 +85,7 @@
                 const participants = data.participants || [];
                 const mount = document.getElementById('participants');
                 if (!participants.length) {
-                    mount.innerHTML = '<div class="empty">No Learn &amp; Earn participants found for ' + escapeHtml(REPORT_DATE) + '.</div>';
+                    mount.innerHTML = '<div class="empty">No Learn &amp; Earn participants found from ' + escapeHtml(REPORT_START_DATE) + ' to ' + escapeHtml(REPORT_END_DATE) + '.</div>';
                     return;
                 }
                 mount.innerHTML = participants.map((p, index) => {
@@ -90,7 +99,6 @@
             }
         }
         document.getElementById('open-report').addEventListener('click', openReport);
-        document.getElementById('report-date').addEventListener('change', openReport);
         loadReport();
     </script>
 </body>
