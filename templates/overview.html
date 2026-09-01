@@ -1004,7 +1004,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="submenu-body">
                             <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
                                 <input type="date" id="participantDate">
-                                <button onclick="loadParticipants()" class="action-btn" style="padding: 0.5rem 1rem; font-size: 0.875rem;">Load Participants</button>
+                                <button onclick="loadParticipants()" class="action-btn" style="padding: 0.5rem 1rem; font-size: 0.875rem;">Open shareable report</button>
                             </div>
                             <div id="participantsSummary" style="background: rgba(124, 58, 237, 0.08); padding: 1rem; border-radius: 10px; margin-bottom: 1rem; border: 1px solid rgba(124,58,237,0.2);">
                                 <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
@@ -1546,61 +1546,12 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        async function loadParticipants() {
-            try {
-                const selectedDate = document.getElementById('participantDate').value;
-                if (!selectedDate) { alert('Please select a date'); return; }
+        function loadParticipants() {
+            const selectedDate = document.getElementById('participantDate').value;
+            if (!selectedDate) { alert('Please select a date'); return; }
 
-                const response = await fetch(`/api/learn-earn-participants?date=${selectedDate}`);
-                const data = await response.json();
-
-                if (data.success) {
-                    document.getElementById('totalParticipants').textContent = data.total_count || 0;
-                    document.getElementById('totalAchievementCards').textContent = data.total_g_disbursed_formatted || '0.00 G$';
-
-                    const listContainer = document.getElementById('participantsList');
-                    if (!data.participants || data.participants.length === 0) {
-                        listContainer.innerHTML = `<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.4);">No participants found for ${selectedDate}</div>`;
-                    } else {
-                        let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
-                        data.participants.forEach((participant, index) => {
-                            html += `
-                                <div style="background:rgba(124,58,237,0.07);padding:12px;border-radius:10px;border:1px solid rgba(124,58,237,0.2);">
-                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                                        <div>
-                                            <span style="font-weight:600;color:#a78bfa;">#${index + 1}</span>
-                                            <span style="margin-left:8px;font-weight:600;color:#e2e8f0;">${participant.display_name}</span>
-                                        </div>
-                                        <div style="font-weight:700;color:#86efac;font-size:0.92rem;">${participant.amount_formatted || '0.0 G$'}</div>
-                                    </div>
-                                    <div style="font-size:0.82rem;color:rgba(255,255,255,0.45);margin-bottom:4px;">
-                                        <strong>Wallet:</strong> ${participant.wallet_address}
-                                    </div>
-                                    <div style="font-size:0.82rem;color:rgba(255,255,255,0.45);margin-bottom:4px;">
-                                        <strong>TX:</strong> ${
-                                            participant.transaction_hash && participant.transaction_hash !== 'N/A'
-                                                ? `<a href="https://celoscan.io/tx/${participant.transaction_hash}" target="_blank" style="color:#a78bfa;text-decoration:none;">${participant.transaction_hash.slice(0, 10)}...</a>`
-                                                : 'Pending'
-                                        }
-                                    </div>
-                                    <div style="font-size:0.82rem;color:rgba(255,255,255,0.45);">
-                                        <strong>Time:</strong> ${new Date(participant.timestamp).toLocaleString()}
-                                    </div>
-                                </div>
-                            `;
-                        });
-                        html += '</div>';
-                        listContainer.innerHTML = html;
-                    }
-                } else {
-                    document.getElementById('participantsList').innerHTML =
-                        `<div style="text-align:center;padding:20px;color:#ef4444;">⚠️ Failed to load participants. Please try again.</div>`;
-                }
-            } catch (error) {
-                console.error('Error loading participants:', error);
-                document.getElementById('participantsList').innerHTML =
-                    `<div style="text-align:center;padding:20px;color:#ef4444;">⚠️ Error loading participants. Please try again.</div>`;
-            }
+            // Daily reports need a stable URL so they can be shared with report reviewers.
+            window.location.assign(`/learn-earn/participants/${encodeURIComponent(selectedDate)}`);
         }
     </script>
 
@@ -1615,12 +1566,6 @@ document.addEventListener('DOMContentLoaded', function() {
     </style>
 
     <div id="musicPlayer" style="position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999; display:none; flex-direction:column; align-items:flex-end; gap:0.5rem;">
-        <div id="musicLabel" style="display:none; background:rgba(11,15,42,0.92); border:1px solid rgba(124,58,237,0.35); border-radius:10px; padding:0.4rem 0.75rem; font-size:0.75rem; color:#a78bfa; white-space:nowrap; backdrop-filter:blur(10px);">
-            🎵 Background Music
-        </div>
-        <div id="musicHint" style="background:rgba(11,15,42,0.92); border:1px solid rgba(124,58,237,0.35); border-radius:10px; padding:0.4rem 0.75rem; font-size:0.72rem; color:rgba(167,139,250,0.8); white-space:nowrap; backdrop-filter:blur(10px);">
-            Tap to play music
-        </div>
         <button id="musicToggleBtn" onclick="toggleMusic()" title="Toggle Background Music" class="waiting"
             style="width:48px; height:48px; border-radius:50%; background:linear-gradient(135deg,#7c3aed,#5b21b6); border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.3rem; transition:transform 0.2s ease, box-shadow 0.2s ease;">
             🎵
@@ -1677,8 +1622,6 @@ document.addEventListener('DOMContentLoaded', function() {
         function startMusic() {
             if (musicStarted) return;
             var btn = document.getElementById('musicToggleBtn');
-            var label = document.getElementById('musicLabel');
-            var hint = document.getElementById('musicHint');
             var musicPlayer = document.getElementById('musicPlayer');
 
             if (ytPlayer && ytPlayer.mute) {
@@ -1691,8 +1634,6 @@ document.addEventListener('DOMContentLoaded', function() {
             btn.innerHTML = '🔇';
             btn.style.boxShadow = '0 4px 20px rgba(124,58,237,0.7)';
             musicPlayer.style.display = 'flex';
-            label.style.display = 'block';
-            hint.style.display = 'none';
 
             document.removeEventListener('scroll', startMusic);
             document.removeEventListener('click', onFirstInteraction);
