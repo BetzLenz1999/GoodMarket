@@ -978,52 +978,75 @@ def get_learn_earn_participants():
         import re
         from supabase_client import get_supabase_client
 
+        # `date` is retained for existing daily-report links. New reports can
+        # request an inclusive UTC range with start_date and end_date.
+        target_date = request.args.get('date')
+        start_date = request.args.get('start_date') or target_date
+        end_date = request.args.get('end_date') or start_date
+
+        def parse_report_date(value, parameter_name):
+            if not value or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+                raise ValueError(f"{parameter_name} must use YYYY-MM-DD format")
+            try:
+                return date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(f"{parameter_name} must be a valid calendar date") from exc
+
+        try:
+            if start_date:
+                start_day = parse_report_date(start_date, 'start_date' if not target_date else 'date')
+                end_day = parse_report_date(end_date, 'end_date')
+            else:
+                start_day = end_day = datetime.utcnow().date()
+        except ValueError as exc:
+            return jsonify({"success": False, "participants": [], "error": str(exc)}), 400
+
+        if end_day < start_day:
+            return jsonify({"success": False, "participants": [], "error": "end_date must be on or after start_date"}), 400
+
         supabase = get_supabase_client()
         if not supabase:
-            return jsonify({"success": False, "participants": []})
+            return jsonify({"success": False, "participants": [], "error": "Database not available"}), 500
 
-        # Get date parameter (format: YYYY-MM-DD)
-        target_date = request.args.get('date')
+        # Use an exclusive following midnight so rewards with fractional-second
+        # timestamps on the final selected day are included.
+        start_datetime = f"{start_day.isoformat()}T00:00:00Z"
+        end_datetime = f"{(end_day + timedelta(days=1)).isoformat()}T00:00:00Z"
 
-        if target_date:
-            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', target_date):
-                return jsonify({"success": False, "participants": [], "error": "date must use YYYY-MM-DD format"}), 400
-            try:
-                date.fromisoformat(target_date)
-            except ValueError:
-                return jsonify({"success": False, "participants": [], "error": "date must be a valid calendar date"}), 400
-            # Query for specific date with proper UTC timezone format
-            start_datetime = f"{target_date}T00:00:00Z"
-            end_datetime = f"{target_date}T23:59:59Z"
-        else:
-            # Default to today with proper UTC timezone format
-            today = datetime.utcnow().strftime('%Y-%m-%d')
-            start_datetime = f"{today}T00:00:00Z"
-            end_datetime = f"{today}T23:59:59Z"
-
-        logger.info(f"📊 Fetching Learn & Earn participants for {target_date or 'today'}")
+        logger.info(f"📊 Fetching Learn & Earn participants from {start_day} through {end_day}")
         logger.info(f"🕐 Date range: {start_datetime} to {end_datetime}")
 
-        # Get all Learn & Earn participants for the date
-        participants = safe_supabase_operation(
-            lambda: supabase.table('learnearn_log')\
-                .select('wallet_address, amount_g$, timestamp, transaction_hash, quiz_id')\
-                .gte('timestamp', start_datetime)\
-                .lte('timestamp', end_datetime)\
-                .eq('status', True)\
-                .order('timestamp', desc=False)\
-                .execute(),
-            fallback_result=type('obj', (object,), {'data': []})(),
-            operation_name="get learn earn participants"
-        )
+        # PostgREST commonly caps one response at 1,000 rows. Page through the
+        # range so a multi-day report really includes every matching reward.
+        participant_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            participants = safe_supabase_operation(
+                lambda offset=offset: supabase.table('learnearn_log')\
+                    .select('wallet_address, amount_g$, timestamp, transaction_hash, quiz_id')\
+                    .gte('timestamp', start_datetime)\
+                    .lt('timestamp', end_datetime)\
+                    .eq('status', True)\
+                    .order('timestamp', desc=False)\
+                    .range(offset, offset + page_size - 1)\
+                    .execute(),
+                fallback_result=type('obj', (object,), {'data': []})(),
+                operation_name="get learn earn participants"
+            )
+            rows = participants.data if participants and participants.data else []
+            participant_rows.extend(rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
 
         formatted_participants = []
         total_g_disbursed = 0
         total_achievement_cards = 0
 
-        if participants and participants.data:
-            logger.info(f"✅ Found {len(participants.data)} Learn & Earn participants")
-            for p in participants.data:
+        if participant_rows:
+            logger.info(f"✅ Found {len(participant_rows)} Learn & Earn participants")
+            for p in participant_rows:
                 wallet = p.get('wallet_address', '')
                 amount = float(p.get('amount_g$', 0))
                 total_g_disbursed += amount
@@ -1040,7 +1063,7 @@ def get_learn_earn_participants():
                     'quiz_id': p.get('quiz_id', 'N/A')
                 })
         else:
-            logger.info(f"ℹ️ No Learn & Earn participants found for {target_date or 'today'}")
+            logger.info(f"ℹ️ No Learn & Earn participants found from {start_day} through {end_day}")
 
         return jsonify({
             "success": True,
@@ -1050,7 +1073,9 @@ def get_learn_earn_participants():
             "total_g_disbursed_formatted": f"{total_g_disbursed:,.2f} G$",
             "total_achievement_cards": total_achievement_cards,
             "total_achievement_cards_formatted": f"{total_achievement_cards:,} card{'s' if total_achievement_cards != 1 else ''}",
-            "date": target_date if target_date else datetime.utcnow().strftime('%Y-%m-%d')
+            "date": start_day.isoformat(),
+            "start_date": start_day.isoformat(),
+            "end_date": end_day.isoformat()
         })
 
     except Exception as e:
