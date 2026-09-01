@@ -3054,7 +3054,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     ];
     const AI_XSWAP_SLIPPAGE_BPS = 100n; // 1% — mirrors xdc_wallet.html's default
     const AI_XDC_APPROVE_GAS = '0x1d4c0'; // 120000, mirrors swap.html
-    const AI_XDC_BRIDGE_GAS  = '0x55d40'; // 350000
+    // `bridgeTo` has used roughly 470k gas on the live route.  The chat used
+    // a 350k static limit while the manual bridge estimates and pads gas,
+    // which made an otherwise-valid chat bridge run out of gas and appear as
+    // an opaque on-chain rejection.  Keep 500k as the safe fallback when a
+    // wallet cannot estimate, and prefer a padded live estimate below.
+    const AI_XDC_BRIDGE_GAS  = '0x7a120'; // 500000
     const AI_XDC_SWAP_GAS    = '0x493e0'; // 300000
     // Padded fallback fees mirror the /api/xdc/bridge/estimate-fee response —
     // the endpoint already applies the same safety buffer the pages use.
@@ -3180,7 +3185,34 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             data: tx.data,
             value: tx.valueHex || '0x0'
         };
-        if (tx.gasHex) txParams.gas = tx.gasHex;
+        // Match the manual XDC bridge: ask the currently connected wallet for
+        // a live estimate, then add headroom.  A fixed 350k limit was too low
+        // for some XDC -> Celo bridge executions, so the transaction was
+        // mined with status=0 even though the same bridge succeeded manually.
+        // Do not send `chainId` here: MetaMask Mobile rejects that otherwise
+        // valid non-standard eth_sendTransaction field on XDC; the chain was
+        // switched and verified immediately above.
+        try {
+            const estimated = await provider.request({
+                method: 'eth_estimateGas',
+                params: [txParams]
+            });
+            const estimatedWei = typeof estimated === 'string' ? BigInt(estimated) : BigInt(estimated || 0);
+            if (estimatedWei > 0n) {
+                // +20%, rounded up, to accommodate small node/wallet variance.
+                txParams.gas = ethers.toBeHex((estimatedWei * 120n + 99n) / 100n);
+            }
+        } catch (estimateErr) {
+            const estimateMessage = String((estimateErr && estimateErr.message) || estimateErr || '').toLowerCase();
+            if (estimateMessage.includes('insufficient funds')) {
+                throw new Error('Insufficient XDC for transaction value + network gas. Please top up XDC and retry.');
+            }
+            // An estimate can fail because a wallet omits revert data.  Keep
+            // the proven 500k bridge fallback so the broadcast may still
+            // succeed, just as the manual page does.
+            if (tx.gasHex) txParams.gas = tx.gasHex;
+        }
+        if (!txParams.gas && tx.gasHex) txParams.gas = tx.gasHex;
         return await provider.request({ method: 'eth_sendTransaction', params: [txParams] });
     }
     // Fetch the real revert reason for a failed XDC tx via the backend helper
