@@ -1025,6 +1025,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 </div>
 
+                <!-- Submenu: Play & Earn – Today's Participants -->
+                <div class="submenu-item">
+                    <div class="submenu-header" onclick="toggleSubmenu('minigames')">
+                        <div class="submenu-title">
+                            <span>🎮</span><span>Play &amp; Earn – Today's Participants</span>
+                        </div>
+                        <svg class="submenu-chevron" id="chevron-minigames" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </div>
+                    <div class="submenu-content" id="content-minigames">
+                        <div class="submenu-body">
+                            <p style="margin:0 0 1rem;color:rgba(255,255,255,.65);font-size:.9rem;">View a shareable report of completed minigame rewards for any UTC date.</p>
+                            <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+                                <input type="date" id="minigameParticipantDate">
+                                <button onclick="loadMinigameParticipants()" class="action-btn" style="padding:.5rem 1rem;font-size:.875rem;">Open shareable report</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Submenu: Achievement Card History -->
                 <div class="submenu-item">
                     <div class="submenu-header" onclick="toggleSubmenu('achievement-history'); loadAchievementHistory();">
@@ -1468,6 +1489,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const mm    = String(today.getMonth() + 1).padStart(2, '0');
             const dd    = String(today.getDate()).padStart(2, '0');
             document.getElementById('participantDate').value = `${yyyy}-${mm}-${dd}`;
+            document.getElementById('minigameParticipantDate').value = `${yyyy}-${mm}-${dd}`;
         });
 
         var achievementHistoryLoaded = false;
@@ -1552,6 +1574,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Daily reports need a stable URL so they can be shared with report reviewers.
             window.location.assign(`/learn-earn/participants/${encodeURIComponent(selectedDate)}`);
+        }
+
+        function loadMinigameParticipants() {
+            const selectedDate = document.getElementById('minigameParticipantDate').value;
+            if (!selectedDate) { alert('Please select a date'); return; }
+            window.location.assign(`/minigames/participants/${encodeURIComponent(selectedDate)}`);
         }
     </script>
 
