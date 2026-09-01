@@ -7,7 +7,7 @@ import uuid
 import threading
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from flask import Blueprint, request, jsonify, render_template, session
+from flask import Blueprint, request, jsonify, render_template, session, redirect
 from .blockchain import learn_blockchain_service
 # Contract integration removed - using direct private key disbursement only
 from supabase_client import get_supabase_client
@@ -1584,6 +1584,24 @@ def learn_earn_dashboard():
     resp.headers['Pragma'] = 'no-cache'
     resp.headers['Expires'] = '0'
     return resp
+
+
+@learn_earn_bp.route('/participants/<report_date>')
+def learn_earn_participants_report(report_date):
+    """Public, shareable daily Learn & Earn participation report."""
+    import re
+    from datetime import date
+
+    # Keep the URL predictable for report submissions and reject impossible dates
+    # rather than rendering a page that can never have data.
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', report_date or ''):
+        return redirect('/learn-earn/participants/' + date.today().isoformat())
+    try:
+        date.fromisoformat(report_date)
+    except ValueError:
+        return redirect('/learn-earn/participants/' + date.today().isoformat())
+
+    return render_template('learn_earn_participants_report.html', report_date=report_date)
 
 @learn_earn_bp.route('/start-quiz', methods=['POST'])
 @learn_earn_token_required
