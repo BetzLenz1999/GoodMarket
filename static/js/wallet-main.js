@@ -2898,7 +2898,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const fromAddr = direction === 'buy' ? quote.cusd : quote.gd;
             const toAddr = direction === 'buy' ? quote.gd : quote.cusd;
             // Exact-amount approval — no leftover allowance (mirrors swap.html).
-            const readProvider = signer.provider;
+            // Do not read allowance through an injected mobile wallet. Its
+            // dApp-provider RPC can lag after an approval and incorrectly
+            // report zero allowance, causing the following swap to revert.
+            // Signing stays on the wallet; all chain reads use Celo's public
+            // RPC just as the Uniswap and bridge routes do.
+            const readProvider = new ethers.JsonRpcProvider(AI_SWAP_CELO_RPC);
             const tokenRead = new ethers.Contract(fromAddr, AI_SWAP_ERC20_ABI, readProvider);
             const allowance = await tokenRead.allowance(WALLET, AI_SWAP_RESERVE_BROKER);
             if (allowance < amountIn) {
@@ -3161,12 +3166,19 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return { provider: ep, address: address };
     }
     async function _aiXdcSendTx(provider, address, tx) {
+        // MetaMask Mobile rejects the otherwise-valid, non-standard `chainId`
+        // field in eth_sendTransaction params on XDC. The resolver switches
+        // and verifies the wallet network before the flow starts; repeat that
+        // cheap verification here because an approve prompt can leave a mobile
+        // wallet on a different network before the bridge/swap send follows.
+        if (!await _aiEnsureXdcChain(provider)) {
+            throw new Error('Could not switch your wallet to the XDC network — open your wallet app, switch to "XDC Network" manually, then retry.');
+        }
         const txParams = {
             from: address,
             to: tx.to,
             data: tx.data,
-            value: tx.valueHex || '0x0',
-            chainId: AI_XDC_CHAIN_HEX
+            value: tx.valueHex || '0x0'
         };
         if (tx.gasHex) txParams.gas = tx.gasHex;
         return await provider.request({ method: 'eth_sendTransaction', params: [txParams] });
