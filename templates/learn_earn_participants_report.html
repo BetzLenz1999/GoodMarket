@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Learn &amp; Earn participants — {{ report_date }} | GoodMarket</title>
+    <style>
+        :root { color-scheme: dark; }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #f8fafc; background: radial-gradient(circle at top, #312e81 0%, #111827 46%, #020617 100%); }
+        .wrap { width: min(1000px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 56px; }
+        .top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .back { color: #c4b5fd; font-weight: 700; text-decoration: none; }
+        .hero, .summary, .participant { border: 1px solid rgba(255,255,255,.12); background: rgba(15,23,42,.76); box-shadow: 0 18px 60px rgba(0,0,0,.22); }
+        .hero { border-radius: 24px; padding: 24px; margin-bottom: 20px; }
+        h1 { margin: 0 0 8px; font-size: clamp(1.8rem, 5vw, 3rem); }
+        .muted { color: rgba(248,250,252,.68); }
+        .picker { display: flex; gap: .75rem; align-items: end; flex-wrap: wrap; margin-top: 20px; }
+        label { display: grid; gap: .4rem; color: #ddd6fe; font-weight: 700; font-size: .9rem; }
+        input, button { font: inherit; border-radius: 10px; padding: .7rem .85rem; }
+        input { border: 1px solid rgba(167,139,250,.45); background: #111827; color: #fff; }
+        button { cursor: pointer; border: 0; background: linear-gradient(135deg, #7c3aed, #5b21b6); color: #fff; font-weight: 800; }
+        .share { margin: 16px 0 20px; color: rgba(248,250,252,.65); font-size: .9rem; word-break: break-all; }
+        .share code { color: #c4b5fd; }
+        .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+        .summary { border-radius: 16px; padding: 18px; }
+        .summary span { display: block; color: rgba(248,250,252,.64); font-size: .9rem; font-weight: 700; }
+        .summary strong { display: block; margin-top: 5px; color: #c4b5fd; font-size: 1.7rem; }
+        #participants { display: grid; gap: 10px; }
+        .participant { border-radius: 14px; padding: 15px; }
+        .participant-top { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 8px; }
+        .amount { color: #86efac; font-weight: 800; white-space: nowrap; }
+        .detail { color: rgba(248,250,252,.62); font-size: .86rem; overflow-wrap: anywhere; margin-top: 4px; }
+        .detail a { color: #a78bfa; }
+        .empty { text-align: center; padding: 48px 20px; border: 1px dashed rgba(255,255,255,.18); border-radius: 18px; color: rgba(248,250,252,.7); }
+        @media (max-width: 560px) { .summary-grid { grid-template-columns: 1fr; } .participant-top { align-items: flex-start; flex-direction: column; gap: .35rem; } }
+    </style>
+</head>
+<body>
+    <main class="wrap">
+        <div class="top">
+            <a class="back" href="/">← Back to GoodMarket</a>
+            <a class="back" href="/overview">Overview</a>
+        </div>
+        <section class="hero">
+            <h1>📚 Learn &amp; Earn participants</h1>
+            <p class="muted">Daily participation history for <strong id="report-date-label">{{ report_date }}</strong> (UTC). Choose another date to open its own shareable report URL.</p>
+            <div class="picker">
+                <label>Report date<input id="report-date" type="date" value="{{ report_date }}"></label>
+                <button type="button" id="open-report">Open report</button>
+            </div>
+        </section>
+        <div class="share">Shareable report URL: <code id="share-url"></code></div>
+        <section class="summary-grid" aria-label="Daily summary">
+            <div class="summary"><span>Total participants</span><strong id="participant-count">—</strong></div>
+            <div class="summary"><span>Total rewards distributed</span><strong id="reward-total">—</strong></div>
+        </section>
+        <section id="participants"><div class="empty">Loading participants…</div></section>
+    </main>
+    <script>
+        const REPORT_DATE = {{ report_date|tojson }};
+        const escapeHtml = value => String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const formatTime = value => value ? new Date(value).toLocaleString() : '—';
+        function openReport() {
+            const date = document.getElementById('report-date').value;
+            if (date) window.location.assign('/learn-earn/participants/' + encodeURIComponent(date));
+        }
+        async function loadReport() {
+            document.getElementById('share-url').textContent = window.location.href;
+            try {
+                const response = await fetch('/api/learn-earn-participants?date=' + encodeURIComponent(REPORT_DATE));
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error || 'Could not load participants.');
+                document.getElementById('participant-count').textContent = data.total_count || 0;
+                document.getElementById('reward-total').textContent = data.total_g_disbursed_formatted || '0.00 G$';
+                const participants = data.participants || [];
+                const mount = document.getElementById('participants');
+                if (!participants.length) {
+                    mount.innerHTML = '<div class="empty">No Learn &amp; Earn participants found for ' + escapeHtml(REPORT_DATE) + '.</div>';
+                    return;
+                }
+                mount.innerHTML = participants.map((p, index) => {
+                    const tx = p.transaction_hash && p.transaction_hash !== 'N/A'
+                        ? '<a target="_blank" rel="noopener" href="https://celoscan.io/tx/' + encodeURIComponent(p.transaction_hash) + '">' + escapeHtml(p.transaction_hash) + '</a>'
+                        : 'Pending';
+                    return '<article class="participant"><div class="participant-top"><strong>#' + (index + 1) + ' · ' + escapeHtml(p.display_name) + '</strong><span class="amount">' + escapeHtml(p.amount_formatted || '0.0 G$') + '</span></div><div class="detail">Wallet: ' + escapeHtml(p.wallet_address) + '</div><div class="detail">Transaction: ' + tx + '</div><div class="detail">Completed: ' + escapeHtml(formatTime(p.timestamp)) + '</div></article>';
+                }).join('');
+            } catch (error) {
+                document.getElementById('participants').innerHTML = '<div class="empty">Could not load this report. Please try again later.</div>';
+            }
+        }
+        document.getElementById('open-report').addEventListener('click', openReport);
+        document.getElementById('report-date').addEventListener('change', openReport);
+        loadReport();
+    </script>
+</body>
+</html>
