@@ -4518,12 +4518,12 @@ def reconcile_stuck_referrals():
 @routes.route("/api/admin/referral/key-balance", methods=["GET"])
 @admin_required
 def get_referral_key_balance():
-    """Admin: check REFERRAL_KEY wallet balance and pending disbursement queue."""
+    """Admin: check referral rewards contract balance and pending disbursement queue."""
     try:
         from referral_program.blockchain import referral_blockchain_service
         from referral_program.referral_service import referral_service
         
-        # Check REFERRAL_KEY balance
+        # Check referral rewards contract balance
         balance_result = referral_blockchain_service.get_referral_wallet_balance()
         
         # Count pending disbursements waiting for balance
@@ -4557,6 +4557,8 @@ def get_referral_key_balance():
             "celo_balance_wei": balance_result.get("celo_balance_wei"),
             "has_gas": has_gas,
             "wallet": balance_result.get("wallet", "N/A"),
+            "contract": balance_result.get("wallet", "N/A"),
+            "operator": balance_result.get("operator"),
             "pending_disbursements_count": pending_count,
             "total_pending_amount_g": total_pending_amount,
             "can_process": (
@@ -4565,7 +4567,7 @@ def get_referral_key_balance():
             "error": balance_result.get("error")
         })
     except Exception as e:
-        logger.error(f"Error checking referral key balance: {e}")
+        logger.error(f"Error checking referral contract balance: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
