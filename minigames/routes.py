@@ -1,4 +1,5 @@
 import logging
+import os
 import asyncio
 import re
 from datetime import date, datetime
@@ -142,9 +143,22 @@ def minigames_home():
     maintenance_status = maintenance_service.get_maintenance_status('minigames')
     if maintenance_status.get('is_maintenance', False):
         maintenance_message = maintenance_status.get('message', 'Minigames are temporarily under maintenance. Please check back later.')
-        return render_template('minigames.html', wallet=wallet, maintenance_mode=True, maintenance_message=maintenance_message)
+        return render_template(
+            'minigames.html', wallet=wallet, maintenance_mode=True,
+            maintenance_message=maintenance_message,
+            login_method=session.get('login_method', ''),
+            walletconnect_project_id=os.environ.get('WALLETCONNECT_PROJECT_ID', ''),
+            privy_app_id=os.environ.get('PRIVY_APP_ID', ''),
+            privy_client_id=os.environ.get('PRIVY_CLIENT_ID', ''),
+        )
 
-    return render_template('minigames.html', wallet=wallet, maintenance_mode=False)
+    return render_template(
+        'minigames.html', wallet=wallet, maintenance_mode=False,
+        login_method=session.get('login_method', ''),
+        walletconnect_project_id=os.environ.get('WALLETCONNECT_PROJECT_ID', ''),
+        privy_app_id=os.environ.get('PRIVY_APP_ID', ''),
+        privy_client_id=os.environ.get('PRIVY_CLIENT_ID', ''),
+    )
 
 @minigames_bp.route('/api/check-limit/<game_type>')
 def check_game_limit(game_type):
