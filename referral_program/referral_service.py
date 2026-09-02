@@ -903,7 +903,8 @@ class ReferralService:
                 referee_result = referral_blockchain_service.disburse_referral_reward_sync(
                     wallet_address=referee_wallet,
                     amount=REFEREE_REWARD,
-                    reward_type='referee'
+                    reward_type='referee',
+                    referral_id=referral_id
                 )
                 logger.info(f"   [REFERE_RESULT] {referee_result}")
 
@@ -915,7 +916,8 @@ class ReferralService:
                 referrer_result = referral_blockchain_service.disburse_referral_reward_sync(
                     wallet_address=referrer_wallet,
                     amount=REFERRER_REWARD,
-                    reward_type='referrer'
+                    reward_type='referrer',
+                    referral_id=referral_id
                 )
                 logger.info(f"   [REFERRER_RESULT] {referrer_result}")
 
@@ -1172,7 +1174,7 @@ class ReferralService:
                 # reverted → fall through and re-send
 
             # Send blockchain transaction
-            result = referral_blockchain_service.disburse_referral_reward(wallet, amount, reward_type)
+            result = referral_blockchain_service.disburse_referral_reward(wallet, amount, reward_type, referral_id)
 
             if result.get('success'):
                 _safe(
