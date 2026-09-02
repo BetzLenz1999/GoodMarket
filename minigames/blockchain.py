@@ -3,6 +3,7 @@ import os
 import logging
 from web3 import Web3
 from eth_account import Account
+from eth_account.messages import encode_typed_data
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,14 @@ class MinigamesBlockchainService:
         self.games_rewards_abi = [
             {
                 "inputs": [
+                    {"name": "recipient", "type": "address"}, {"name": "amount", "type": "uint256"},
+                    {"name": "withdrawalId", "type": "bytes32"}, {"name": "deadline", "type": "uint256"},
+                    {"name": "signature", "type": "bytes"}
+                ], "name": "claim", "outputs": [], "stateMutability": "nonpayable", "type": "function"
+            },
+            {"inputs": [{"name": "withdrawalId", "type": "bytes32"}], "name": "withdrawalUsed", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "view", "type": "function"},
+            {
+                "inputs": [
                     {"name": "recipient", "type": "address"},
                     {"name": "amount", "type": "uint256"},
                     {"name": "sessionId", "type": "string"}
@@ -153,6 +162,64 @@ class MinigamesBlockchainService:
         if not wallet_address or len(wallet_address) < 10:
             return wallet_address
         return wallet_address[:6] + "..." + wallet_address[-4:]
+
+    def create_withdrawal_voucher(self, wallet_address: str, amount: float, withdrawal_id: str, deadline: int) -> dict:
+        """Create a server-authorized, one-time EIP-712 claim voucher.
+
+        The player submits this voucher from their own provider (and pays gas).
+        It is intentionally not a server-signed transaction: anyone may relay
+        it, but the contract can pay only this wallet and only once.
+        """
+        if not self.server_account:
+            return {'success': False, 'error': 'SERVER_PRIVATE_KEY is not configured'}
+        try:
+            recipient = Web3.to_checksum_address(wallet_address)
+            withdrawal_id_bytes = '0x' + Web3.keccak(text=withdrawal_id).hex()
+            amount_wei = int(float(amount) * 10 ** 18)
+            typed_data = {
+                'types': {
+                    'EIP712Domain': [
+                        {'name': 'name', 'type': 'string'}, {'name': 'version', 'type': 'string'},
+                        {'name': 'chainId', 'type': 'uint256'}, {'name': 'verifyingContract', 'type': 'address'},
+                    ],
+                    'Withdrawal': [
+                        {'name': 'recipient', 'type': 'address'}, {'name': 'amount', 'type': 'uint256'},
+                        {'name': 'withdrawalId', 'type': 'bytes32'}, {'name': 'deadline', 'type': 'uint256'},
+                    ],
+                },
+                'primaryType': 'Withdrawal',
+                'domain': {'name': 'GoodMarket Minigames Withdrawals', 'version': '1', 'chainId': self.chain_id, 'verifyingContract': self.games_rewards_address},
+                'message': {'recipient': recipient, 'amount': amount_wei, 'withdrawalId': withdrawal_id_bytes, 'deadline': int(deadline)},
+            }
+            signature = '0x' + Account.sign_message(encode_typed_data(full_message=typed_data), self.server_account.key).signature.hex()
+            return {'success': True, 'recipient': recipient, 'amount_wei': str(amount_wei), 'withdrawal_id': withdrawal_id_bytes, 'deadline': int(deadline), 'signature': signature, 'contract_address': self.games_rewards_address, 'chain_id': self.chain_id}
+        except Exception as exc:
+            logger.exception('Could not create minigame withdrawal voucher')
+            return {'success': False, 'error': str(exc)}
+
+    async def relay_withdrawal_voucher(self, voucher: dict) -> dict:
+        """Relay a valid voucher only when the server wallet can pay CELO gas."""
+        if not self.server_account:
+            return {'success': False, 'error_type': 'insufficient_gas', 'error': 'Please top up CELO to pay the transaction.'}
+        try:
+            claim = self.rewards_contract.functions.claim(voucher['recipient'], int(voucher['amount_wei']), voucher['withdrawal_id'], int(voucher['deadline']), voucher['signature'])
+            gas_price = int(self.w3.eth.gas_price * 1.2)
+            gas_limit = int(claim.estimate_gas({'from': self.server_address}) * 1.25)
+            if self.w3.eth.get_balance(self.server_address) < gas_limit * gas_price:
+                return {'success': False, 'error_type': 'insufficient_gas', 'error': 'Please top up CELO to pay the transaction.'}
+            tx = claim.build_transaction({'from': self.server_address, 'nonce': self.w3.eth.get_transaction_count(self.server_address), 'gas': gas_limit, 'gasPrice': gas_price, 'chainId': self.chain_id})
+            signed = self.w3.eth.account.sign_transaction(tx, self.server_account.key)
+            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            if receipt.status != 1:
+                return {'success': False, 'error_type': 'onchain_reverted', 'error': 'Withdrawal transaction reverted.'}
+            return {'success': True, 'tx_hash': tx_hash if tx_hash.startswith('0x') else '0x' + tx_hash, 'submitted_by': self.server_address}
+        except Exception as exc:
+            message = str(exc)
+            if 'insufficient funds' in message.lower():
+                return {'success': False, 'error_type': 'insufficient_gas', 'error': 'Please top up CELO to pay the transaction.'}
+            logger.exception('Could not relay minigame withdrawal voucher')
+            return {'success': False, 'error': message}
 
     async def verify_deposit_to_merchant(self, wallet_address: str, amount: float, tx_hash: str) -> dict:
         """Verify that user deposited G$ to MERCHANT_ADDRESS"""
