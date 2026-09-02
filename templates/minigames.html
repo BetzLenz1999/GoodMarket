@@ -438,8 +438,50 @@
 
     <div id="notification" class="notification"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
     <script src="/static/minigames.js?v={{ ASSET_VERSION }}"></script>
     <script>
+        const MINIGAME_WALLET = "{{ wallet }}";
+        const LOGIN_METHOD = "{{ session.get('login_method', '') }}";
+        const CELO_CHAIN_HEX = '0xa4ec';
+        const MINIGAME_WITHDRAW_ABI = ['function claim(address recipient,uint256 amount,bytes32 withdrawalId,uint256 deadline,bytes signature)'];
+
+        async function minigameSigningProvider() {
+            const method = (LOGIN_METHOD || '').toLowerCase();
+            if (method === 'local') {
+                if (!window.GMLocalWallet) throw new Error('Your in-app wallet is unavailable. Please reload.');
+                if (!GMLocalWallet.isUnlocked()) await window._lwOpenUnlockModal();
+                const p = GMLocalWallet.getProvider();
+                await p.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
+                return p;
+            }
+            if (method === 'privy') {
+                const wallets = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
+                const wallet = wallets.find(w => (w.address || '').toLowerCase() === MINIGAME_WALLET.toLowerCase()) || wallets[0];
+                if (wallet && wallet.getEthereumProvider) return await wallet.getEthereumProvider();
+            }
+            if (window.GMWalletConnect && GMWalletConnect.isPreferred()) return await GMWalletConnect.getProvider();
+            if (method === 'local') return null; // Never allow an extension to hijack a local login.
+            return window.ethereum || null;
+        }
+
+        async function minigameSigner() {
+            const ep = await minigameSigningProvider();
+            if (!ep) throw new Error('No signing wallet connected. Please reconnect your GoodMarket wallet.');
+            const chain = await ep.request({method: 'eth_chainId'});
+            if (chain !== CELO_CHAIN_HEX) await ep.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
+            const provider = new ethers.BrowserProvider(ep);
+            const signer = await provider.getSigner();
+            if ((await signer.getAddress()).toLowerCase() !== MINIGAME_WALLET.toLowerCase()) throw new Error('Wrong wallet connected. Please use your GoodMarket wallet.');
+            return signer;
+        }
+
+        function minigameInsufficientGas(err) {
+            return /insufficient funds|insufficient.*gas|gas required exceeds allowance|not enough.*celo/i.test(String(err && (err.shortMessage || err.message || err)));
+        }
+
         async function loadBalance() {
             try {
                 const res = await fetch('/minigames/api/balance');
@@ -491,17 +533,37 @@
             try {
                 const res = await fetch('/minigames/api/withdraw', { method: 'POST' });
                 const data = await res.json();
-
+                if (!data.success) throw new Error(data.error || 'Could not prepare withdrawal.');
+                const v = data.voucher;
+                let txHash, submittedBy;
+                try {
+                    const signer = await minigameSigner();
+                    const contract = new ethers.Contract(v.contract_address, MINIGAME_WITHDRAW_ABI, signer);
+                    btn.textContent = '⏳ Confirm in wallet...';
+                    const tx = await contract.claim(v.recipient, v.amount_wei, v.withdrawal_id, v.deadline, v.signature);
+                    btn.textContent = '⏳ Confirming transaction...';
+                    await tx.wait();
+                    txHash = tx.hash;
+                    submittedBy = await signer.getAddress();
+                } catch (signErr) {
+                    if (!minigameInsufficientGas(signErr)) throw signErr;
+                    btn.textContent = '⏳ No CELO — using secure fallback...';
+                    const fallback = await fetch('/minigames/api/withdraw/relay', {method: 'POST'}).then(r => r.json());
+                    if (!fallback.success) throw new Error(fallback.error || 'Please top up CELO to pay the transaction.');
+                    msg.style.display = 'block'; msg.style.color = '#10b981'; msg.textContent = `✅ ${fallback.message || 'Withdrawal successful!'}`;
+                    btn.textContent = '💸 Withdraw to Wallet'; await loadBalance(); await loadWithdrawalHistory(); return;
+                }
+                const confirmed = await fetch('/minigames/api/withdraw/confirm', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: data.session_id, tx_hash: txHash, submitted_by: submittedBy})}).then(r => r.json());
                 msg.style.display = 'block';
-                if (data.success) {
+                if (confirmed.success) {
                     msg.style.color = '#10b981';
-                    msg.textContent = `✅ ${data.message || 'Withdrawal successful! G$ sent to your wallet.'}`;
+                    msg.textContent = `✅ ${confirmed.message || 'Withdrawal successful! G$ sent to your wallet.'}`;
                     btn.textContent = '💸 Withdraw to Wallet';
                     await loadBalance();
                     await loadWithdrawalHistory();
                 } else {
                     msg.style.color = '#ef4444';
-                    msg.textContent = `❌ ${data.error || 'Withdrawal failed. Please try again.'}`;
+                    msg.textContent = `❌ ${confirmed.error || 'Withdrawal failed. Please try again.'}`;
                     btn.disabled = false;
                     btn.textContent = '💸 Withdraw to Wallet';
                 }
