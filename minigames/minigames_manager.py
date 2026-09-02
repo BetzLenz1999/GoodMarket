@@ -4,6 +4,7 @@ import logging
 import random
 import uuid
 from datetime import datetime, date
+from datetime import timedelta
 from supabase_client import get_supabase_client
 from .blockchain import minigames_blockchain
 
@@ -854,6 +855,72 @@ class MinigamesManager:
                 'error': f'Withdrawal error: {str(e)}. Your balance is safe.',
                 'balance_safe': True
             }
+
+    def prepare_user_paid_withdrawal(self, wallet_address: str) -> dict:
+        """Reserve the current balance and issue the one-time contract voucher."""
+        try:
+            balance_result = self.supabase.table('minigame_balances').select('*').eq('wallet_address', wallet_address).execute()
+            if not balance_result.data:
+                return {'success': False, 'error': 'No balance found'}
+            amount = float(balance_result.data[0].get('available_balance') or 0)
+            if amount < self.MIN_WITHDRAWAL:
+                return {'success': False, 'error': f'Minimum withdrawal is {self.MIN_WITHDRAWAL} G$.'}
+            if amount > self.MAX_WITHDRAWAL:
+                return {'success': False, 'error': f'Maximum withdrawal is {self.MAX_WITHDRAWAL} G$.'}
+
+            # Reuse an unexpired authorization so rapid double-clicks cannot
+            # create two independently claimable vouchers for the same balance.
+            prepared = self.supabase.table('minigame_withdrawals_log').select('*').eq('wallet_address', wallet_address).eq('status', 'prepared').order('withdrawal_date', desc=True).limit(1).execute()
+            row = (prepared.data or [None])[0]
+            now = datetime.utcnow()
+            if row and row.get('authorization_expires_at'):
+                try:
+                    expires = datetime.fromisoformat(str(row['authorization_expires_at']).replace('Z', '+00:00')).replace(tzinfo=None)
+                except ValueError:
+                    expires = now
+                if expires > now:
+                    session_id, amount, deadline = row['session_id'], float(row['amount']), int(expires.timestamp())
+                else:
+                    self.supabase.table('minigame_withdrawals_log').update({'status': 'expired'}).eq('session_id', row['session_id']).execute()
+                    row = None
+            if not row:
+                session_id = f"WITHDRAW-{uuid.uuid4().hex[:24].upper()}"
+                deadline = int((now + timedelta(minutes=15)).timestamp())
+                self.supabase.table('minigame_withdrawals_log').insert({
+                    'wallet_address': wallet_address, 'amount': amount, 'session_id': session_id,
+                    'status': 'prepared', 'authorization_expires_at': datetime.utcfromtimestamp(deadline).isoformat() + 'Z',
+                    'withdrawal_date': date.today().isoformat()
+                }).execute()
+            voucher = self.blockchain_service.create_withdrawal_voucher(wallet_address, amount, session_id, deadline)
+            if not voucher.get('success'):
+                return voucher
+            return {'success': True, 'amount': amount, 'session_id': session_id, 'voucher': voucher}
+        except Exception as exc:
+            logger.exception('Could not prepare minigame withdrawal')
+            return {'success': False, 'error': str(exc)}
+
+    def finalize_user_paid_withdrawal(self, wallet_address: str, session_id: str, tx_hash: str, submitted_by: str = None) -> dict:
+        """Commit a prepared balance only after a successful client/relay claim."""
+        try:
+            row_result = self.supabase.table('minigame_withdrawals_log').select('*').eq('wallet_address', wallet_address).eq('session_id', session_id).eq('status', 'prepared').execute()
+            if not row_result.data:
+                return {'success': False, 'error': 'Withdrawal authorization was not found or has already been completed.'}
+            row = row_result.data[0]
+            receipt = self.blockchain_service.w3.eth.get_transaction_receipt(tx_hash)
+            if not receipt or receipt.status != 1 or (receipt.get('to') or '').lower() != self.blockchain_service.games_rewards_address.lower():
+                return {'success': False, 'error': 'Withdrawal transaction is not confirmed yet.'}
+            amount = float(row['amount'])
+            balance_result = self.supabase.table('minigame_balances').select('*').eq('wallet_address', wallet_address).execute()
+            if not balance_result.data or float(balance_result.data[0].get('available_balance') or 0) < amount:
+                return {'success': False, 'error': 'Withdrawal balance changed; please contact support.'}
+            balance = balance_result.data[0]
+            self.supabase.table('minigame_balances').update({'available_balance': float(balance['available_balance']) - amount, 'total_withdrawn': float(balance.get('total_withdrawn') or 0) + amount, 'updated_at': datetime.utcnow().isoformat()}).eq('wallet_address', wallet_address).execute()
+            self.supabase.table('minigame_withdrawals_log').update({'status': 'completed', 'tx_hash': normalize_tx_hash(tx_hash), 'submitted_by': submitted_by}).eq('session_id', session_id).eq('status', 'prepared').execute()
+            if hasattr(self, '_cache'): self._cache.pop(f'minigame_balance_{wallet_address}', None)
+            return {'success': True, 'amount_withdrawn': amount, 'tx_hash': normalize_tx_hash(tx_hash), 'explorer_url': f'https://explorer.celo.org/mainnet/tx/{normalize_tx_hash(tx_hash)}', 'message': f'Successfully withdrawn {amount} G$!'}
+        except Exception as exc:
+            logger.exception('Could not finalize minigame withdrawal')
+            return {'success': False, 'error': str(exc)}
 
     def get_user_stats(self, wallet_address: str) -> dict:
         """Get user game statistics"""
