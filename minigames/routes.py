@@ -328,59 +328,25 @@ def get_balance():
 
 @minigames_bp.route('/api/withdraw', methods=['POST'])
 def withdraw():
-    """Prepare a user-paid, signed contract withdrawal voucher."""
+    """Withdraw Play & Earn balance"""
     try:
         wallet = session.get('wallet') or session.get('wallet_address')
         if not wallet or not session.get('verified'):
             return jsonify({'success': False, 'error': 'Not authenticated'}), 401
 
-        return jsonify(minigames_manager.prepare_user_paid_withdrawal(wallet))
-    except Exception as e:
-        logger.error(f"❌ Error processing withdrawal: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@minigames_bp.route('/api/withdraw/confirm', methods=['POST'])
-def confirm_withdrawal():
-    """Confirm an on-chain player-paid (or relayed) withdrawal before DB commit."""
-    wallet = session.get('wallet') or session.get('wallet_address')
-    if not wallet or not session.get('verified'):
-        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-    data = request.get_json(silent=True) or {}
-    if not data.get('session_id') or not _normalize_withdrawal_tx_hash(data.get('tx_hash')):
-        return jsonify({'success': False, 'error': 'Valid session ID and transaction hash are required'}), 400
-    return jsonify(minigames_manager.finalize_user_paid_withdrawal(wallet, data['session_id'], data['tx_hash'], data.get('submitted_by')))
-
-
-@minigames_bp.route('/api/withdraw/relay', methods=['POST'])
-def relay_withdrawal():
-    """Gasless fallback, available only after verifying the player lacks CELO."""
-    wallet = session.get('wallet') or session.get('wallet_address')
-    if not wallet or not session.get('verified'):
-        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-    prepared = minigames_manager.prepare_user_paid_withdrawal(wallet)
-    if not prepared.get('success'):
-        return jsonify(prepared)
-    try:
-        service = minigames_manager.blockchain_service
-        # Do not let a funded player spend the server's CELO merely by choosing
-        # the fallback endpoint. The buffer covers the claim call conservatively.
-        user_celo = service.w3.eth.get_balance(wallet)
-        required_celo = int(service.w3.eth.gas_price * 250000)
-        if user_celo >= required_celo:
-            return jsonify({'success': False, 'error_type': 'user_has_gas', 'error': 'Your wallet has CELO. Please approve the wallet transaction to pay gas.'}), 400
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            relayed = loop.run_until_complete(service.relay_withdrawal_voucher(prepared['voucher']))
+            result = loop.run_until_complete(
+                minigames_manager.withdraw_winnings(wallet)
+            )
         finally:
             loop.close()
-        if not relayed.get('success'):
-            return jsonify(relayed)
-        return jsonify(minigames_manager.finalize_user_paid_withdrawal(wallet, prepared['session_id'], relayed['tx_hash'], relayed.get('submitted_by')))
-    except Exception as exc:
-        logger.exception('Could not relay minigame withdrawal')
-        return jsonify({'success': False, 'error': str(exc)}), 500
+
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"❌ Error processing withdrawal: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @minigames_bp.route('/api/withdrawal-history')
