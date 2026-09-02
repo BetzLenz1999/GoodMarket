@@ -441,12 +441,103 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    {% if (login_method or '')|lower == 'privy' %}
+    <div id="privyWalletMount" style="display:none"></div>
+    <script type="module">
+        import React, {useEffect} from 'https://esm.sh/react@18.3.1';
+        import {createRoot} from 'https://esm.sh/react-dom@18.3.1';
+        import {PrivyProvider, usePrivy, useWallets} from 'https://esm.sh/@privy-io/react-auth@3.32.2?deps=react@18.3.1,react-dom@18.3.1';
+
+        const CELO_PRIVY_CHAIN = {
+            id: 42220, name: 'Celo', network: 'celo',
+            nativeCurrency: {name: 'CELO', symbol: 'CELO', decimals: 18},
+            rpcUrls: {default: {http: ['https://forno.celo.org']}, public: {http: ['https://forno.celo.org']}},
+            blockExplorers: {default: {name: 'CeloScan', url: 'https://celoscan.io'}}
+        };
+        const privyConfig = {
+            appId: {{ privy_app_id|default('', true)|tojson }},
+            clientId: {{ privy_client_id|default('', true)|tojson }}
+        };
+        function PrivyWalletBridge() {
+            const {ready, authenticated} = usePrivy();
+            const {wallets} = useWallets();
+            useEffect(() => {
+                window.GMPrivyReady = !!ready;
+                window.GMPrivyAuthenticated = !!authenticated;
+                window.GMPrivyWallets = wallets || [];
+                window.dispatchEvent(new CustomEvent('gm:privy-wallets-updated'));
+            }, [ready, authenticated, wallets]);
+            return null;
+        }
+        if (privyConfig.appId) {
+            createRoot(document.getElementById('privyWalletMount')).render(
+                React.createElement(PrivyProvider, {
+                    appId: privyConfig.appId,
+                    clientId: privyConfig.clientId || undefined,
+                    config: {defaultChain: CELO_PRIVY_CHAIN, supportedChains: [CELO_PRIVY_CHAIN]}
+                }, React.createElement(PrivyWalletBridge))
+            );
+        }
+    </script>
+    {% endif %}
+    <script>
+        if (typeof GMWalletConnect !== 'undefined') {
+            GMWalletConnect.configure({
+                walletAddress: {{ wallet|tojson }},
+                loginMethod: {{ login_method|default('', true)|tojson }},
+                projectId: {{ walletconnect_project_id|default('', true)|tojson }},
+                sidecarEnabled: false,
+                dappName: 'GoodMarket — Play & Earn',
+                dappDescription: 'Withdraw Play & Earn G$ on Celo',
+                assetVersion: {{ ASSET_VERSION|tojson }}
+            });
+        }
+    </script>
     <script src="/static/minigames.js?v={{ ASSET_VERSION }}"></script>
     <script>
         const MINIGAME_WALLET = "{{ wallet }}";
         const LOGIN_METHOD = "{{ session.get('login_method', '') }}";
         const CELO_CHAIN_HEX = '0xa4ec';
         const MINIGAME_WITHDRAW_ABI = ['function claim(address recipient,uint256 amount,bytes32 withdrawalId,uint256 deadline,bytes signature)'];
+
+        async function minigameWaitForPrivyWallet() {
+            const findWallet = () => {
+                const wallets = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
+                return wallets.find(w => (w.address || '').toLowerCase() === MINIGAME_WALLET.toLowerCase()) || wallets[0];
+            };
+            const existing = findWallet();
+            if (existing) return existing;
+            await new Promise(resolve => {
+                const timeout = setTimeout(done, 10000);
+                function done() {
+                    clearTimeout(timeout);
+                    window.removeEventListener('gm:privy-wallets-updated', changed);
+                    resolve();
+                }
+                function changed() { if (findWallet()) done(); }
+                window.addEventListener('gm:privy-wallets-updated', changed);
+            });
+            return findWallet();
+        }
+
+        async function minigameEnsureCelo(ep) {
+            const chain = await ep.request({method: 'eth_chainId'});
+            if (String(chain).toLowerCase() === CELO_CHAIN_HEX) return;
+            try {
+                await ep.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
+            } catch (err) {
+                if (err && Number(err.code) === 4902) {
+                    await ep.request({method: 'wallet_addEthereumChain', params: [{
+                        chainId: CELO_CHAIN_HEX, chainName: 'Celo Mainnet',
+                        nativeCurrency: {name: 'CELO', symbol: 'CELO', decimals: 18},
+                        rpcUrls: ['https://forno.celo.org'], blockExplorerUrls: ['https://celoscan.io']
+                    }]});
+                    await ep.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
+                } else {
+                    throw err;
+                }
+            }
+        }
 
         async function minigameSigningProvider() {
             const method = (LOGIN_METHOD || '').toLowerCase();
@@ -458,9 +549,9 @@
                 return p;
             }
             if (method === 'privy') {
-                const wallets = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
-                const wallet = wallets.find(w => (w.address || '').toLowerCase() === MINIGAME_WALLET.toLowerCase()) || wallets[0];
+                const wallet = await minigameWaitForPrivyWallet();
                 if (wallet && wallet.getEthereumProvider) return await wallet.getEthereumProvider();
+                throw new Error('Your Privy wallet is still connecting. Please wait a moment and try again.');
             }
             if (window.GMWalletConnect && GMWalletConnect.isPreferred()) return await GMWalletConnect.getProvider();
             if (method === 'local') return null; // Never allow an extension to hijack a local login.
@@ -470,8 +561,7 @@
         async function minigameSigner() {
             const ep = await minigameSigningProvider();
             if (!ep) throw new Error('No signing wallet connected. Please reconnect your GoodMarket wallet.');
-            const chain = await ep.request({method: 'eth_chainId'});
-            if (chain !== CELO_CHAIN_HEX) await ep.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
+            await minigameEnsureCelo(ep);
             const provider = new ethers.BrowserProvider(ep);
             const signer = await provider.getSigner();
             if ((await signer.getAddress()).toLowerCase() !== MINIGAME_WALLET.toLowerCase()) throw new Error('Wrong wallet connected. Please use your GoodMarket wallet.');
@@ -480,6 +570,17 @@
 
         function minigameInsufficientGas(err) {
             return /insufficient funds|insufficient.*gas|gas required exceeds allowance|not enough.*celo/i.test(String(err && (err.shortMessage || err.message || err)));
+        }
+
+        function minigameFriendlyError(err) {
+            const raw = String(err && (err.shortMessage || err.reason || err.message || err) || 'Withdrawal failed.');
+            if (/user rejected|user denied|user canceled|user cancelled/i.test(raw)) return 'Transaction cancelled in your wallet.';
+            if (/wrong wallet/i.test(raw)) return 'Wrong wallet connected. Please use the wallet you used to log in.';
+            if (/privy wallet is still connecting/i.test(raw)) return raw;
+            if (/no signing wallet/i.test(raw)) return raw;
+            if (/invalid voucher|voucher expired|withdrawal already claimed|insufficient g\$ balance|withdrawals paused/i.test(raw)) return raw;
+            if (/network|failed to fetch|timeout|connection/i.test(raw)) return 'Network error. Please check your connection and try again.';
+            return raw.replace(/^Error:\s*/i, '');
         }
 
         async function loadBalance() {
@@ -568,9 +669,10 @@
                     btn.textContent = '💸 Withdraw to Wallet';
                 }
             } catch (e) {
+                console.error('Minigame withdrawal failed:', e);
                 msg.style.display = 'block';
                 msg.style.color = '#ef4444';
-                msg.textContent = '❌ Network error. Please try again.';
+                msg.textContent = `❌ ${minigameFriendlyError(e)}`;
                 btn.disabled = false;
                 btn.textContent = '💸 Withdraw to Wallet';
             }
