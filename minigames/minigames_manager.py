@@ -29,7 +29,7 @@ class MinigamesManager:
         self.MAX_DEPOSIT = 500.0  # Maximum deposit per day 500 G$
 
         # Withdrawal configurations
-        self.MIN_WITHDRAWAL = 100.0  # Minimum withdrawal 100 G$
+        self.MIN_WITHDRAWAL = 1000.0  # Minimum withdrawal 1,000 G$
         self.MAX_WITHDRAWAL = 10000.0  # Maximum withdrawal 10,000 G$
 
         # Game configurations
@@ -763,7 +763,7 @@ class MinigamesManager:
                     'error': f'Maximum withdrawal is {self.MAX_WITHDRAWAL} G$. You have {available_balance} G$. Please contact support for large withdrawals.'
                 }
 
-            # Disburse via direct G$ transfer from the GAMES wallet (GAMES_KEY)
+            # Disburse from GAMES_KEY via the GamesRewards contract)
             session_id = f"WITHDRAW-{uuid.uuid4().hex[:8].upper()}"
             disburse_result = await self.blockchain_service.disburse_from_games_key(
                 wallet_address, available_balance, session_id
@@ -827,9 +827,11 @@ class MinigamesManager:
                 # Check if it's a gas/system error
                 error_type = disburse_result.get('error_type')
                 if error_type == 'insufficient_gas':
-                    error_message = "The rewards wallet needs a gas refill. Please try again in a few minutes. Your balance is safe."
-                elif error_type == 'insufficient_balance':
-                    error_message = "The rewards wallet has insufficient G$ right now. Please try again later. Your balance is safe."
+                    error_message = "Withdrawal signer needs gas refill. Please try again in a few minutes. Your balance is safe."
+                elif error_type == 'insufficient_contract_balance':
+                    error_message = "Withdrawal vault has insufficient G$ right now. Please try again later. Your balance is safe."
+                elif error_type == 'contract_preflight_failed':
+                    error_message = "Withdrawal failed contract preflight, so no transaction was sent. Please try again later. Your balance is safe."
                 elif error_type == 'onchain_reverted':
                     error_message = "Withdrawal transaction reverted on-chain, so it was not completed. Your balance is safe."
                 else:
