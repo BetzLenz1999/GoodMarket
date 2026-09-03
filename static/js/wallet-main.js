@@ -1080,6 +1080,51 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return false;
     }
 
+    // Force the provider onto Celo before any Celo-bound signing. Used by
+    // submitGcashCashout / FV signing / other flows — declared at MODULE
+    // scope so every caller (not just the FV IIFE) can reach it. Injected
+    // wallets — notably Trust Wallet's mobile dApp browser — default to
+    // Ethereum mainnet, which causes prompts to silently hang or be issued
+    // under the wrong chain context.
+    async function _ensureCeloChainForSigning(provider) {
+        try {
+            if (typeof _isMiniPay === 'function' && _isMiniPay()) return; // MiniPay is Celo-only
+        } catch (_) { /* no-op */ }
+        const CELO_CHAIN_HEX = '0xa4ec';
+        let current;
+        try {
+            current = await provider.request({ method: 'eth_chainId' });
+        } catch (_) {
+            current = null;
+        }
+        if (_normalizeChainIdHex(current) === CELO_CHAIN_HEX) return;
+        try {
+            await provider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: CELO_CHAIN_HEX }]
+            });
+        } catch (switchErr) {
+            if (switchErr && (switchErr.code === 4001 || switchErr.code === 5000)) {
+                throw switchErr; // user cancelled — let outer catch report it
+            }
+            // 4902 / -32603 — chain not added in the wallet yet; try to add it.
+            try {
+                await provider.request({
+                    method: 'wallet_addEthereumChain',
+                    params: [{
+                        chainId: CELO_CHAIN_HEX,
+                        chainName: 'Celo Mainnet',
+                        nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+                        rpcUrls: ['https://forno.celo.org'],
+                        blockExplorerUrls: ['https://celoscan.io']
+                    }]
+                });
+            } catch (addErr) {
+                throw new Error('Could not switch your wallet to Celo. Please switch manually and try again.');
+            }
+        }
+    }
+
     function _isRpcMethodNotWhitelistedError(err) {
         const raw = String(
             (err && (
@@ -6147,50 +6192,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             // Ensure 0x prefix — GoodID requires it to ecrecover the signer
             const sig = data.signature;
             return sig.startsWith('0x') ? sig : '0x' + sig;
-        }
-
-        async function _ensureCeloChainForSigning(provider) {
-            // FV signing is Celo-bound (the link encodes chain=42220 and the
-            // claim follow-up runs on Celo). Some injected wallets — notably
-            // Trust Wallet's mobile dApp browser — default to Ethereum mainnet,
-            // which causes personal_sign prompts to silently hang or be issued
-            // under the wrong chain context. Force-switch to Celo first.
-            try {
-                if (typeof _isMiniPay === 'function' && _isMiniPay()) return; // MiniPay is Celo-only
-            } catch (_) { /* no-op */ }
-            const CELO_CHAIN_HEX = '0xa4ec';
-            let current;
-            try {
-                current = await provider.request({ method: 'eth_chainId' });
-            } catch (_) {
-                current = null;
-            }
-            if (_normalizeChainIdHex(current) === CELO_CHAIN_HEX) return;
-            try {
-                await provider.request({
-                    method: 'wallet_switchEthereumChain',
-                    params: [{ chainId: CELO_CHAIN_HEX }]
-                });
-            } catch (switchErr) {
-                if (switchErr && (switchErr.code === 4001 || switchErr.code === 5000)) {
-                    throw switchErr; // user cancelled — let outer catch report it
-                }
-                // 4902 / -32603 — chain not added in the wallet yet; try to add it.
-                try {
-                    await provider.request({
-                        method: 'wallet_addEthereumChain',
-                        params: [{
-                            chainId: CELO_CHAIN_HEX,
-                            chainName: 'Celo Mainnet',
-                            nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
-                            rpcUrls: ['https://forno.celo.org'],
-                            blockExplorerUrls: ['https://celoscan.io']
-                        }]
-                    });
-                } catch (addErr) {
-                    throw new Error('Could not switch your wallet to Celo. Please switch manually and try again.');
-                }
-            }
         }
 
         async function signWithWallet(address) {
