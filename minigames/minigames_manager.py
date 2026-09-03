@@ -855,6 +855,25 @@ class MinigamesManager:
                 'balance_safe': True
             }
 
+    def complete_user_paid_withdrawal(self, wallet_address: str, amount: float, tx_hash: str) -> dict:
+        """Record a vault event only if this exact off-chain balance is still available."""
+        row = self.supabase.table('minigame_balances').select('*').eq('wallet_address', wallet_address).execute()
+        if not row.data or float(row.data[0].get('available_balance', 0)) != float(amount):
+            return {'success': False, 'error': 'Balance changed while withdrawal was pending; no balance was deducted.'}
+        current = row.data[0]
+        self.supabase.table('minigame_balances').update({
+            'available_balance': 0, 'total_withdrawn': current.get('total_withdrawn', 0) + amount,
+            'updated_at': datetime.now().isoformat()
+        }).eq('wallet_address', wallet_address).eq('available_balance', amount).execute()
+        self.supabase.table('minigame_withdrawals_log').insert({
+            'wallet_address': wallet_address, 'amount': amount, 'tx_hash': normalize_tx_hash(tx_hash),
+            'session_id': 'USER-PAID-VAULT', 'status': 'completed', 'withdrawal_date': date.today().isoformat()
+        }).execute()
+        self._cache.pop(f'minigame_balance_{wallet_address}', None)
+        return {'success': True, 'amount_withdrawn': amount, 'tx_hash': normalize_tx_hash(tx_hash),
+                'explorer_url': f'https://explorer.celo.org/mainnet/tx/{normalize_tx_hash(tx_hash)}',
+                'message': f'Successfully withdrawn {amount} G$!'}
+
     def get_user_stats(self, wallet_address: str) -> dict:
         """Get user game statistics"""
         try:
