@@ -521,7 +521,7 @@
 
             try {
                 const preparedRes = await fetch('/minigames/api/withdraw/prepare', { method: 'POST' });
-                const prepared = await preparedRes.json();
+                const prepared = await preparedRes.json().catch(() => ({}));
                 if (!prepared.success) throw new Error(prepared.error || 'Could not prepare withdrawal.');
                 const {provider, signer} = await minigameSigner();
                 const abi = [
@@ -571,7 +571,10 @@
             } catch (e) {
                 msg.style.display = 'block';
                 msg.style.color = '#ef4444';
-                msg.textContent = '❌ Network error. Please try again.';
+                // Do not hide a configuration, wallet, or RPC error behind the
+                // old generic "Network error" message; it blocks support from
+                // diagnosing which signing path failed.
+                msg.textContent = '❌ ' + (e && e.message ? e.message : 'Network error. Please try again.');
                 btn.disabled = false;
                 btn.textContent = '💸 Withdraw to Wallet';
             }
