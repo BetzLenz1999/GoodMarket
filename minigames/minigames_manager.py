@@ -1,495 +1,941 @@
-import logging
 import os
-import asyncio
-import re
-from datetime import date, datetime
-from flask import Blueprint, request, jsonify, render_template, session, redirect
-from .minigames_manager import minigames_manager, normalize_tx_hash
-from .user_paid_withdrawals import UserPaidWithdrawalService
-from maintenance_service import maintenance_service
+import json
+import logging
+import random
+import uuid
+from datetime import datetime, date
+from supabase_client import get_supabase_client
+from .blockchain import minigames_blockchain
 
 logger = logging.getLogger(__name__)
 
-minigames_bp = Blueprint('minigames', __name__, url_prefix='/minigames')
-user_paid_withdrawals = UserPaidWithdrawalService(minigames_manager.blockchain_service)
+
+def normalize_tx_hash(tx_hash: str) -> str:
+    """Ensure tx_hash has 0x prefix for Celo Explorer"""
+    if not tx_hash:
+        return tx_hash
+    if not tx_hash.startswith('0x'):
+        return '0x' + tx_hash
+    return tx_hash
 
 
-def _normalize_withdrawal_tx_hash(value) -> str:
-    """Return a normalized Celo tx hash from a raw hash or explorer URL."""
-    raw_value = str(value or '').strip()
-    if not raw_value:
-        return ''
+class MinigamesManager:
+    def __init__(self):
+        self.supabase = get_supabase_client()
+        self.blockchain_service = minigames_blockchain
 
-    tx_hash_match = re.search(r'0x[a-fA-F0-9]{64}|(?<![a-fA-F0-9])[a-fA-F0-9]{64}(?![a-fA-F0-9])', raw_value)
-    if not tx_hash_match:
-        return ''
+        # Deposit configurations
+        self.MIN_DEPOSIT = 100.0  # Minimum deposit 100 G$
+        self.MAX_DEPOSIT = 500.0  # Maximum deposit per day 500 G$
 
-    return normalize_tx_hash(tx_hash_match.group(0))
+        # Withdrawal configurations
+        self.MIN_WITHDRAWAL = 1000.0  # Minimum withdrawal 1,000 G$
+        self.MAX_WITHDRAWAL = 10000.0  # Maximum withdrawal 10,000 G$
 
-
-def _parse_report_date(value, parameter_name):
-    """Parse a strict UTC calendar date used by a public game report."""
-    if not value or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
-        raise ValueError(f'{parameter_name} must use YYYY-MM-DD format')
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError(f'{parameter_name} must be a valid calendar date') from exc
-
-
-@minigames_bp.route('/participants/<report_date>')
-def minigames_participants_report(report_date):
-    """Public, shareable Play & Earn participation report for a UTC range."""
-    try:
-        start_day = _parse_report_date(report_date, 'date')
-        end_day = _parse_report_date(request.args.get('end_date', report_date), 'end_date')
-    except ValueError:
-        return redirect('/minigames/participants/' + date.today().isoformat())
-
-    if end_day < start_day:
-        return redirect('/minigames/participants/' + start_day.isoformat())
-
-    return render_template(
-        'minigames_participants_report.html',
-        report_date=start_day.isoformat(),
-        report_end_date=end_day.isoformat(),
-    )
-
-
-@minigames_bp.route('/api/participants')
-def minigames_participants():
-    """Return completed Play & Earn withdrawals for an inclusive date range."""
-    try:
-        start_day = _parse_report_date(request.args.get('start_date') or request.args.get('date') or datetime.utcnow().date().isoformat(), 'start_date')
-        end_day = _parse_report_date(request.args.get('end_date') or start_day.isoformat(), 'end_date')
-        if end_day < start_day:
-            return jsonify({'success': False, 'participants': [], 'error': 'end_date must be on or after start_date'}), 400
-
-        from supabase_client import get_supabase_client
-        supabase = get_supabase_client()
-        if not supabase:
-            return jsonify({'success': False, 'participants': [], 'error': 'Database not available'}), 500
-
-        # Play & Earn's user-facing history records actual payouts in
-        # minigame_withdrawals_log. The older minigame_rewards_log is only for
-        # direct game rewards and is not the withdrawal history shown to users.
-        # withdrawal_date is a database DATE, so use both endpoints inclusively.
-        rows, page_size, offset = [], 1000, 0
-        while True:
-            result = supabase.table('minigame_withdrawals_log')\
-                .select('wallet_address, amount, tx_hash, withdrawal_date, session_id')\
-                .gte('withdrawal_date', start_day.isoformat())\
-                .lte('withdrawal_date', end_day.isoformat())\
-                .order('withdrawal_date', desc=False)\
-                .range(offset, offset + page_size - 1)\
-                .execute()
-            page = result.data or []
-            rows.extend(page)
-            if len(page) < page_size:
-                break
-            offset += page_size
-
-        participants, total_withdrawn = [], 0.0
-        for row in rows:
-            wallet = row.get('wallet_address', '')
-            amount = float(row.get('amount') or 0)
-            tx_hash = _normalize_withdrawal_tx_hash(row.get('tx_hash'))
-            # Withdrawal rows are created only after the on-chain payout is
-            # successful. Still exclude legacy rows without a valid hash.
-            if not tx_hash:
-                continue
-            total_withdrawn += amount
-            participants.append({
-                'wallet_address': wallet,
-                'display_name': f'{wallet[:6]}...{wallet[-4:]}' if wallet else 'Unknown wallet',
-                'withdrawal_amount': amount,
-                'withdrawal_formatted': f'{amount:,.2f} G$',
-                'transaction_hash': tx_hash,
-                'timestamp': row.get('withdrawal_date'),
-                'session_id': row.get('session_id') or '—',
-            })
-
-        return jsonify({
-            'success': True,
-            'participants': participants,
-            'total_count': len(participants),
-            'total_withdrawn': total_withdrawn,
-            'total_withdrawn_formatted': f'{total_withdrawn:,.2f} G$',
-            'start_date': start_day.isoformat(),
-            'end_date': end_day.isoformat(),
-        })
-    except ValueError as exc:
-        return jsonify({'success': False, 'participants': [], 'error': str(exc)}), 400
-    except Exception as exc:
-        logger.exception('Error getting minigame participants')
-        return jsonify({'success': False, 'participants': [], 'error': 'Could not load minigame participants'}), 500
-
-
-@minigames_bp.route('/')
-def minigames_home():
-    """Minigames dashboard"""
-    wallet = session.get('wallet') or session.get('wallet_address')
-    verified = session.get('verified') or session.get('ubi_verified')
-
-    if not wallet or not verified:
-        return redirect('/')
-
-    # Human (face) verification gate — all login_methods must be
-    # face-verified on the GoodDollar Identity contract to enter.
-    from human_verification import human_verification_redirect
-    fv_gate = human_verification_redirect(wallet)
-    if fv_gate:
-        return fv_gate
-
-    # Check maintenance mode from database
-    maintenance_status = maintenance_service.get_maintenance_status('minigames')
-    if maintenance_status.get('is_maintenance', False):
-        maintenance_message = maintenance_status.get('message', 'Minigames are temporarily under maintenance. Please check back later.')
-        return render_template(
-            'minigames.html', wallet=wallet, maintenance_mode=True,
-            maintenance_message=maintenance_message,
-            login_method=session.get('login_method', ''),
-            walletconnect_project_id=os.environ.get('WALLETCONNECT_PROJECT_ID', ''),
-            privy_app_id=os.environ.get('PRIVY_APP_ID', ''),
-            privy_client_id=os.environ.get('PRIVY_CLIENT_ID', ''),
-        )
-
-    return render_template(
-        'minigames.html', wallet=wallet, maintenance_mode=False,
-        login_method=session.get('login_method', ''),
-        walletconnect_project_id=os.environ.get('WALLETCONNECT_PROJECT_ID', ''),
-        privy_app_id=os.environ.get('PRIVY_APP_ID', ''),
-        privy_client_id=os.environ.get('PRIVY_CLIENT_ID', ''),
-    )
-
-@minigames_bp.route('/api/check-limit/<game_type>')
-def check_game_limit(game_type):
-    """Check if user can play a game"""
-    # Check maintenance mode from database
-    maintenance_status = maintenance_service.get_maintenance_status('minigames')
-    if maintenance_status.get('is_maintenance', False):
-        return jsonify({'error': maintenance_status.get('message', 'Minigames are temporarily under maintenance')}), 503
-
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not (session.get('verified') or session.get('ubi_verified')):
-            return jsonify({'error': 'Not authenticated'}), 401
-
-        # Removed coin_flip game type check
-        if game_type == 'coin_flip':
-            return jsonify({'success': False, 'error': 'Coin flip game is not available'}), 404
-
-        limit_check = minigames_manager.check_daily_limit(wallet, game_type)
-
-        return jsonify({
-            'success': True,
-            'limit_check': limit_check
-        })
-
-    except Exception as e:
-        logger.error(f"❌ Error checking game limit: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@minigames_bp.route('/api/start-game', methods=['POST'])
-def start_game():
-    """Start a new minigame session"""
-    # Check maintenance mode from database
-    maintenance_status = maintenance_service.get_maintenance_status('minigames')
-    if maintenance_status.get('is_maintenance', False):
-        return jsonify({'error': maintenance_status.get('message', 'Minigames are temporarily under maintenance')}), 503
-
-    try:
-        wallet_address = session.get('wallet_address') or session.get('wallet')
-        if not wallet_address or not (session.get('verified') or session.get('ubi_verified')):
-            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-
-        data = request.json
-        game_type = data.get('game_type')
-        bet_amount = data.get('bet_amount', 0)
-
-        if not game_type:
-            return jsonify({'success': False, 'error': 'Game type required'}), 400
-
-        # Removed coin_flip game type check
-        if game_type == 'coin_flip':
-            return jsonify({'success': False, 'error': 'Coin flip game is not available'}), 404
-
-        result = minigames_manager.start_game_session(wallet_address, game_type, bet_amount)
-        return jsonify(result)
-
-    except Exception as e:
-        logger.error(f"❌ Error starting game: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@minigames_bp.route('/api/complete-game', methods=['POST'])
-def complete_game():
-    """Complete a game session"""
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not (session.get('verified') or session.get('ubi_verified')):
-            return jsonify({'error': 'Not authenticated'}), 401
-
-        data = request.get_json()
-        session_id = data.get('session_id')
-        score = data.get('score', 0)
-        game_data = data.get('game_data', {})
-
-        if not session_id:
-            return jsonify({'success': False, 'error': 'Session ID required'}), 400
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                minigames_manager.complete_game_session(session_id, score, game_data)
-            )
-        finally:
-            loop.close()
-
-        return jsonify(result)
-
-    except Exception as e:
-        logger.error(f"❌ Error completing game: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@minigames_bp.route('/api/user-stats')
-def get_user_stats():
-    """Get user game statistics with total virtual tokens across all games"""
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not (session.get('verified') or session.get('ubi_verified')):
-            logger.warning("⚠️ Unauthenticated request to /api/user-stats")
-            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-
-        logger.info(f"📊 Getting user stats for {wallet[:8]}...")
-        result = minigames_manager.get_user_stats(wallet)
-
-        # Always ensure we have a valid response structure
-        stats = result.get('stats', [])
-        logger.info(f"📊 Retrieved {len(stats)} game stats for {wallet[:8]}...")
-
-        total_tokens = sum(stat.get('virtual_tokens', 0) for stat in stats)
-
-        logger.info(f"💰 Total tokens across all games for {wallet[:8]}...: {total_tokens}")
-
-        # Log individual game tokens for debugging
-        if stats:
-            for stat in stats:
-                game_type = stat.get('game_type', 'unknown')
-                tokens = stat.get('virtual_tokens', 0)
-                plays = stat.get('total_plays', 0)
-                logger.info(f"   {game_type}: {tokens} tokens ({plays} plays)")
-        else:
-            logger.info(f"   No game stats found - user hasn't played any games yet")
-
-        # Always return success with proper data structure
-        response_data = {
-            'success': True,
-            'stats': stats,
-            'total_virtual_tokens': total_tokens
+        # Game configurations
+        self.game_configs = {
+            'crash_game': {
+                'max_plays_per_day': 20,
+                'min_bet': 10.0,
+                'max_bet': 250.0,
+                'base_reward': 4,
+                'min_multiplier': 1.20,
+                'max_multiplier': 5.00
+            },
+            'spin_wheel': {
+                'max_plays_per_day': 10,
+                'base_reward': 0,
+                'segments': [0, 0, 2, 2, 4, 6, 10, 20],
+            },
+            'memory_card': {
+                'max_plays_per_day': 5,
+                'reward_per_match': 2.0,
+                'base_reward': 0,
+            },
+            'coin_click': {
+                'max_plays_per_day': 10,
+                'daily_reward_cap': 50.0,
+                'max_reward_per_play': 10.0,
+                'duration_seconds': 37,
+                'coin_values': [1, 2, 5],
+                'bomb_penalty': 2,
+                'base_reward': 0,
+            }
         }
 
-        logger.info(f"✅ Returning response: {response_data}")
+        logger.info("🎮 Minigames Manager initialized")
 
-        return jsonify(response_data)
+    def get_deposit_balance(self, wallet_address: str) -> dict:
+        # Use 30-second cache for balance (shorter because it changes frequently)
+        cache_key = f'minigame_balance_{wallet_address}'
+        if hasattr(self, '_cache'):
+            if cache_key in self._cache:
+                cached_data, cached_time = self._cache[cache_key]
+                import time
+                if time.time() - cached_time < 30:  # 30 seconds
+                    logger.info(f"📦 Using cached minigame balance for {wallet_address[:8]}...")
+                    return cached_data
+        else:
+            self._cache = {}
 
-    except Exception as e:
-        logger.error(f"❌ Error getting user stats: {e}")
-        import traceback
-        logger.error(f"🔍 Traceback: {traceback.format_exc()}")
-        # Return error with proper structure
-        return jsonify({
-            'success': False,
-            'stats': [],
-            'total_virtual_tokens': 0,
-            'error': str(e)
-        }), 500
-
-@minigames_bp.route('/api/balance')
-def get_balance():
-    """Get user's Play & Earn balance"""
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not session.get('verified'):
-            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-
-        result = minigames_manager.get_deposit_balance(wallet)
-        min_withdrawal = minigames_manager.MIN_WITHDRAWAL
-        available = result.get('available_balance', 0)
-        return jsonify({
-            'success': True,
-            'available_balance': available,
-            'total_withdrawn': result.get('total_withdrawn', 0),
-            'min_withdrawal': min_withdrawal,
-            'can_withdraw': available >= min_withdrawal
-        })
-    except Exception as e:
-        logger.error(f"❌ Error getting balance: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@minigames_bp.route('/api/withdraw', methods=['POST'])
-def withdraw():
-    """Withdraw Play & Earn balance"""
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not session.get('verified'):
-            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(
-                minigames_manager.withdraw_winnings(wallet)
-            )
-        finally:
-            loop.close()
+            # Get user's game balance record
+            balance_result = self.supabase.table('minigame_balances')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .execute()
 
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"❌ Error processing withdrawal: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+            if balance_result.data:
+                balance_data = balance_result.data[0]
+                # Merge deposited_amount and available_winnings into single balance
+                available_balance = balance_data.get('available_balance', 0)
+                result = {
+                    'success': True,
+                    'available_balance': available_balance,
+                    'total_withdrawn': balance_data.get('total_withdrawn', 0),
+                    'last_deposit_date': balance_data.get('last_deposit_date')
+                }
+            else:
+                result = {
+                    'success': True,
+                    'available_balance': 0,
+                    'total_withdrawn': 0,
+                    'last_deposit_date': None
+                }
 
+            # Cache the result
+            import time
+            self._cache[cache_key] = (result, time.time())
 
-def _withdraw_wallet():
-    wallet = session.get('wallet') or session.get('wallet_address')
-    if not wallet or not session.get('verified'):
-        return None
-    return wallet
+            return result
 
+        except Exception as e:
+            logger.error(f"❌ Error getting deposit balance: {e}")
+            error_result = {'success': False, 'error': str(e)}
 
-@minigames_bp.route('/api/withdraw/prepare', methods=['POST'])
-def prepare_user_paid_withdrawal():
-    """Issue one short-lived backend authorization for a player-paid claim."""
-    wallet = _withdraw_wallet()
-    if not wallet:
-        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-    try:
-        balance = minigames_manager.get_deposit_balance(wallet).get('available_balance', 0)
-        if balance < minigames_manager.MIN_WITHDRAWAL:
-            return jsonify({'success': False, 'error': 'Minimum withdrawal not reached'}), 400
-        prepared = user_paid_withdrawals.prepare(wallet, balance)
-        if not prepared.get('success'):
-            return jsonify(prepared), 503
-        # Never accept amount/nonce/authorization from the browser during confirm.
-        prepared['recipient'] = wallet
-        session['minigames_pending_claim'] = prepared
-        return jsonify(prepared)
-    except Exception:
-        logger.exception('Could not prepare user-paid minigame withdrawal')
-        return jsonify({
-            'success': False,
-            'error': 'Could not prepare the withdrawal. Check MINIGAMES_USER_PAID_VAULT, '
-                     'MINIGAMES_WITHDRAW_AUTHORIZER_KEY, GAMES_KEY, and the Celo RPC configuration.'
-        }), 503
+            # Cache error too
+            import time
+            self._cache[cache_key] = (error_result, time.time())
 
+            return error_result
 
-@minigames_bp.route('/api/withdraw/confirm', methods=['POST'])
-def confirm_user_paid_withdrawal():
-    """Verify the vault event before changing the off-chain Minigames balance."""
-    wallet = _withdraw_wallet()
-    prepared = session.get('minigames_pending_claim')
-    tx_hash = (request.get_json(silent=True) or {}).get('tx_hash', '')
-    if not wallet or not prepared or prepared.get('recipient', '').lower() != wallet.lower():
-        return jsonify({'success': False, 'error': 'No pending withdrawal authorization'}), 400
-    try:
-        if not user_paid_withdrawals.verify_claim(tx_hash, prepared):
-            return jsonify({'success': False, 'error': 'Withdrawal transaction was not confirmed'}), 400
-        result = minigames_manager.complete_user_paid_withdrawal(wallet, float(prepared['amount']) / 1e18, tx_hash)
-        session.pop('minigames_pending_claim', None)
-        return jsonify(result)
-    except Exception:
-        logger.exception('Could not confirm user-paid minigame withdrawal')
-        return jsonify({'success': False, 'error': 'Could not verify withdrawal'}), 500
+    async def auto_verify_pending_deposits(self, wallet_address: str) -> dict:
+        """
+        Automatically verify pending deposits for a wallet
+        Similar to P2P trading's automatic verification
+        """
+        try:
+            logger.info(f"🔍 AUTO-VERIFY: Checking pending deposits for {wallet_address[:8]}...")
 
+            # Get user's current balance
+            balance_info = self.get_deposit_balance(wallet_address)
+            today = date.today().isoformat()
 
-@minigames_bp.route('/api/withdraw/relay', methods=['POST'])
-def relay_user_paid_withdrawal():
-    """GAMES_KEY gas fallback; player still signs the relayed-claim approval."""
-    wallet = _withdraw_wallet()
-    prepared = session.get('minigames_pending_claim')
-    approval = (request.get_json(silent=True) or {}).get('player_approval', '')
-    if not wallet or not prepared or prepared.get('recipient', '').lower() != wallet.lower() or not approval:
-        return jsonify({'success': False, 'error': 'No pending withdrawal authorization'}), 400
-    try:
-        tx_hash = user_paid_withdrawals.relay(prepared, approval)
-        return confirm_user_paid_withdrawal_response(wallet, prepared, tx_hash)
-    except Exception:
-        logger.exception('Could not relay minigame withdrawal')
-        return jsonify({'success': False, 'error': 'Gas-sponsored withdrawal could not be sent'}), 502
+            # Check blockchain for deposits
+            deposits_result = await self.blockchain_service.check_pending_deposits(wallet_address)
 
+            if not deposits_result.get('success'):
+                return deposits_result
 
-def confirm_user_paid_withdrawal_response(wallet, prepared, tx_hash):
-    receipt = user_paid_withdrawals.blockchain.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-    if not receipt or not user_paid_withdrawals.verify_claim(tx_hash, prepared):
-        return jsonify({'success': False, 'error': 'Gas-sponsored withdrawal was not confirmed'}), 502
-    result = minigames_manager.complete_user_paid_withdrawal(wallet, float(prepared['amount']) / 1e18, tx_hash)
-    session.pop('minigames_pending_claim', None)
-    return jsonify(result)
+            deposits_found = deposits_result.get('deposits_found', [])
 
+            if len(deposits_found) == 0:
+                return {
+                    'success': True,
+                    'deposits_verified': 0,
+                    'message': 'No pending deposits found'
+                }
 
-@minigames_bp.route('/api/withdrawal-history')
-def withdrawal_history():
-    """Get user's withdrawal transaction history"""
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not session.get('verified'):
-            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+            # Get already recorded deposits
+            recorded_deposits = self.supabase.table('minigame_deposits_log')\
+                .select('tx_hash')\
+                .eq('wallet_address', wallet_address)\
+                .execute()
 
-        from supabase_client import get_supabase_client
-        sb = get_supabase_client()
-        res = sb.table('minigame_withdrawals_log')\
+            recorded_tx_hashes = [d['tx_hash'] for d in (recorded_deposits.data or [])]
+
+            # Process new deposits
+            verified_count = 0
+            total_new_amount = 0
+
+            for deposit in deposits_found:
+                tx_hash = deposit['tx_hash']
+                amount = deposit['amount']
+
+                # Skip if already recorded
+                if tx_hash in recorded_tx_hashes:
+                    logger.info(f"⏭️ Skipping already recorded deposit: {tx_hash[:16]}...")
+                    continue
+
+                # Check amount is within bounds
+                if amount < self.MIN_DEPOSIT or amount > self.MAX_DEPOSIT:
+                    logger.warning(f"⚠️ Deposit {tx_hash[:16]}... amount {amount} G$ out of bounds, skipping")
+                    continue
+
+                # Record the deposit
+                try:
+                    # Update or create balance record - add directly to available_balance
+                    existing = self.supabase.table('minigame_balances')\
+                        .select('*')\
+                        .eq('wallet_address', wallet_address)\
+                        .execute()
+
+                    if existing.data:
+                        current = existing.data[0]
+                        new_balance = current.get('available_balance', 0) + amount
+
+                        self.supabase.table('minigame_balances')\
+                            .update({
+                                'available_balance': new_balance,
+                                'last_deposit_date': today,
+                                'updated_at': datetime.now().isoformat()
+                            })\
+                            .eq('wallet_address', wallet_address)\
+                            .execute()
+                    else:
+                        self.supabase.table('minigame_balances').insert({
+                            'wallet_address': wallet_address,
+                            'available_balance': amount,
+                            'total_withdrawn': 0,
+                            'last_deposit_date': today,
+                            'created_at': datetime.now().isoformat()
+                        }).execute()
+
+                    # Log the deposit
+                    self.supabase.table('minigame_deposits_log').insert({
+                        'wallet_address': wallet_address,
+                        'amount': amount,
+                        'tx_hash': tx_hash,
+                        'deposit_date': today
+                    }).execute()
+
+                    verified_count += 1
+                    total_new_amount += amount
+                    logger.info(f"✅ Auto-verified deposit: {amount} G$ (TX: {tx_hash[:16]}...)")
+
+                except Exception as record_error:
+                    logger.error(f"❌ Error recording deposit {tx_hash[:16]}...: {record_error}")
+                    continue
+
+            return {
+                'success': True,
+                'deposits_verified': verified_count,
+                'total_amount': total_new_amount,
+                'message': f'Verified {verified_count} deposit(s) totaling {total_new_amount} G$'
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error auto-verifying deposits: {e}")
+            return {'success': False, 'error': str(e), 'deposits_verified': 0}
+
+    def check_daily_limit(self, wallet_address: str, game_type: str) -> dict:
+        """Check if user can play the game today"""
+        try:
+            today = date.today()
+
+            limit_check = self.supabase.table('daily_game_limits')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .eq('game_type', game_type)\
+                .eq('game_date', today.isoformat())\
+                .execute()
+
+            max_plays = self.game_configs[game_type]['max_plays_per_day']
+
+            if limit_check.data:
+                plays_today = limit_check.data[0]['plays_today']
+                can_play = plays_today < max_plays
+                remaining = max(0, max_plays - plays_today)
+            else:
+                can_play = True
+                plays_today = 0
+                remaining = max_plays
+
+            return {
+                'can_play': can_play,
+                'plays_today': plays_today,
+                'remaining_plays': remaining,
+                'max_plays': max_plays
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error checking daily limit: {e}")
+            return {'can_play': True, 'plays_today': 0, 'remaining_plays': 10, 'max_plays': 10}
+
+    def start_game_session(self, wallet_address: str, game_type: str, bet_amount: float = 0) -> dict:
+        """Start a new game session"""
+        try:
+            if game_type not in self.game_configs:
+                return {'success': False, 'error': 'Game type is not available'}
+
+            # Check daily limit
+            limit_check = self.check_daily_limit(wallet_address, game_type)
+
+            if not limit_check['can_play']:
+                return {
+                    'success': False,
+                    'error': f"Daily limit reached ({limit_check['max_plays']} plays). Come back tomorrow!"
+                }
+
+            # Crash game and CoinClick are FREE - no bet deduction needed
+            if game_type in ['crash_game', 'coin_click']:
+                # Game is free, no balance checking or deduction
+                bet_amount = 0
+                logger.info(f"🎮 Starting FREE {game_type} for {wallet_address[:8]}...")
+
+            session_id = f"GAME-{uuid.uuid4().hex[:8].upper()}"
+
+            session_data = {
+                'session_id': session_id,
+                'wallet_address': wallet_address,
+                'game_type': game_type,
+                'status': 'in_progress',
+                'bet_amount': bet_amount if (game_type == 'crash_game' or game_type == 'coin_flip') else 0,
+                'started_at': datetime.now().isoformat()
+            }
+
+            self.supabase.table('minigame_sessions').insert(session_data).execute()
+
+            logger.info(f"🎮 Started {game_type} session {session_id} for {wallet_address[:8]}... (bet: {bet_amount} G$)")
+
+            return {
+                'success': True,
+                'session_id': session_id,
+                'game_type': game_type,
+                'bet_amount': bet_amount,
+                'config': self.game_configs[game_type]
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error starting game session: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def complete_game_session(self, session_id: str, score: int, game_data: dict = None) -> dict:
+        """Complete a game session and calculate rewards"""
+        try:
+            # Get session
+            session = self.supabase.table('minigame_sessions')\
+                .select('*')\
+                .eq('session_id', session_id)\
+                .execute()
+
+            if not session.data:
+                return {'success': False, 'error': 'Session not found'}
+
+            session_info = session.data[0]
+            wallet_address = session_info['wallet_address']
+            game_type = session_info['game_type']
+
+            if session_info.get('status') == 'completed':
+                return {'success': False, 'error': 'Game session already completed'}
+
+            # CoinClick: reward clicked GoodDollar coins, enforce 10 plays/day and 50 G$/day cap.
+            if game_type == 'coin_click':
+                config = self.game_configs[game_type]
+                earned_today = self._get_earned_today(wallet_address, game_type)
+                daily_remaining = max(0.0, config['daily_reward_cap'] - earned_today)
+
+                clicked_value = float(game_data.get('clicked_value', score) if game_data else score)
+                bombs_hit = int(game_data.get('bombs_hit', 0) if game_data else 0)
+                penalty = max(0, bombs_hit) * config['bomb_penalty']
+                requested_reward = max(0.0, clicked_value - penalty)
+                winnings = min(requested_reward, config['max_reward_per_play'], daily_remaining)
+                score_int = int(max(0, clicked_value))
+
+                self.supabase.table('minigame_sessions')\
+                    .update({
+                        'score': score_int,
+                        'g_dollar_earned': winnings,
+                        'game_data': game_data or {},
+                        'status': 'completed',
+                        'completed_at': datetime.now().isoformat()
+                    })\
+                    .eq('session_id', session_id)\
+                    .execute()
+
+                self._update_daily_limits(wallet_address, game_type, winnings)
+                self._update_user_stats(wallet_address, game_type, score_int, winnings)
+                new_balance = self._add_to_available_balance(wallet_address, winnings)
+                updated_limit = self.check_daily_limit(wallet_address, game_type)
+
+                return {
+                    'success': True,
+                    'score': score_int,
+                    'winnings': winnings,
+                    'reward': winnings,
+                    'available_balance': new_balance,
+                    'daily_earned': min(config['daily_reward_cap'], earned_today + winnings),
+                    'daily_reward_cap': config['daily_reward_cap'],
+                    'remaining_plays': updated_limit.get('remaining_plays', 0),
+                    'plays_today': updated_limit.get('plays_today', 0),
+                    'message': f'Collected {winnings} G$! Daily cap: {min(config["daily_reward_cap"], earned_today + winnings):.2f}/{config["daily_reward_cap"]:.0f} G$'
+                }
+
+            # For crash_game, calculate winnings using tier-based reward system
+            if game_type == 'crash_game':
+                bet_amount = session_info.get('bet_amount', 0)
+                winnings = float(score)  # Total winnings from frontend (tier-based)
+                
+                # TIER-BASED REWARD SYSTEM:
+                # 1.1x-1.9x = 4 G$, 2x-2.9x = 8 G$, 3x-3.9x = 12 G$, 4x-4.9x = 16 G$, 5x = 20 G$
+                
+                # Validate winnings match expected tiers
+                multiplier_str = game_data.get('multiplier', '0.00') if game_data else '0.00'
+                try:
+                    multiplier_value = float(multiplier_str)
+                    score_int = int(multiplier_value * 100)  # Store multiplier as integer (e.g., 1.69x = 169)
+                    
+                    # Verify winnings match tier
+                    expected_winnings = 4.0
+                    if multiplier_value >= 2.0:
+                        expected_winnings = 8.0
+                    if multiplier_value >= 3.0:
+                        expected_winnings = 12.0
+                    if multiplier_value >= 4.0:
+                        expected_winnings = 16.0
+                    if multiplier_value >= 5.0:
+                        expected_winnings = 20.0
+                    
+                    # Cap at expected amount to prevent abuse
+                    if winnings > expected_winnings:
+                        logger.warning(f"⚠️ Winnings {winnings} exceed expected {expected_winnings} for {multiplier_value}x, capping")
+                        winnings = expected_winnings
+                except:
+                    score_int = 0
+
+                # Update session
+                self.supabase.table('minigame_sessions')\
+                    .update({
+                        'score': score_int,
+                        'g_dollar_earned': winnings,
+                        'game_data': game_data or {},
+                        'status': 'completed',
+                        'completed_at': datetime.now().isoformat()
+                    })\
+                    .eq('session_id', session_id)\
+                    .execute()
+
+                # Update daily limits
+                self._update_daily_limits(wallet_address, game_type, winnings)
+
+                # Add winnings to available balance
+                balance_result = self.supabase.table('minigame_balances')\
+                    .select('*')\
+                    .eq('wallet_address', wallet_address)\
+                    .execute()
+
+                if balance_result.data:
+                    current_balance = balance_result.data[0]
+                    old_balance = current_balance.get('available_balance', 0)
+                    new_balance = old_balance + winnings
+
+                    logger.info(f"💰 BALANCE UPDATE for {wallet_address[:8]}...")
+                    logger.info(f"   Bet amount: {bet_amount} G$ (already deducted)")
+                    logger.info(f"   Winnings to add: {winnings} G$")
+                    logger.info(f"   Old balance: {old_balance} G$")
+                    logger.info(f"   New balance: {new_balance} G$")
+                    logger.info(f"   Net change: {winnings} G$")
+
+                    self.supabase.table('minigame_balances')\
+                        .update({
+                            'available_balance': new_balance,
+                            'updated_at': datetime.now().isoformat()
+                        })\
+                        .eq('wallet_address', wallet_address)\
+                        .execute()
+
+                    # Clear balance cache to force refresh
+                    cache_key = f'minigame_balance_{wallet_address}'
+                    if hasattr(self, '_cache') and cache_key in self._cache:
+                        del self._cache[cache_key]
+
+                    logger.info(f"✅ Game complete: {wallet_address[:8]}... won {winnings} G$")
+                    logger.info(f"💰 New available balance: {new_balance} G$")
+
+                    # Get updated limit info
+                    limit_info = self.check_daily_limit(wallet_address, game_type)
+
+                    return {
+                        'success': True,
+                        'score': score,
+                        'winnings': winnings,
+                        'available_balance': new_balance,
+                        'can_withdraw': new_balance >= self.MIN_WITHDRAWAL,
+                        'remaining_plays': limit_info.get('remaining_plays', 0),
+                        'plays_today': limit_info.get('plays_today', 0),
+                        'message': f'Won {winnings} G$! Total balance: {new_balance} G$'
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': 'No balance found. Please deposit G$ first to play.'
+                    }
+
+            else:
+                # Other games: original instant reward logic
+                reward_amount = self._calculate_reward(game_type, score, game_data)
+
+                # Update session
+                self.supabase.table('minigame_sessions')\
+                    .update({
+                        'score': score,
+                        'g_dollar_earned': reward_amount,
+                        'game_data': game_data or {},
+                        'status': 'completed',
+                        'completed_at': datetime.now().isoformat()
+                    })\
+                    .eq('session_id', session_id)\
+                    .execute()
+
+                # Update daily limits
+                self._update_daily_limits(wallet_address, game_type, reward_amount)
+
+                # Update user stats
+                self._update_user_stats(wallet_address, game_type, score, reward_amount)
+
+                # Disburse reward
+                if reward_amount > 0:
+                    disburse_result = await self.blockchain_service.disburse_game_reward(
+                        wallet_address, reward_amount, game_type, session_id
+                    )
+
+                    if disburse_result['success']:
+                        # Log reward
+                        self.supabase.table('minigame_rewards_log').insert({
+                            'transaction_hash': normalize_tx_hash(disburse_result['tx_hash']),
+                            'wallet_address': wallet_address,
+                            'game_type': game_type,
+                            'session_id': session_id,
+                            'reward_amount': reward_amount,
+                            'score': score
+                        }).execute()
+
+                        return {
+                            'success': True,
+                            'score': score,
+                            'reward': reward_amount,
+                            'tx_hash': normalize_tx_hash(disburse_result['tx_hash']),
+                            'explorer_url': disburse_result['explorer_url']
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'error': disburse_result.get('error', 'Reward disbursement failed')
+                        }
+                else:
+                    return {
+                        'success': True,
+                        'score': score,
+                        'reward': 0,
+                        'message': 'No reward earned'
+                    }
+
+        except Exception as e:
+            logger.error(f"❌ Error completing game session: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def _get_earned_today(self, wallet_address: str, game_type: str) -> float:
+        """Return the amount earned today for a game type."""
+        today = date.today().isoformat()
+        result = self.supabase.table('daily_game_limits')\
+            .select('earned_today')\
+            .eq('wallet_address', wallet_address)\
+            .eq('game_type', game_type)\
+            .eq('game_date', today)\
+            .execute()
+        if result.data:
+            return float(result.data[0].get('earned_today') or 0)
+        return 0.0
+
+    def _add_to_available_balance(self, wallet_address: str, amount: float) -> float:
+        """Add minigame winnings to the user's withdrawable Play & Earn balance."""
+        balance_result = self.supabase.table('minigame_balances')\
             .select('*')\
-            .eq('wallet_address', wallet)\
-            .order('withdrawal_date', desc=True)\
-            .limit(20)\
+            .eq('wallet_address', wallet_address)\
             .execute()
 
-        withdrawals = []
-        for withdrawal in res.data or []:
-            withdrawal = dict(withdrawal)
-            status = str(withdrawal.get('status') or 'completed').lower()
-            tx_hash = (
-                withdrawal.get('tx_hash')
-                or withdrawal.get('transaction_hash')
-                or ''
+        if balance_result.data:
+            current_balance = balance_result.data[0]
+            new_balance = float(current_balance.get('available_balance', 0) or 0) + amount
+            self.supabase.table('minigame_balances')\
+                .update({
+                    'available_balance': new_balance,
+                    'updated_at': datetime.now().isoformat()
+                })\
+                .eq('wallet_address', wallet_address)\
+                .execute()
+        else:
+            new_balance = amount
+            self.supabase.table('minigame_balances').insert({
+                'wallet_address': wallet_address,
+                'available_balance': new_balance,
+                'total_withdrawn': 0,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }).execute()
+
+        cache_key = f'minigame_balance_{wallet_address}'
+        if hasattr(self, '_cache') and cache_key in self._cache:
+            del self._cache[cache_key]
+
+        return new_balance
+
+    def _calculate_reward(self, game_type: str, score: int, game_data: dict = None) -> float:
+        """Calculate reward based on game type and score"""
+        config = self.game_configs[game_type]
+
+        if game_type == 'catch_dollar':
+            return score * config['reward_per_dollar']
+
+        elif game_type == 'quiz_trivia':
+            return score * config['reward_per_correct']
+
+        elif game_type == 'battles':
+            if game_data and game_data.get('won'):
+                return config['stake_amount'] * config['reward_multiplier']
+            return 0
+
+        elif game_type == 'memory_card':
+            matches = game_data.get('matches', 0) if game_data else 0
+            return matches * config['reward_per_match']
+
+        elif game_type == 'spin_wheel':
+            return score  # Score is the reward itself
+
+        return 0
+
+    def _update_daily_limits(self, wallet_address: str, game_type: str, earned: float):
+        """Update daily play limits"""
+        try:
+            today = date.today()
+
+            existing = self.supabase.table('daily_game_limits')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .eq('game_type', game_type)\
+                .eq('game_date', today.isoformat())\
+                .execute()
+
+            if existing.data:
+                self.supabase.table('daily_game_limits')\
+                    .update({
+                        'plays_today': existing.data[0]['plays_today'] + 1,
+                        'earned_today': existing.data[0]['earned_today'] + earned
+                    })\
+                    .eq('id', existing.data[0]['id'])\
+                    .execute()
+            else:
+                self.supabase.table('daily_game_limits').insert({
+                    'wallet_address': wallet_address,
+                    'game_date': today.isoformat(),
+                    'game_type': game_type,
+                    'plays_today': 1,
+                    'earned_today': earned
+                }).execute()
+
+        except Exception as e:
+            logger.error(f"❌ Error updating daily limits: {e}")
+
+    def _update_user_stats(self, wallet_address: str, game_type: str, score: int, reward_amount: float) -> dict:
+        """Update user game statistics"""
+        try:
+            existing = self.supabase.table('user_game_stats')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .eq('game_type', game_type)\
+                .execute()
+
+            if existing.data:
+                stats = existing.data[0]
+                self.supabase.table('user_game_stats')\
+                    .update({
+                        'total_plays': stats['total_plays'] + 1,
+                        'total_score': stats['total_score'] + score,
+                        'highest_score': max(stats['highest_score'], score),
+                        'total_earned': stats['total_earned'] + reward_amount,
+                        'last_played': datetime.now().isoformat()
+                    })\
+                    .eq('id', stats['id'])\
+                    .execute()
+            else:
+                self.supabase.table('user_game_stats').insert({
+                    'wallet_address': wallet_address,
+                    'game_type': game_type,
+                    'total_plays': 1,
+                    'total_score': score,
+                    'highest_score': score,
+                    'total_earned': reward_amount,
+                    'virtual_tokens': 0,
+                    'last_played': datetime.now().isoformat()
+                }).execute()
+
+        except Exception as e:
+            logger.error(f"❌ Error updating user stats: {e}")
+
+
+    def _update_user_stats_with_tokens(self, wallet_address: str, game_type: str, score: int, tokens_earned: int) -> dict:
+        """Update user game statistics with virtual tokens"""
+        try:
+            existing = self.supabase.table('user_game_stats')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .eq('game_type', game_type)\
+                .execute()
+
+            if existing.data:
+                stats = existing.data[0]
+                new_token_total = stats.get('virtual_tokens', 0) + tokens_earned
+
+                result = self.supabase.table('user_game_stats')\
+                    .update({
+                        'total_plays': stats['total_plays'] + 1,
+                        'total_score': stats['total_score'] + score,
+                        'highest_score': max(stats['highest_score'], score),
+                        'virtual_tokens': new_token_total,
+                        'last_played': datetime.now().isoformat()
+                    })\
+                    .eq('id', stats['id'])\
+                    .execute()
+
+                logger.info(f"✅ Updated tokens: {stats.get('virtual_tokens', 0)} + {tokens_earned} = {new_token_total}")
+
+                return {
+                    'virtual_tokens': new_token_total,
+                    'tokens_earned': tokens_earned,
+                    'previous_tokens': stats.get('virtual_tokens', 0)
+                }
+            else:
+                result = self.supabase.table('user_game_stats').insert({
+                    'wallet_address': wallet_address,
+                    'game_type': game_type,
+                    'total_plays': 1,
+                    'total_score': score,
+                    'highest_score': score,
+                    'total_earned': 0,
+                    'virtual_tokens': tokens_earned,
+                    'last_played': datetime.now().isoformat()
+                }).execute()
+
+                logger.info(f"✅ Created new stats with {tokens_earned} tokens")
+
+                return {
+                    'virtual_tokens': tokens_earned,
+                    'tokens_earned': tokens_earned,
+                    'previous_tokens': 0
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Error updating user stats with tokens: {e}")
+            return {'virtual_tokens': 0, 'tokens_earned': 0, 'previous_tokens': 0}
+
+    async def withdraw_winnings(self, wallet_address: str) -> dict:
+        """Withdraw available balance"""
+        try:
+            # Get user's balance
+            balance_result = self.supabase.table('minigame_balances')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .execute()
+
+            if not balance_result.data:
+                return {'success': False, 'error': 'No balance found'}
+
+            balance_data = balance_result.data[0]
+            available_balance = balance_data.get('available_balance', 0)
+
+            if available_balance <= 0:
+                return {
+                    'success': False,
+                    'error': 'No balance available to withdraw'
+                }
+
+            # Check minimum withdrawal amount
+            if available_balance < self.MIN_WITHDRAWAL:
+                return {
+                    'success': False,
+                    'error': f'Minimum withdrawal is {self.MIN_WITHDRAWAL} G$. You have {available_balance} G$. Keep playing to reach the minimum!'
+                }
+
+            # Check maximum withdrawal amount
+            if available_balance > self.MAX_WITHDRAWAL:
+                return {
+                    'success': False,
+                    'error': f'Maximum withdrawal is {self.MAX_WITHDRAWAL} G$. You have {available_balance} G$. Please contact support for large withdrawals.'
+                }
+
+            # Disburse from GAMES_KEY via the GamesRewards contract)
+            session_id = f"WITHDRAW-{uuid.uuid4().hex[:8].upper()}"
+            disburse_result = await self.blockchain_service.disburse_from_games_key(
+                wallet_address, available_balance, session_id
             )
-            tx_hash = _normalize_withdrawal_tx_hash(tx_hash)
 
-            # Withdrawal history must only show completed on-chain payouts. Old
-            # rows without a status are treated as completed only when they have
-            # a valid transaction hash; failed/pending rows stay hidden so users
-            # do not see fake or reverted transactions as successful withdrawals.
-            if status not in ('completed', 'success', 'successful') or not tx_hash:
-                continue
+            # ONLY update balance if blockchain transaction was successful
+            if disburse_result['success']:
+                # Update balance - set to 0 and add to total withdrawn
+                total_withdrawn = balance_data.get('total_withdrawn', 0) + available_balance
 
-            withdrawal['status'] = 'completed'
-            withdrawal['tx_hash'] = tx_hash
-            withdrawal['explorer_url'] = f'https://explorer.celo.org/mainnet/tx/{tx_hash}'
-            withdrawals.append(withdrawal)
+                self.supabase.table('minigame_balances')\
+                    .update({
+                        'available_balance': 0,
+                        'total_withdrawn': total_withdrawn,
+                        'updated_at': datetime.now().isoformat()
+                    })\
+                    .eq('wallet_address', wallet_address)\
+                    .execute()
 
-        return jsonify({'success': True, 'withdrawals': withdrawals})
-    except Exception as e:
-        logger.error(f"❌ Error fetching withdrawal history: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+                # Clear balance cache to force refresh
+                cache_key = f'minigame_balance_{wallet_address}'
+                if hasattr(self, '_cache') and cache_key in self._cache:
+                    del self._cache[cache_key]
 
+                # Log the withdrawal only after confirmed on-chain success.
+                # Include status when the database has the column; fall back to
+                # the legacy shape so a missing migration cannot block payouts.
+                withdrawal_log = {
+                    'wallet_address': wallet_address,
+                    'amount': available_balance,
+                    'tx_hash': normalize_tx_hash(disburse_result['tx_hash']),
+                    'session_id': session_id,
+                    'status': 'completed',
+                    'withdrawal_date': date.today().isoformat()
+                }
+                try:
+                    self.supabase.table('minigame_withdrawals_log').insert(withdrawal_log).execute()
+                except Exception as log_error:
+                    if 'status' not in str(log_error).lower():
+                        raise
+                    logger.warning(
+                        "⚠️ minigame_withdrawals_log.status missing; "
+                        "falling back to legacy withdrawal log insert"
+                    )
+                    withdrawal_log.pop('status', None)
+                    self.supabase.table('minigame_withdrawals_log').insert(withdrawal_log).execute()
 
-@minigames_bp.route('/api/quiz-questions')
-def get_quiz_questions():
-    """Get quiz questions"""
-    try:
-        wallet = session.get('wallet') or session.get('wallet_address')
-        if not wallet or not (session.get('verified') or session.get('ubi_verified')):
-            return jsonify({'error': 'Not authenticated'}), 401
+                logger.info(f"✅ Balance withdrawn successfully: {available_balance} G$")
 
-        difficulty = request.args.get('difficulty')
-        questions = minigames_manager.get_quiz_questions(difficulty)
+                return {
+                    'success': True,
+                    'amount_withdrawn': available_balance,
+                    'tx_hash': normalize_tx_hash(disburse_result['tx_hash']),
+                    'explorer_url': disburse_result['explorer_url'],
+                    'message': f'Successfully withdrawn {available_balance} G$!'
+                }
+            else:
+                # Withdrawal FAILED - balance NOT changed
+                logger.error(f"❌ Blockchain withdrawal failed: {disburse_result.get('error')}")
+                
+                # Check if it's a gas/system error
+                error_type = disburse_result.get('error_type')
+                if error_type == 'insufficient_gas':
+                    error_message = "Withdrawal signer needs gas refill. Please try again in a few minutes. Your balance is safe."
+                elif error_type == 'insufficient_contract_balance':
+                    error_message = "Withdrawal vault has insufficient G$ right now. Please try again later. Your balance is safe."
+                elif error_type == 'contract_preflight_failed':
+                    error_message = "Withdrawal failed contract preflight, so no transaction was sent. Please try again later. Your balance is safe."
+                elif error_type == 'onchain_reverted':
+                    error_message = "Withdrawal transaction reverted on-chain, so it was not completed. Your balance is safe."
+                else:
+                    error_message = f"Withdrawal failed: {disburse_result.get('error', 'Unknown error')}. Your balance is safe."
 
-        return jsonify({
-            'success': True,
-            'questions': questions
-        })
+                return {
+                    'success': False,
+                    'error': error_message,
+                    'balance_safe': True,
+                    'available_balance': available_balance,
+                    'retry_available': True,
+                    'status': 'failed',
+                    'error_type': error_type or 'withdrawal_failed'
+                }
 
-    except Exception as e:
-        logger.error(f"❌ Error getting quiz questions: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        except Exception as e:
+            logger.error(f"❌ Error withdrawing balance: {e}")
+            return {
+                'success': False,
+                'error': f'Withdrawal error: {str(e)}. Your balance is safe.',
+                'balance_safe': True
+            }
+
+    def complete_user_paid_withdrawal(self, wallet_address: str, amount: float, tx_hash: str) -> dict:
+        """Record a vault event only if this exact off-chain balance is still available."""
+        row = self.supabase.table('minigame_balances').select('*').eq('wallet_address', wallet_address).execute()
+        if not row.data or float(row.data[0].get('available_balance', 0)) != float(amount):
+            return {'success': False, 'error': 'Balance changed while withdrawal was pending; no balance was deducted.'}
+        current = row.data[0]
+        self.supabase.table('minigame_balances').update({
+            'available_balance': 0, 'total_withdrawn': current.get('total_withdrawn', 0) + amount,
+            'updated_at': datetime.now().isoformat()
+        }).eq('wallet_address', wallet_address).eq('available_balance', amount).execute()
+        self.supabase.table('minigame_withdrawals_log').insert({
+            'wallet_address': wallet_address, 'amount': amount, 'tx_hash': normalize_tx_hash(tx_hash),
+            'session_id': 'USER-PAID-VAULT', 'status': 'completed', 'withdrawal_date': date.today().isoformat()
+        }).execute()
+        self._cache.pop(f'minigame_balance_{wallet_address}', None)
+        return {'success': True, 'amount_withdrawn': amount, 'tx_hash': normalize_tx_hash(tx_hash),
+                'explorer_url': f'https://explorer.celo.org/mainnet/tx/{normalize_tx_hash(tx_hash)}',
+                'message': f'Successfully withdrawn {amount} G$!'}
+
+    def get_user_stats(self, wallet_address: str) -> dict:
+        """Get user game statistics"""
+        try:
+            logger.info(f"🔍 Querying user_game_stats for {wallet_address[:8]}...")
+
+            stats = self.supabase.table('user_game_stats')\
+                .select('*')\
+                .eq('wallet_address', wallet_address)\
+                .execute()
+
+            stats_data = stats.data or []
+            logger.info(f"📊 Found {len(stats_data)} game records for {wallet_address[:8]}...")
+
+            if stats_data:
+                for stat in stats_data:
+                    logger.info(f"   Game: {stat.get('game_type')}, Tokens: {stat.get('virtual_tokens', 0)}")
+
+            return {
+                'success': True,
+                'stats': stats_data
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error getting user stats: {e}")
+            import traceback
+            logger.error(f"🔍 Traceback: {traceback.format_exc()}")
+            return {'success': True, 'error': str(e), 'stats': []}
+
+    def get_quiz_questions(self, difficulty: str = None) -> list:
+        """Get random quiz questions (using Learn & Earn schema)"""
+        try:
+            # Use Learn & Earn schema: question_id, question, answer_a, answer_b, answer_c, answer_d, correct
+            query = self.supabase.table('quiz_questions').select('*')
+
+            questions = query.execute()
+
+            if questions.data:
+                # Randomize and limit to 10
+                random.shuffle(questions.data)
+                quiz_questions = []
+
+                for i, q in enumerate(questions.data[:10]):
+                    quiz_questions.append({
+                        'question_number': i + 1,
+                        'question_id': q.get('question_id'),
+                        'question': q.get('question'),
+                        'options': [
+                            q.get('answer_a'),
+                            q.get('answer_b'),
+                            q.get('answer_c'),
+                            q.get('answer_d')
+                        ],
+                        'correct_answer': ord(q.get('correct', 'A')) - ord('A')  # Convert A,B,C,D to 0,1,2,3
+                    })
+
+                return quiz_questions
+
+            return []
+
+        except Exception as e:
+            logger.error(f"❌ Error getting quiz questions: {e}")
+            return []
+
+# Global instance
+minigames_manager = MinigamesManager()
