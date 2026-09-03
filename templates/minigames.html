@@ -439,38 +439,7 @@
     <div id="notification" class="notification"></div>
 
     <script src="/static/minigames.js?v={{ ASSET_VERSION }}"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
-    <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
-    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script>
-        const MINIGAME_WALLET = "{{ wallet }}";
-        const MINIGAME_LOGIN_METHOD = "{{ login_method }}";
-        const CELO_CHAIN_HEX = '0xa4ec';
-        async function minigameSigningProvider() {
-            const local = MINIGAME_LOGIN_METHOD.toLowerCase() === 'local';
-            if (local) {
-                if (!window.GMLocalWallet) throw new Error('GoodMarket wallet is unavailable.');
-                if (!GMLocalWallet.isUnlocked()) await window._lwOpenUnlockModal();
-                const provider = GMLocalWallet.getProvider();
-                await provider.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
-                return provider; // Never fall through to MetaMask for local users.
-            }
-            if (window.GMWalletConnect && GMWalletConnect.prefersWcSigning && GMWalletConnect.prefersWcSigning()) {
-                const provider = await GMWalletConnect.getProvider();
-                if (provider) return provider;
-            }
-            if (!window.ethereum) throw new Error('Connect a Celo wallet or WalletConnect first.');
-            await window.ethereum.request({method: 'wallet_switchEthereumChain', params: [{chainId: CELO_CHAIN_HEX}]});
-            return window.ethereum;
-        }
-        async function minigameSigner() {
-            const provider = new ethers.BrowserProvider(await minigameSigningProvider());
-            const signer = await provider.getSigner();
-            if ((await signer.getAddress()).toLowerCase() !== MINIGAME_WALLET.toLowerCase()) {
-                throw new Error('Wrong wallet connected. Use your GoodMarket wallet.');
-            }
-            return {provider, signer};
-        }
         async function loadBalance() {
             try {
                 const res = await fetch('/minigames/api/balance');
@@ -520,40 +489,8 @@
             msg.style.display = 'none';
 
             try {
-                const preparedRes = await fetch('/minigames/api/withdraw/prepare', { method: 'POST' });
-                const prepared = await preparedRes.json().catch(() => ({}));
-                if (!prepared.success) throw new Error(prepared.error || 'Could not prepare withdrawal.');
-                const {provider, signer} = await minigameSigner();
-                const abi = [
-                    'function claim(uint256 amount,uint256 nonce,uint256 deadline,bytes authorization)',
-                    'function claimFor(address recipient,uint256 amount,uint256 nonce,uint256 deadline,bytes authorization,bytes playerApproval)'
-                ];
-                const contract = new ethers.Contract(prepared.vault, abi, signer);
-                const estimate = await contract.claim.estimateGas(prepared.amount, prepared.nonce, prepared.deadline, prepared.authorization);
-                const fee = await provider.getFeeData();
-                const gasCost = estimate * (fee.gasPrice || fee.maxFeePerGas || 0n);
-                const userBalance = await provider.getBalance(await signer.getAddress());
-                let data;
-                if (userBalance >= gasCost) {
-                    btn.textContent = '⏳ Confirm withdrawal in your wallet...';
-                    const tx = await contract.claim(prepared.amount, prepared.nonce, prepared.deadline, prepared.authorization);
-                    await tx.wait();
-                    const res = await fetch('/minigames/api/withdraw/confirm', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({tx_hash: tx.hash})
-                    });
-                    data = await res.json();
-                } else {
-                    btn.textContent = '⏳ Sign gas-sponsored withdrawal...';
-                    const approval = await signer.signTypedData(prepared.domain, {
-                        RelayedClaimApproval: prepared.approval_types
-                    }, {recipient: MINIGAME_WALLET, amount: prepared.amount, nonce: prepared.nonce, deadline: prepared.deadline});
-                    const res = await fetch('/minigames/api/withdraw/relay', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({player_approval: approval})
-                    });
-                    data = await res.json();
-                }
+                const res = await fetch('/minigames/api/withdraw', { method: 'POST' });
+                const data = await res.json();
 
                 msg.style.display = 'block';
                 if (data.success) {
@@ -571,10 +508,7 @@
             } catch (e) {
                 msg.style.display = 'block';
                 msg.style.color = '#ef4444';
-                // Do not hide a configuration, wallet, or RPC error behind the
-                // old generic "Network error" message; it blocks support from
-                // diagnosing which signing path failed.
-                msg.textContent = '❌ ' + (e && e.message ? e.message : 'Network error. Please try again.');
+                msg.textContent = '❌ Network error. Please try again.';
                 btn.disabled = false;
                 btn.textContent = '💸 Withdraw to Wallet';
             }
