@@ -64,6 +64,12 @@ class UserPaidWithdrawalService:
             encode_typed_data(full_message=self._typed("ClaimAuthorization", values)),
             private_key=self.authorizer_key
         ).signature.hex()
+        # eth-account returns a hex string without a 0x prefix in this runtime.
+        # ethers v6 rejects that value for the Solidity bytes argument with
+        # INVALID_ARGUMENT (invalid BytesLike value), so normalize it at the
+        # API boundary before it reaches contract.claim(...).
+        if not signature.startswith("0x"):
+            signature = "0x" + signature
         return {"success": True, "vault": self.address, "amount": str(amount), "nonce": nonce,
                 "deadline": deadline, "authorization": signature, "domain": self._domain(),
                 "approval_types": self._typed("RelayedClaimApproval", values)["types"]["RelayedClaimApproval"]}
