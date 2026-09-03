@@ -364,16 +364,24 @@ def prepare_user_paid_withdrawal():
     wallet = _withdraw_wallet()
     if not wallet:
         return jsonify({'success': False, 'error': 'Not authenticated'}), 401
-    balance = minigames_manager.get_deposit_balance(wallet).get('available_balance', 0)
-    if balance < minigames_manager.MIN_WITHDRAWAL:
-        return jsonify({'success': False, 'error': 'Minimum withdrawal not reached'}), 400
-    prepared = user_paid_withdrawals.prepare(wallet, balance)
-    if not prepared.get('success'):
-        return jsonify(prepared), 503
-    # Never accept amount/nonce/authorization from the browser during confirm.
-    prepared['recipient'] = wallet
-    session['minigames_pending_claim'] = prepared
-    return jsonify(prepared)
+    try:
+        balance = minigames_manager.get_deposit_balance(wallet).get('available_balance', 0)
+        if balance < minigames_manager.MIN_WITHDRAWAL:
+            return jsonify({'success': False, 'error': 'Minimum withdrawal not reached'}), 400
+        prepared = user_paid_withdrawals.prepare(wallet, balance)
+        if not prepared.get('success'):
+            return jsonify(prepared), 503
+        # Never accept amount/nonce/authorization from the browser during confirm.
+        prepared['recipient'] = wallet
+        session['minigames_pending_claim'] = prepared
+        return jsonify(prepared)
+    except Exception:
+        logger.exception('Could not prepare user-paid minigame withdrawal')
+        return jsonify({
+            'success': False,
+            'error': 'Could not prepare the withdrawal. Check MINIGAMES_USER_PAID_VAULT, '
+                     'MINIGAMES_WITHDRAW_AUTHORIZER_KEY, GAMES_KEY, and the Celo RPC configuration.'
+        }), 503
 
 
 @minigames_bp.route('/api/withdraw/confirm', methods=['POST'])
