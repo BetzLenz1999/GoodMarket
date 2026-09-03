@@ -5,11 +5,13 @@ import re
 from datetime import date, datetime
 from flask import Blueprint, request, jsonify, render_template, session, redirect
 from .minigames_manager import minigames_manager, normalize_tx_hash
+from .user_paid_withdrawals import UserPaidWithdrawalService
 from maintenance_service import maintenance_service
 
 logger = logging.getLogger(__name__)
 
 minigames_bp = Blueprint('minigames', __name__, url_prefix='/minigames')
+user_paid_withdrawals = UserPaidWithdrawalService(minigames_manager.blockchain_service)
 
 
 def _normalize_withdrawal_tx_hash(value) -> str:
@@ -347,6 +349,75 @@ def withdraw():
     except Exception as e:
         logger.error(f"❌ Error processing withdrawal: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _withdraw_wallet():
+    wallet = session.get('wallet') or session.get('wallet_address')
+    if not wallet or not session.get('verified'):
+        return None
+    return wallet
+
+
+@minigames_bp.route('/api/withdraw/prepare', methods=['POST'])
+def prepare_user_paid_withdrawal():
+    """Issue one short-lived backend authorization for a player-paid claim."""
+    wallet = _withdraw_wallet()
+    if not wallet:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+    balance = minigames_manager.get_deposit_balance(wallet).get('available_balance', 0)
+    if balance < minigames_manager.MIN_WITHDRAWAL:
+        return jsonify({'success': False, 'error': 'Minimum withdrawal not reached'}), 400
+    prepared = user_paid_withdrawals.prepare(wallet, balance)
+    if not prepared.get('success'):
+        return jsonify(prepared), 503
+    # Never accept amount/nonce/authorization from the browser during confirm.
+    prepared['recipient'] = wallet
+    session['minigames_pending_claim'] = prepared
+    return jsonify(prepared)
+
+
+@minigames_bp.route('/api/withdraw/confirm', methods=['POST'])
+def confirm_user_paid_withdrawal():
+    """Verify the vault event before changing the off-chain Minigames balance."""
+    wallet = _withdraw_wallet()
+    prepared = session.get('minigames_pending_claim')
+    tx_hash = (request.get_json(silent=True) or {}).get('tx_hash', '')
+    if not wallet or not prepared or prepared.get('recipient', '').lower() != wallet.lower():
+        return jsonify({'success': False, 'error': 'No pending withdrawal authorization'}), 400
+    try:
+        if not user_paid_withdrawals.verify_claim(tx_hash, prepared):
+            return jsonify({'success': False, 'error': 'Withdrawal transaction was not confirmed'}), 400
+        result = minigames_manager.complete_user_paid_withdrawal(wallet, float(prepared['amount']) / 1e18, tx_hash)
+        session.pop('minigames_pending_claim', None)
+        return jsonify(result)
+    except Exception:
+        logger.exception('Could not confirm user-paid minigame withdrawal')
+        return jsonify({'success': False, 'error': 'Could not verify withdrawal'}), 500
+
+
+@minigames_bp.route('/api/withdraw/relay', methods=['POST'])
+def relay_user_paid_withdrawal():
+    """GAMES_KEY gas fallback; player still signs the relayed-claim approval."""
+    wallet = _withdraw_wallet()
+    prepared = session.get('minigames_pending_claim')
+    approval = (request.get_json(silent=True) or {}).get('player_approval', '')
+    if not wallet or not prepared or prepared.get('recipient', '').lower() != wallet.lower() or not approval:
+        return jsonify({'success': False, 'error': 'No pending withdrawal authorization'}), 400
+    try:
+        tx_hash = user_paid_withdrawals.relay(prepared, approval)
+        return confirm_user_paid_withdrawal_response(wallet, prepared, tx_hash)
+    except Exception:
+        logger.exception('Could not relay minigame withdrawal')
+        return jsonify({'success': False, 'error': 'Gas-sponsored withdrawal could not be sent'}), 502
+
+
+def confirm_user_paid_withdrawal_response(wallet, prepared, tx_hash):
+    receipt = user_paid_withdrawals.blockchain.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    if not receipt or not user_paid_withdrawals.verify_claim(tx_hash, prepared):
+        return jsonify({'success': False, 'error': 'Gas-sponsored withdrawal was not confirmed'}), 502
+    result = minigames_manager.complete_user_paid_withdrawal(wallet, float(prepared['amount']) / 1e18, tx_hash)
+    session.pop('minigames_pending_claim', None)
+    return jsonify(result)
 
 
 @minigames_bp.route('/api/withdrawal-history')
