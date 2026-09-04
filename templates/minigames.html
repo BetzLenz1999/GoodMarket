@@ -404,7 +404,7 @@
                 <div class="game-desc">Unscramble the letters to form the correct word and earn G$ rewards!</div>
                 <div class="game-reward">5 G$ per correct answer</div>
                 <div style="color: var(--text-muted); font-size: 0.78rem; margin-bottom: 0.75rem;">
-                    ⏱ 30 sec timer &nbsp;|&nbsp; Max 10 wins/day &nbsp;|&nbsp; Min withdraw 1000 G$
+                    ⏱ 30 sec timer &nbsp;|&nbsp; Max 10 wins/day &nbsp;|&nbsp; Min withdraw 500 G$
                 </div>
                 <a href="/jumble/" style="display: block; text-decoration: none;">
                     <button class="play-btn" style="background: linear-gradient(135deg, #a855f7, #6366f1);">Play Now →</button>
@@ -447,7 +447,7 @@
                 if (!data.success) return;
 
                 const balance = data.available_balance || 0;
-                const minW = data.min_withdrawal || 1000;
+                const minW = data.min_withdrawal || 500;
                 const withdrawn = data.total_withdrawn || 0;
                 const canWithdraw = data.can_withdraw;
 
