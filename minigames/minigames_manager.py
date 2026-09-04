@@ -29,7 +29,7 @@ class MinigamesManager:
         self.MAX_DEPOSIT = 500.0  # Maximum deposit per day 500 G$
 
         # Withdrawal configurations
-        self.MIN_WITHDRAWAL = 1000.0  # Minimum withdrawal 1,000 G$
+        self.MIN_WITHDRAWAL = 500.0  # Minimum withdrawal 500 G$
         self.MAX_WITHDRAWAL = 10000.0  # Maximum withdrawal 10,000 G$
 
         # Game configurations
