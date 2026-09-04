@@ -1365,6 +1365,10 @@
                                     <strong>Per Correct Answer:</strong>
                                     <p id="current-per-correct" style="font-size: 1.5rem; color: #fbbf24; margin-top: 0.5rem;">200 G$</p>
                                 </div>
+                                <div style="padding: 1rem; background: rgba(255, 255, 255, 0.03); border-radius: 8px;">
+                                    <strong>Cooldown:</strong>
+                                    <p id="current-cooldown" style="font-size: 1.5rem; color: #a78bfa; margin-top: 0.5rem;">24 hours</p>
+                                </div>
                             </div>
                         </div>
 
@@ -1392,6 +1396,14 @@
                                 </small>
                                 <small id="reward-per-correct-preview" style="color: #fbbf24; display: block; margin-top: 0.5rem; font-weight: 700;">
                                     Example: 100 G$ ÷ 10 questions = 10 G$ per correct answer
+                                </small>
+                            </div>
+
+                            <div style="margin-bottom: 1.5rem;">
+                                <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Cooldown between Quizzes (1-720 hours)</label>
+                                <input type="number" id="quiz-cooldown-hours" min="1" max="720" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius:8px; color:#f1f5f9; font-size:1rem;" value="24">
+                                <small style="color: rgba(241, 245, 249, 0.6); display: block; margin-top: 0.5rem;">
+                                    How long a wallet must wait after a successful quiz reward before it can earn again. Default: 24 hours (1 day).
                                 </small>
                             </div>
 
@@ -3423,6 +3435,16 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
             return numericAmount.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' G$';
         }
 
+        function formatQuizCooldownLabel(hours) {
+            const h = Number(hours) || 24;
+            if (h % 24 === 0) {
+                const days = h / 24;
+                if (days === 1) return '24 hours (1 day)';
+                return (days * 24) + ' hours (' + days + ' days)';
+            }
+            return h + ' hours';
+        }
+
         function updateRewardPerCorrectPreview() {
             const questionsPerQuiz = parseInt(document.getElementById('questions-per-quiz').value, 10);
             const maxRewardPerQuiz = parseFloat(document.getElementById('max-reward-per-quiz').value);
@@ -3449,10 +3471,12 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     document.getElementById('current-time').textContent = settings.time_per_question + 's';
                     document.getElementById('current-max-reward').textContent = settings.max_reward_per_quiz + ' G$';
                     document.getElementById('current-per-correct').textContent = formatQuizRewardAmount(settings.reward_per_correct);
+                    document.getElementById('current-cooldown').textContent = formatQuizCooldownLabel(settings.cooldown_hours;
 
                     document.getElementById('questions-per-quiz').value = settings.questions_per_quiz;
                     document.getElementById('time-per-question').value = settings.time_per_question;
                     document.getElementById('max-reward-per-quiz').value = settings.max_reward_per_quiz;
+                    document.getElementById('quiz-cooldown-hours').value = settings.cooldown_hours || 24;
                     updateRewardPerCorrectPreview();
 
                     statusDiv.style.display = 'none';
@@ -3471,8 +3495,9 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 const questionsPerQuiz = parseInt(document.getElementById('questions-per-quiz').value);
                 const timePerQuestion = parseInt(document.getElementById('time-per-question').value);
                 const maxRewardPerQuiz = parseInt(document.getElementById('max-reward-per-quiz').value);
+                const cooldownHours = parseInt(document.getElementById('quiz-cooldown-hours').value);
 
-                if (!questionsPerQuiz || !timePerQuestion || !maxRewardPerQuiz) {
+                if (!questionsPerQuiz || !timePerQuestion || !maxRewardPerQuiz || !cooldownHours) {
                     alert('⚠️ Please fill in all fields');
                     return;
                 }
@@ -3483,7 +3508,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     body: JSON.stringify({
                         questions_per_quiz: questionsPerQuiz,
                         time_per_question: timePerQuestion,
-                        max_reward_per_quiz: maxRewardPerQuiz
+                        max_reward_per_quiz: maxRewardPerQuiz,
+                        cooldown_hours: cooldownHours
                     })
                 });
 
@@ -3495,7 +3521,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                           `📚 Questions: ${questionsPerQuiz}\n` +
                           `⏱️ Time: ${timePerQuestion}s per question\n` +
                           `💰 Max Reward: ${formatQuizRewardAmount(maxRewardPerQuiz)}\n` +
-                          `💎 Per Correct: ${formatQuizRewardAmount(rewardPerCorrect)}`);
+                          `💎 Per Correct: ${formatQuizRewardAmount(rewardPerCorrect)}\n` +
+                          `⏳ Cooldown: ${formatQuizCooldownLabel(cooldownHours)}`);
                     await loadQuizSettings();
                 } else {
                     alert('❌ Error: ' + data.error);
