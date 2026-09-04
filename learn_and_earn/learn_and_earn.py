@@ -412,7 +412,7 @@ class LearnEarnQuizManager:
         self.time_per_question = 20
         self.max_reward_per_quiz = 2000
         self.max_retries = 3
-        self.cooldown_hours = 120
+        self.cooldown_hours = 24  # 24-hour cooldown between rewarded quizzes
 
         self.load_quiz_settings()
 
@@ -434,13 +434,15 @@ class LearnEarnQuizManager:
                 self.questions_per_quiz = settings.get('questions_per_quiz', 10)
                 self.time_per_question = settings.get('time_per_question', 20)
                 self.max_reward_per_quiz = settings.get('max_reward_per_quiz', 2000)
-                logger.info(f"✅ Loaded quiz settings: {self.questions_per_quiz} questions, {self.time_per_question}s per question, {self.max_reward_per_quiz} G$ max reward")
+                self.cooldown_hours = max(1, int(settings.get('cooldown_hours',24)))
+                logger.info(f"✅ Loaded quiz settings: {self.questions_per_quiz} questions, {self.time_per_question}s per question, {self.max_reward_per_quiz} G$ max reward, {self.cooldown_hours}h cooldown")
             else:
                 # Create default settings if none exist
                 default_settings = {
                     'questions_per_quiz': 10,
                     'time_per_question': 20,
-                    'max_reward_per_quiz': 2000
+                    'max_reward_per_quiz': 2000,
+                    'cooldown_hours': 24
                 }
                 supabase.table('quiz_settings').insert(default_settings).execute()
                 logger.info("✅ Created default quiz settings in database")
@@ -452,10 +454,11 @@ class LearnEarnQuizManager:
             'questions_per_quiz': self.questions_per_quiz,
             'time_per_question': self.time_per_question,
             'max_reward_per_quiz': self.max_reward_per_quiz,
+            'cooldown_hours': self.cooldown_hours,
             'reward_per_correct': self.reward_per_correct
         }
 
-    def update_quiz_settings(self, questions_per_quiz=None, time_per_question=None, max_reward_per_quiz=None):
+    def update_quiz_settings(self, questions_per_quiz=None, time_per_question=None, max_reward_per_quiz=None, cooldown_hours=None):
         try:
             supabase = get_supabase_client()
             if not supabase:
@@ -471,6 +474,9 @@ class LearnEarnQuizManager:
             if max_reward_per_quiz is not None:
                 update_data['max_reward_per_quiz'] = max_reward_per_quiz
                 self.max_reward_per_quiz = max_reward_per_quiz
+            if cooldown_hours is not None:
+                update_data['cooldown_hours'] = max(1, int(cooldown_hours))
+                self.cooldown_hours = max(1, int(cooldown_hours))
 
             if not update_data:
                 return {'success': False, 'error': 'No settings to update'}
@@ -781,7 +787,7 @@ class LearnEarnQuizManager:
                         'error': 'invalid_cooldown_timestamp'
                     }
 
-                # Use the configured cooldown hours (120 hours = 5 days)
+                # Use the configured cooldown hours (default 24h; may be customized via quiz_settings)
                 next_quiz_time = last_attempt_time + timedelta(hours=self.cooldown_hours)
                 current_utc_time = datetime.utcnow() # Use UTC time
                 can_take_now = current_utc_time >= next_quiz_time
@@ -945,8 +951,18 @@ class LearnEarnQuizManager:
             # this wallet is outside its cooldown window.
             return False
 
+    def _cooldown_label(self, hours: int) -> str:
+        """Human label for a cooldown duration (e.g. 24 hours -> 24 hours (1 day))."""
+        hours = max(1, int(hours or self.cooldown_hours or 24))
+        if hours % 24 == 0:
+            days = hours // 24
+            if days == 1:
+                return "24 hours (1 day)"
+            return f"{days * 24} hours ({days} days)"
+        return f"{hours} hours"
+
     async def check_quiz_eligibility(self, wallet_address: str) -> Dict[str, Any]:
-        """Check if user is eligible for Learn & Earn quiz after its 5-day cooldown."""
+        """Check if user is eligible for the Learn & Earn quiz after its cooldown."""
         try:
             # Check maintenance mode first
             try:
@@ -1005,11 +1021,11 @@ class LearnEarnQuizManager:
                 return {
                     'eligible': False,
                     'blocked': True,
-                    'reason': '5-day cooldown active',
-                    'message': 'You have already completed a quiz in the last 5 days. Please wait before taking another quiz.',
+                    'reason': 'cooldown active',
+                    'message': f"You have already completed a quiz in the last {self._cooldown_label(self.cooldown_hours)}. Please wait before taking another quiz.",
                     'next_quiz_time': next_quiz_info.get('next_quiz_time'),
                     'can_take_now': False,
-                    'cooldown_hours': 120,
+                    'cooldown_hours': self.cooldown_hours,
                     'feature_available': True  # Feature is available, just on cooldown
                 }
 
@@ -1022,7 +1038,7 @@ class LearnEarnQuizManager:
                 'message': 'You can take the quiz and earn instant G$ rewards!',
                 'max_reward': 0,
                 'can_take_now': True,
-                'cooldown_hours': 120,
+                'cooldown_hours': self.cooldown_hours,
                 'feature_available': True
             }
 
@@ -1038,7 +1054,7 @@ class LearnEarnQuizManager:
                 'feature_available': False,
                 'max_reward': 0,
                 'can_take_now': False,
-                'cooldown_hours': 120,
+                'cooldown_hours': self.cooldown_hours,
                 'error': str(e)
             }
 
