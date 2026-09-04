@@ -7461,20 +7461,36 @@ _goodreserve_quote_cache = {"data": {}, "expires": {}}
 _GOODRESERVE_QUOTE_TTL   = 6  # seconds
 
 
-def _goodreserve_eth_call(to_addr, data_hex):
-    """Minimal eth_call helper for GoodReserve quotes (no web3 dep required)."""
+def _goodreserve_eth_call_raw(to_addr, data_hex):
+    """Minimal eth_call helper returning (result, error, is_rpc_error).
+
+    ``is_rpc_error`` distinguishes a JSON-RPC revert (deterministic, safe
+    to act on) from a transport/RPC-node glitch (transient — callers must
+    NOT treat those as on-chain facts).
+    """
     import requests
     payload = {
         "jsonrpc": "2.0", "id": 1, "method": "eth_call",
         "params": [{"to": to_addr, "data": data_hex}, "latest"],
     }
-    resp = requests.post(GOODRESERVE_RPC_CELO, json=payload, timeout=8,
-                         headers={"User-Agent": "GoodMarket/1.0"})
-    resp.raise_for_status()
-    body = resp.json()
+    try:
+        resp = requests.post(GOODRESERVE_RPC_CELO, json=payload, timeout=8,
+                             headers={"User-Agent": "GoodMarket/1.0"})
+        resp.raise_for_status()
+        body = resp.json()
+    except Exception as e:
+        return None, str(e), False
     if "error" in body:
-        raise RuntimeError(f"eth_call reverted: {body['error'].get('message','unknown')}")
-    return body.get("result", "0x")
+        return None, body["error"].get("message", "unknown"), True
+    return body.get("result", "0x"), None, False
+
+
+def _goodreserve_eth_call(to_addr, data_hex):
+    """Compatibility wrapper throwing on any failure (quote/pool paths)."""
+    result, error_msg, _ = _goodreserve_eth_call_raw(to_addr, data_hex)
+    if error_msg:
+        raise RuntimeError(f"eth_call reverted: {error_msg}")
+    return result
 
 
 def _goodreserve_get_exchange_id():
@@ -7585,6 +7601,58 @@ def reserve_quote():
         amount_out_wei = _goodreserve_quote(direction, amount_in_wei)
         exit_bps = int(round(pool.get("exit_contribution", 0) / 1e8 * 10000))
         ratio_bps = int(round(pool.get("reserve_ratio", 0) / 1e8 * 10000))
+
+        # Sell-side feasibility gate ("L0Out Exceeded" bug, 2026-08):
+        # Users selling G$ via the Mento broker were approving the exact amount,and
+        # then swapIn reverted with an opaque ``L0Out Exceeded`` — the bond curve's
+        # L0 cap cannot honor that sell when the G$ reserve side is low. The
+        # swap reverted so their G$ balance "didn't reflect" anywhere, and they
+        # were told to "check the amount and token approval" even though both
+        # were correct. Before returning a ready-to-sign quote, re-run the EXACT
+        # swapIn calldata as a read-only eth_call (from the zero address, no
+        # approval needed — the L0 check fires before the transferFrom). If it
+        # reverts, refuse the quote so the UI never offers to approve/sign at all.
+
+        # Only simulate SELL: a zero-address BUY simulation would revert on the
+        # ERC-20 allowance check (before reaching the L0 check), a false
+        # "no liquidity" verdict. Transient RPC glitches (transport errors)
+        # are deliberately ignored — unknown liquidity ≠ blocked liquidity.
+
+        if direction == "sell":
+            try:
+                swap_in_data = (
+                    "0xddbbe850"
+                    + GOODRESERVE_PROVIDER_CELO[2:].lower().rjust(64, "0")
+                    + exchange_id
+                    + GOODRESERVE_GD_CELO[2:].lower().rjust(64, "0")
+                    + GOODRESERVE_CUSD_CELO[2:].lower().rjust(64, "0")
+                    + format(amount_in_wei, "x").rjust(64, "0")
+                    + format(0, "x").rjust(64, "0")
+                )
+                _sim_raw, _sim_err, _sim_rpc = _goodreserve_eth_call_raw(GOODRESERVE_BROKER_CELO, swap_in_data)
+                if _sim_raw is None and _sim_rpc:
+                    # Any revert here is deterministic for the current block: a
+                    # zero-min-out sell proof the quote cannot be executed selectively.
+                    # Return a retryable liquidity error — NOT a cached success.
+
+                    _short_reason = re.sub(r"\s+", "", str(_sim_err))
+                    _short_reason = _short_reason[:160]
+                    return jsonify({
+                        "success": False,
+                        "error": (
+                            "The GoodReserve G$ sell pool currently cannot execute this sell "
+                            f"({_short_reason}). Please try a smaller amount — the sell side "
+                            "refills over time — or use Uniswap V3 instead."
+                        ),
+                        "liquidity_error": True,
+                        "retryable": True,
+                        "direction": "sell",
+                        "amount": amount_str,
+                    })
+            except Exception:
+                # Transport glitch → keep the quote (don't block on an unknown).
+                pass
+
         result = {
             "success": True,
             "direction": direction,
