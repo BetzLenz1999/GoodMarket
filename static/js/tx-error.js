@@ -98,6 +98,15 @@
         return /erc20: insufficient allowance|allowance|stf|transferhelper|transfer_from_failed|safetransferfrom/i.test(joined);
     }
 
+    function _isL0OutExceeded(joined) {
+        // GoodReserve (Mento Broker) L0 reserve-cap revert. Common when
+        // users sell G$ while the G$ side of the reserve is depleted — the quote
+        // can float but swapIn reverted "L0Out Exceeded" after the approval. Keep
+        // this out of _isAllowanceIssue so it never parses as an approval problem.
+
+        return /l0out|l0\b.{0,24}exceed|exceed.{0,24}l0\b/i.test(joined);
+    }
+
     function _isReverted(joined) {
         // "missing revert data in call exception" is ethers v6's opaque
         // wrapper for an eth_call/eth_estimateGas that reverted with no
@@ -250,6 +259,9 @@
         if (_isInsufficientFunds(joined)) {
             if (/celo|gas|xdc/i.test(joined)) return "Insufficient " + nativeSymbol + " for gas fees. Please top up " + nativeSymbol + " and try again.";
             return "Insufficient balance for this transaction.";
+        }
+        if (_isL0OutExceeded(joined)) {
+            return "The GoodReserve G$ pool cannot execute this sell right now (L0 out-limit exceeded. Please try a smaller amount or swap via Uniswap V3 — the G$ reserve side refills over time.";
         }
         if (_isAllowanceIssue(joined)) return "Token approval is missing or too low. Please re-approve and try again.";
         if (_isGasIssue(joined)) return "Transaction needs more gas. Please try again or contact support.";
