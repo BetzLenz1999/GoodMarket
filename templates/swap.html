@@ -3342,10 +3342,14 @@
         //
         // Server-signing mode still asks the backend for balances, since the
         // signing wallet there is the backend wallet, not WALLET_ADDRESS.
-        async function loadBalances() {
+        async function loadBalances(forceRefresh = false) {
+            // ``forceRefresh`` bypasses the backend's short-lived on-chain balance
+            // cache (?force=1) — needed after a balance-changing tx so the
+            // refreshed number appears immediately instead of a stale cached
+            // pre-swap balance ("hindi nag-reflect agad" symptom).
             try {
                 if (window.useServerSigning) {
-                    const res = await fetch('/api/wallet/balances');
+                    const res = await fetch('/api/wallet/balances' + (forceRefresh ? '?force=1' : ''));
                     if (res.ok) {
                         const data = await res.json();
                         if (data.success) {
@@ -3408,7 +3412,13 @@
                 usdtBalanceNum = parseFloat(ethers.formatUnits(usdtRaw,     TOKENS.USDT.decimals));
                 displayBalances();
             } catch (e) {
+                // Even a forced refresh must never break the page - the old cached
+                // numbers are better than a spinner block. Fire a retry so the
+                // just-swapped balance eventually lands without a manual refresh.
                 console.error("loadBalances error:", e);
+                if (forceRefresh) {
+                    setTimeout(() => loadBalances(), 4000);
+                }
             }
         }
 
@@ -3809,7 +3819,8 @@
                     document.getElementById("quoteBox").classList.add("hidden");
                     setSwapBtnState("enter");
                     stepIndicators.className = "step-indicators";
-                    await loadBalances();
+                    displayBalances();
+                    try { loadBalances(true); } catch (_) {}
                 } catch (err) {
                     stepIndicators.className = "step-indicators";
                     if (err._miniPayDiag) {
@@ -3893,7 +3904,8 @@
                     document.getElementById("quoteBox").classList.add("hidden");
                     setSwapBtnState("enter");
                     stepIndicators.className = "step-indicators";
-                    await loadBalances();
+                    displayBalances();
+                    try { loadBalances(true); } catch (_) {}
                 } catch (err) {
                     stepIndicators.className = "step-indicators";
                     if (err._miniPayDiag) {
@@ -3987,7 +3999,8 @@
                 document.getElementById("quoteBox").classList.add("hidden");
                 setSwapBtnState("enter");
                 stepIndicators.className = "step-indicators";
-                await loadBalances();
+                displayBalances();
+                try { loadBalances(true); } catch (_) {}
             } catch (err) {
                 stepIndicators.className = "step-indicators";
                 if (err && err._gmCancelled) {
@@ -4670,6 +4683,19 @@
                 if (!data || !data.success) {
                     throw new Error(data && data.error ? data.error : "Quote failed");
                 }
+                // Backend re-simulates the swapIn call a quote time and refuses a
+                // quote the Mento L0 cap can't honor (the "L0Out Exceeded"
+                // bug — users were approving/signing then seeing a revert, with the
+                // balance never changing). Surface that as a warning instead of
+                // ever offering to approve/sign.
+                if (data.liquidity_error) {
+                    reserveQuote = null;
+                    const qbLe = document.getElementById("reserveQuoteBox");
+                    if (qbLe) qbLe.classList.add("hidden");
+                    setReserveBtnState("enter");
+                    showReserveAlert("alert-warning", `⚠️ ${data.error || "The GoodReserve G$ sell pool currently cannot honor this amount. Please try a smaller amount or use Uniswap V3."}`);
+                    return;
+                }
                 const amountIn  = BigInt(data.amount_in_wei);
                 const amountOut = BigInt(data.amount_out_wei);
                 reserveQuote = {
@@ -4839,8 +4865,12 @@
                         `✅ ${reserveDirection === "buy" ? "Bought" : "Sold"} successfully! ` +
                         `<a href="https://celoscan.io/tx/${txHash}" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:underline;">View on CeloScan ↗</a>`);
 
-                    try { await loadBalances(); } catch (_) {}
+                    // Fire-and-forget forced refresh: don't hold the success toast up
+                    // on forno round-trips, and ask ?force=1 so the backend's
+                    // short-lived balance cache is bypassed (stale pre-swap number).
+                    displayBalances();
                     updateReserveBalanceDisplay();
+                    try { loadBalances(true); } catch (_) {}
                     document.getElementById("reserveAmountIn").value = "";
                     document.getElementById("reserveAmountOut").value = "";
                     document.getElementById("reserveQuoteBox").classList.add("hidden");
@@ -4916,9 +4946,12 @@
                     `✅ ${reserveDirection === "buy" ? "Bought" : "Sold"} successfully! ` +
                     `<a href="${txLink}" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:underline;">View on CeloScan ↗</a>`);
 
-                // Refresh balances + UI
-                try { await loadBalances(); } catch (_) {}
+                // Refresh balances + UI — fire-and-forget forced refresh so the
+                // success toast didn't wait on forno, and ?force=1 bypasses the
+                // backend's short-lived balance cache (stale pre-swap number).
+                displayBalances();
                 updateReserveBalanceDisplay();
+                try { loadBalances(true); } catch (_) {}
                 document.getElementById("reserveAmountIn").value = "";
                 document.getElementById("reserveAmountOut").value = "";
                 document.getElementById("reserveQuoteBox").classList.add("hidden");
@@ -5669,8 +5702,9 @@
                     <span style="color:#6b5d48;font-size:0.8rem;">Final mint on XDC may take a few minutes.</span>`
                 );
 
-                try { await loadBalances(); } catch (_) {}
+                displayBalances();
                 updateCeloBridgeBalanceDisplay();
+                try { loadBalances(true); } catch (_) {}
             } catch (err) {
                 console.error('[bridge celo→xdc] failed', err);
                 const friendly = (window.GMTxError && GMTxError.format)
