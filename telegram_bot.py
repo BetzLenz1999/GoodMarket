@@ -126,6 +126,30 @@ def _safe_text(value: str, limit: int = 700) -> str:
             lines.append("")
             previous_was_blank = True
 
+    # Collapse consecutive blank lines so paragraphs keep at most one empty line.
+    merged = []
+    for raw_line in lines:
+        if raw_line == "" and merged and merged[-1] == "":
+            continue
+        merged.append(raw_line)
+    lines = merged
+
+    # Collapse only blank lines BETWEEN bullets (tight vertical list, matching
+    # the web's clean layout — exactly like the Jumble game's review content).
+    # A paragraph followed by its first bullet keeps its blank-line gap.
+
+    reordered = []
+    seen_bullet = False
+    for raw_line in lines:
+        is_bullet = raw_line.startswith("• ")
+        if is_bullet and reordered and reordered[-1] == ""and seen_bullet:
+
+            reordered.pop()  # drop the blank separating two bullet items
+        if is_bullet:
+            seen_bullet = True
+        reordered.append(raw_line)
+    lines = reordered
+
     text = "\n".join(lines).strip()
     if len(text) > limit:
         shortened = text[:limit].rsplit(None, 1)[0].rstrip(" ,.;:-")
