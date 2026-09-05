@@ -697,6 +697,12 @@
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('wallet-maintenance-section')">
+                        <span class="menu-icon">⛽</span>
+                        <span>Wallet Maintenance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a class="menu-link" onclick="showSection('quiz-settings-section')">
                         <span class="menu-icon">⚙️</span>
                         <span>Quiz Settings</span>
@@ -1143,6 +1149,63 @@
                             </div>
 
                             <button class="btn btn-primary" onclick="updateMinigamesMaintenance()" style="width: 100%; padding: 1rem; font-size: 1.1rem;">
+                                💾 Update Maintenance Mode
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Wallet Maintenance Mode Section (Celo protocol update) -->
+            <section id="wallet-maintenance-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">⛽ Wallet Maintenance</h1>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Control the Wallet page during Celo protocol updates — toggle an on/off switch and set the maintenance message shown to users</p>
+                </div>
+
+                <div class="content-box">
+                    <h2>Wallet Maintenance (Celo Protocol Update)</h2>
+
+                    <div id="wallet-maintenance-status" style="margin-bottom: 2rem;">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>Loading maintenance status...</p>
+                        </div>
+                    </div>
+
+                    <div id="wallet-maintenance-controls" style="display: none;">
+                        <div style="margin-bottom: 2rem; padding: 1.5rem; background: rgba(255, 255, 255, 0.05); border-radius:  12px;">
+                            <h3 style="margin-bottom: 1rem; color: #f1f5f9;">Current Status</h3>
+                            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+                                <span style="font-size: 1.1rem; font-weight: 600;">Wallet page:</span>
+                                <span id="wallet-maintenance-current-status-badge" style="padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600;"></span>
+                            </div>
+                            <div id="wallet-maintenance-current-message-display" style="margin-top: 1rem; padding: 1rem; background: rgba(255, 255, 255, 0.03); border-radius:  8px; display: none;">
+                                <strong>Current Message:</strong>
+                                <p id="wallet-maintenance-current-message-text" style="margin-top: 0.5rem; color: rgba(241, 245, 249, 0.8);"></p>
+                            </div>
+                        </div>
+
+                        <div style="padding: 1.5rem; background: rgba(255, 255, 255, 0.05); border-radius:  12px;">
+                            <h3 style="margin-bottom: 1rem; color: #f1f5f9;">Update Maintenance Mode</h3>
+
+                            <div style="margin-bottom: 1.5rem;">
+                                <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Status</label>
+                                <select id="wallet-maintenance-mode" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius:  8px; color: #f1f5f9; font-size: 1rem;">
+                                    <option value="false">✅ Active (Users can use the wallet)</option>
+                                    <option value="true">🔧 Maintenance (On-chain actions blocked)</option>
+                                </select>
+                            </div>
+
+                            <div style="margin-bottom: 1.5rem;">
+                                <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Custom Message</label>
+                                <textarea id="wallet-maintenance-message" rows="3" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius:  8px; color: #f1f5f9; font-size: 1rem; resize: vertical;" placeholder="Enter custom message to show when the wallet is under maintenance..."></textarea>
+                                <small style="color: rgba(241, 245, 249, 0.6); display: block; margin-top:  0.5rem;">
+                                    This message will be shown to users on the Wallet page when the Celo protocol update maintenance is active.
+                                </small>
+                            </div>
+
+                            <button class="btn btn-primary" onclick="updateWalletMaintenance()" style="width: 100%; padding: 1rem; font-size: 1.1rem;">
                                 💾 Update Maintenance Mode
                             </button>
                         </div>
@@ -3053,6 +3116,9 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 case 'minigames-maintenance':
                     loadMinigamesMaintenance();
                     break;
+                case 'wallet-maintenance':
+                    loadWalletMaintenance();
+                    break;
                 case 'quiz-settings':
                     loadQuizSettings();
                     break;
@@ -3684,6 +3750,83 @@ async function loadMinigamesMaintenance() {
             } catch (error) {
                 console.error('Error updating minigames maintenance mode:', error);
                 alert('❌ Error updating minigames maintenance mode: ' + error.message);
+            }
+        }
+
+        async function loadWalletMaintenance() {
+            try {
+                const response = await fetch('/api/admin/maintenance/wallet');
+                const data = await response.json();
+
+                const statusDiv = document.getElementById('wallet-maintenance-status');
+                const controlsDiv = document.getElementById('wallet-maintenance-controls');
+
+                if (data.success) {
+                    const isMaintenance = data.is_maintenance;
+                    const message = data.message || '';
+
+                    const badge = document.getElementById('wallet-maintenance-current-status-badge');
+                    if (isMaintenance) {
+                        badge.textContent = '🔧 Maintenance Mode';
+                        badge.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
+                        badge.style.color = 'white';
+                    } else {
+                        badge.textContent = '✅ Active';
+                        badge.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                        badge.style.color = 'white';
+                    }
+
+                    if (message) {
+                        document.getElementById('wallet-maintenance-current-message-display').style.display = 'block';
+                        document.getElementById('wallet-maintenance-current-message-text').textContent = message;
+                    } else {
+                        document.getElementById('wallet-maintenance-current-message-display').style.display = 'none';
+                    }
+
+                    document.getElementById('wallet-maintenance-mode').value = isMaintenance.toString();
+                    document.getElementById('wallet-maintenance-message').value = message;
+
+                    statusDiv.style.display = 'none';
+                    controlsDiv.style.display = 'block';
+                } else {
+                    statusDiv.innerHTML = '<p style="color: #ef4444;">Error loading maintenance status</p>';
+                }
+            } catch (error) {
+                console.error('Error loading wallet maintenance status:', error);
+                document.getElementById('wallet-maintenance-status').innerHTML = '<p style="color: #ef4444;">Error loading maintenance status</p>';
+            }
+        }
+
+        async function updateWalletMaintenance() {
+            try {
+                const isMaintenance = document.getElementById('wallet-maintenance-mode').value === 'true';
+                const message = document.getElementById('wallet-maintenance-message').value.trim();
+
+                if (isMaintenance && !message) {
+                    alert('⚠️ Please enter a custom message for maintenance mode');
+                    return;
+                }
+
+                const response = await fetch('/api/admin/maintenance/wallet', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        is_maintenance: isMaintenance,
+                        message: message
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`✅ Wallet maintenance mode ${isMaintenance ? 'enabled' : 'disabled'} successfully!`);
+                    await loadWalletMaintenance();
+                } else {
+                    alert('❌ Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error updating wallet maintenance mode:', error);
+                alert('❌ Error updating wallet maintenance mode: ' + error.message);
             }
         }
 
