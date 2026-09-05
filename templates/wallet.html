@@ -2314,8 +2314,7 @@
         <button type="button" id="fvExpiryBannerCta" onclick="handleFvReverifyClick()" style="margin-left:0.6rem;padding:0.35rem 0.8rem;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;font-size:0.8rem;font-weight:600;cursor:pointer;">Re-verify</button>
     </div>
 
-
-        <!-- Daily Voucher Banner -->
+    <!-- Daily Voucher Banner -->
         <div id="dailyVoucherBanner" style="display:none; margin-bottom:1rem;">
             <div class="gm-voucher-banner" style="
                 background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 40%, #d97706 100%);
@@ -3575,5 +3574,19 @@
     <script src="{{ url_for('static', filename='js/wallet-bottomnav.js', v=ASSET_VERSION) }}"></script>
 
     {% include "_ai_agent.html" %}
+
+    {% if wallet_maintenance_mode %}
+    <!-- Celo protocol-update maintenance (admin-toggled via the dashboard).
+         Buong wallet page  ay pinapalitan ng maintenance block — walang
+         nababasa/feature na makikita ang user habang naka-ON ang maintenance. -->
+    <div id="walletMaintenanceOverlay" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:999999;background:#f7f4ef;display:flex;align-items:center;justify-content:center;padding:1.5rem;">
+        <div style="max-width:560px;width:100%;text-align:center;background:#ffffff;border:1px solid rgba(217,119,6,0.35);border-radius:24px;padding:2rem 1.6rem;box-shadow:0 18px 50px rgba(67,56,43,0.12);">
+            <div style="font-size:3rem;line-height:1;margin-bottom:1rem;">🔧</div>
+            <div style="font-size:1.35rem;font-weight:800;color:#9a3412;margin-bottom:0.5rem;">Wallet Maintenance — Celo Protocol Update</div>
+            <div style="display:inline-block;background:rgba(217,119,6,0.18);border:1px solid rgba(217,119,6,0.35);color:#9a3412;font-size:0.75rem;font-weight:700;border-radius:20px;padding:0.3rem 0.8rem;margin-bottom:1rem;">⏳ Ongoing maintenance — features are temporarily paused</div>
+            <p style="color:var(--text-dim);margin:0;font-size:0.95rem;line-height:1.6;">{{ wallet_maintenance_message|default("Maintenance due to a Celo protocol update. Please check back later.", true) }}</p>
+        </div>
+    </div>
+    {% endif %}
 </body>
 </html>
