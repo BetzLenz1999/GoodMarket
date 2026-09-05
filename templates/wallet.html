@@ -3584,7 +3584,7 @@
             <div style="font-size:3rem;line-height:1;margin-bottom:1rem;">🔧</div>
             <div style="font-size:1.35rem;font-weight:800;color:#9a3412;margin-bottom:0.5rem;">Wallet Maintenance — Celo Protocol Update</div>
             <div style="display:inline-block;background:rgba(217,119,6,0.18);border:1px solid rgba(217,119,6,0.35);color:#9a3412;font-size:0.75rem;font-weight:700;border-radius:20px;padding:0.3rem 0.8rem;margin-bottom:1rem;">⏳ Ongoing maintenance — features are temporarily paused</div>
-            <p style="color:var(--text-dim);margin:0;font-size:0.95rem;line-height:1.6;">{{ wallet_maintenance_message|default("Maintenance due to a Celo protocol update. Please check back later.", true) }}</p>
+            <p style="color:var(--text-dim);margin:0;font-size:0.95rem;line-height:1.6;white-space:pre-line;">{{ wallet_maintenance_message|default("Maintenance due to a Celo protocol update.\n\nPlease check back later.", true) }}</p>
         </div>
     </div>
     {% endif %}
