@@ -4083,6 +4083,49 @@ def set_minigames_maintenance():
         logger.error(f"❌ Error setting minigames maintenance status: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+@routes.route("/api/admin/maintenance/wallet", methods=["GET"])
+@admin_required
+def get_wallet_maintenance():
+    """Get Wallet page maintenance status (Celo protocol update)"""
+    try:
+        from maintenance_service import maintenance_service
+
+        status = maintenance_service.get_maintenance_status('wallet_protocol_update')
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"❌ Error getting wallet maintenance status: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@routes.route("/api/admin/maintenance/wallet", methods=["POST"])
+@admin_required
+def set_wallet_maintenance():
+    """Set Wallet page maintenance mode (Celo protocol update)"""
+    try:
+        from maintenance_service import maintenance_service
+
+        data = request.json
+        is_maintenance = data.get('is_maintenance', False)
+        message = data.get('message', '')
+        admin_wallet = session.get('wallet')
+
+        if is_maintenance and not message:
+            return jsonify({
+                "success": False,
+                "error": "Custom message is required when enabling maintenance mode"
+            }), 400
+
+        result = maintenance_service.set_maintenance_status(
+            'wallet_protocol_update',
+            is_maintenance,
+            message,
+            admin_wallet
+        )
+
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"❌ Error setting wallet maintenance status: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @routes.route("/api/admin/quiz-settings", methods=["GET"])
 @admin_required
 def get_quiz_settings():
@@ -7348,10 +7391,26 @@ def wallet_page():
                     fn = row.get('feature_name')
                     if fn == 'wallet_feature' and row.get('is_maintenance', False):
                         return render_template("feature_unavailable.html", feature_name="Wallet", wallet=wallet)
+
                     if fn == 'wallet_buy_eth' and row.get('is_maintenance', False):
                         buy_eth_visible = False
     except Exception:
         pass
+
+    # Celo protocol-update maintenance (admin-toggled via the dashboard).
+    # When active, the wallet page stays readable but the on-chain actions
+    # (send, claim, GCash, raffle, stream, voucher) are blocked with the
+    # custom admin message until the Celo protocol update is complete.
+
+    wallet_maintenance_mode = False
+    wallet_maintenance_message = ""
+    try:
+        from maintenance_service import maintenance_service
+        maint = maintenance_service.get_maintenance_status('wallet_protocol_update')
+        wallet_maintenance_mode = bool(maint.get('is_maintenance', False))
+        wallet_maintenance_message = (maint.get('message') or '').strip()
+    except Exception as maint_err:
+        logger.warning(f"⚠️ Could not resolve wallet maintenance status: {maint_err}")
     return render_template(
         "wallet.html",
         wallet=wallet,
@@ -7364,6 +7423,8 @@ def wallet_page():
         gd_token_address=GOODDOLLAR_CONTRACTS.get("GOODDOLLAR_TOKEN", ""),
         raffle_contract_address=os.environ.get("GOODMARKET_RAFFLE_CONTRACT_ADDRESS", ""),
         buy_eth_visible=buy_eth_visible,
+        wallet_maintenance_mode=wallet_maintenance_mode,
+        wallet_maintenance_message=wallet_maintenance_message,
         # Same bridge/chain context as the swap page — the chat agent's
         # in-page bridge + XSwap execution reads these via GM_WALLET_BOOT.
         bridge_contract=os.getenv("XDC_CELO_BRIDGE_CONTRACT", "0xa3247276DbCC76Dd7705273f766eB3E8a5ecF4a5"),
