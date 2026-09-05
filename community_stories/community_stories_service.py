@@ -12,6 +12,12 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
+def _clamp_day(year: int, month: int, day: int) -> int:
+    """Clamp a configured day-of-month to the actual length of the given month."""
+    import calendar
+    return min(day, calendar.monthrange(year, month)[1])
+
+
 def _wallet_filter(query, wallet_address: str):
     """Case-insensitive wallet_address match.
 
@@ -84,10 +90,16 @@ class CommunityStoriesService:
             start_day = config['WINDOW_START_DAY']
             end_day = config['WINDOW_END_DAY']
 
+            # Clamp to the month length so a configured end-day like the 31st never
+            # crashes with "day is out of range for month" on shorter months.
+
+
+            start_day = _clamp_day(now.year, now.month, start_day)
+            end_day = _clamp_day(now.year, now.month, end_day)
+
             is_open = start_day <= current_day <= end_day
 
             # Calculate next window
-            start_day = config['WINDOW_START_DAY']
             start_hour = COMMUNITY_STORIES_CONFIG['WINDOW_START_HOUR'] # Assuming these are not configurable via DB yet
             start_minute = COMMUNITY_STORIES_CONFIG['WINDOW_START_MINUTE'] # Assuming these are not configurable via DB yet
 
@@ -136,7 +148,12 @@ class CommunityStoriesService:
 
             now = datetime.utcnow()
 
-            # Build the start and end timestamps of the current window
+            # Clamp to the month length so an end-day config like the 31st never
+            # crashes with "day is out of range for month" on shorter months.
+
+            window_start_day = _clamp_day(now.year, now.month, window_start_day)
+            window_end_day = _clamp_day(now.year, now.month, window_end_day)
+
             window_start = now.replace(day=window_start_day, hour=0, minute=0, second=0, microsecond=0)
             window_end = now.replace(day=window_end_day, hour=23, minute=59, second=59, microsecond=999999)
 
@@ -190,9 +207,9 @@ class CommunityStoriesService:
         start_minute = COMMUNITY_STORIES_CONFIG['WINDOW_START_MINUTE']
 
         if now.month == 12:
-            next_month = now.replace(year=now.year+1, month=1, day=start_day, hour=start_hour, minute=start_minute, second=0)
+            next_month = now.replace(year=now.year + 1, month=1, day=_clamp_day(now.year + 1, 1, start_day), hour=start_hour, minute=start_minute, second=0)
         else:
-            next_month = now.replace(month=now.month+1, day=start_day, hour=start_hour, minute=start_minute, second=0)
+            next_month = now.replace(month=now.month + 1, day=_clamp_day(now.year, now.month + 1, start_day), hour=start_hour, minute=start_minute, second=0)
         return next_month.isoformat()
 
     def submit_screenshot(self, wallet_address: str, screenshot_url: str, submission_id: str) -> dict:
