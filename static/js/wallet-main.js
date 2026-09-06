@@ -2770,8 +2770,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return true;
     }
     function _aiSwapErrMsg(err) {
-        return (window.GMTxError && GMTxError.format) ? GMTxError.format(err)
+        const via = (window.GMTxError && GMTxError.format) ? GMTxError.format(err)
             : (err && (err.shortMessage || err.message)) || 'Unknown error';
+        const joined = String(via ?? err?.message ?? '');
+        if (/l0out|exceeded.{0,20}l0|l0\b.{0,20}exceed/i.test(joined)) {
+            return 'The GoodReserve G$ sell pool cannot honor this amount right now. Please try a smaller amount or use Uniswap V3.';
+        }
+        return via;
     }
     async function _aiSwapEnsureEthers() {
         for (let i = 0; i < 30 && !window.ethers; i++) {
@@ -2937,6 +2942,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             });
             const quote = await quoteRes.json().catch(() => null);
             if (!quote || !quote.success) throw new Error((quote && quote.error) || 'Could not fetch a reserve quote.');
+            // The backend re-simulates swapIn at quote time; when the Mento
+            // L0 cap can't honor a sell it returns liquidity_error=true so we
+            // NEVER ask for an approval + signing round-trip that would revert
+            // (the "L0Out Exceeded" bug — balance never changed after the tx).
+            if (quote.liquidity_error) {
+                throw new Error(quote.error || 'The GoodReserve G$ sell pool currently cannot honor this amount. Please try a smaller amount or use Uniswap V3.');
+            }
             const amountIn = BigInt(quote.amount_in_wei);
             const amountOut = BigInt(quote.amount_out_wei);
             const minOut = (amountOut * (10000n - AI_SWAP_RESERVE_SLIPPAGE_BPS)) / 10000n;
@@ -4087,10 +4099,33 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             // Same defensive shape as XDC: omit non-standard `chainId`
             // from tx params (some wallets reject it). The chain switch
             // above already pinned the wallet to Celo.
-            const sendCeloTx = () => provider.request({
-                method: 'eth_sendTransaction',
-                params: [{ from, to: UBI_CONTRACT, data: CLAIM_DATA, value: '0x0' }]
-            });
+            //
+            // Estimate gas explicitly and send it along with the tx so wallets
+            // (Trust Wallet, MetaMask Mobile, WalletConnect DApps) don't
+            // have to guess the gas for the claim call themselves — when their
+            // RPC can't estimate,they surface a "Network fee unavailable"
+            // rejection and the claim never leaves the wallet. Mirrors the
+            // proven learn_and_earn/savings/MiniPay raw-tx pattern: estimate
+            // with the actual UBI claim() calldata,and pad with 40% headroom,
+            // falling back to the same 500,000 claim-gas fallback the
+            // backend readiness check caps at (see /api/faucet/status).
+            const sendCeloTx = async () => {
+                let gasHex;
+                try {
+                    const est = await provider.request({
+                        method: 'eth_estimateGas',
+                        params: [{ from, to: UBI_CONTRACT, data: CLAIM_DATA, value: '0x0' }],
+                    });
+                    const estimated = typeof est === 'string' ? BigInt(est) : BigInt(Number(est));
+                    gasHex = '0x' + (estimated * 140n / 100n).toString(16);
+                } catch (_) {
+                    gasHex = '0x7a120'; // 500 000 — safe claim() gas fallback (matches backend cap)
+                }
+                return provider.request({
+                    method: 'eth_sendTransaction',
+                    params: [{ from, to: UBI_CONTRACT, data: CLAIM_DATA, value: '0x0', gas: gasHex }]
+                });
+            };
 
             try {
                 console.log('[claimCeloInjected] Sending Celo claim transaction...');
@@ -5495,7 +5530,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
                 return provider.request({
                     method: 'eth_sendTransaction',
-                    params: [{ from, to: UBI_CONTRACT, data: CLAIM_DATA, value: '0x0' }]
+                    params: [{ from, to: UBI_CONTRACT, data: CLAIM_DATA, value: '0x0', gas: gasHex }]
                 });
             };
 
