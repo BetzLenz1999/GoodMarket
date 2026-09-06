@@ -67,6 +67,20 @@ UBI_SCHEME_ABI = [
         "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
         "stateMutability": "nonpayable",
         "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "paused",
+        "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "periodStart",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
     }
 ]
 
@@ -1093,20 +1107,36 @@ def get_ubi_entitlement(wallet_address: str) -> dict:
 
         # Compute entitlement even for unverified users so the UI can show the
         # pending claim amount before Face Verification is completed.
+        # Also read the UBIScheme pause/start state — when the pool is admin-paused
+        # (or its period has not started,) claim() reverts "not in periodStarted or
+        # paused" for EVERY wallet, so we surface that as its own availability reason
+        # instead of letting the UI invent "already claimed today".
         entitlement_wei = 0
         entitlement_g = 0.0
+        ubi_paused = None
+        ubi_period_start = None
         try:
             ubi_contract = w3.eth.contract(
                 address=Web3.to_checksum_address(GOODDOLLAR_CONTRACTS["UBI_PROXY"]),
                 abi=UBI_SCHEME_ABI
             )
+            # Pin msg.sender to the wallet for these view reads — public nodes reject
+            # eth_call with no `from`, anda pause-read through the node s own sender
+            # can return a cached/global answer instead of the real contract state.
+            try:
+                ubi_paused = ubi_contract.functions.paused().call({"from": wallet_checksum})
+            except Exception:
+                ubi_paused = None
+            try:
+                ubi_period_start = ubi_contract.functions.periodStart().call({"from": wallet_checksum})
+            except Exception:
+                ubi_period_start = None
             entitlement_wei = ubi_contract.functions.checkEntitlement(wallet_checksum).call()
             entitlement_g = entitlement_wei / (10 ** 18)
         except Exception as entitlement_err:
             logger.warning(
-                f"⚠️ Could not fetch entitlement for {wallet_address[:8]}... before FV check: {entitlement_err}"
+                f"Could not fetch entitlement for {wallet_address[:8]}... before FV check: {entitlement_err}"
             )
-
         if not is_verified:
             result = {
                 "success": True,
@@ -1160,16 +1190,50 @@ def get_ubi_entitlement(wallet_address: str) -> dict:
                 _entitlement_cache[key] = {"result": result, "expires_at": time.time() + ENTITLEMENT_CACHE_TTL}
             return result
 
-        result = {
-            "success": True,
-            "wallet": key,
-            "is_verified": True,
-            "entitlement": float(entitlement_g),
-            "entitlement_formatted": f"{entitlement_g:.2f}",
-            "can_claim": entitlement_g > 0,
-            "claim_calldata": get_ubi_claim_calldata(),
-            "ubi_contract": GOODDOLLAR_CONTRACTS["UBI_PROXY"]
-        }
+        # Unknown period (RPC hiccup) must NOT fabricate a "not started" reason —
+        # treat it as started so normal claim-state logic applies untilrive read succeeds.
+        ubi_started = ubi_period_start is None or float(ubi_period_start) > 0
+        if ubi_paused:
+            result = {
+                "success": True,
+                "wallet": key,
+                "is_verified": True,
+                "entitlement": float(entitlement_g),
+                "entitlement_formatted": f"{entitlement_g:.2f}",
+                # The UBIScheme contract is admin-paused — claim() reverts for EVERY
+                # wallet ("not in periodStarted or paused"), even if the user has never
+                # claimed. The frontend must show a "paused" reason, never fabricate
+                # "already claimed today" for this state.
+                "can_claim": False,
+                "reason": "ubi_paused",
+                "paused": True,
+                "claim_calldata": get_ubi_claim_calldata(),
+                "ubi_contract": GOODDOLLAR_CONTRACTS["UBI_PROXY"]
+            }
+        elif not ubi_started:
+            result = {
+                "success": True,
+                "wallet": key,
+                "is_verified": True,
+                "entitlement": float(entitlement_g),
+                "entitlement_formatted": f"{entitlement_g:.2f}",
+                "can_claim": False,
+                "reason": "ubi_not_started",
+                "not_started": True,
+                "claim_calldata": get_ubi_claim_calldata(),
+                "ubi_contract": GOODDOLLAR_CONTRACTS["UBI_PROXY"]
+            }
+        else:
+            result = {
+                "success": True,
+                "wallet": key,
+                "is_verified": True,
+                "entitlement": float(entitlement_g),
+                "entitlement_formatted": f"{entitlement_g:.2f}",
+                "can_claim": entitlement_g > 0,
+                "claim_calldata": get_ubi_claim_calldata(),
+                "ubi_contract": GOODDOLLAR_CONTRACTS["UBI_PROXY"]
+            }
         with _entitlement_cache_lock:
             _entitlement_cache[key] = {"result": result, "expires_at": time.time() + ENTITLEMENT_CACHE_TTL}
         return result
