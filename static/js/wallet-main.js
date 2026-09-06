@@ -4440,9 +4440,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     btn.disabled = true;
                     setStatus('You still have a claim on another network, but this wallet cannot safely prompt it.', '#d97706');
                 } else if (!claims.celo || !claims.celo.can_claim) {
-                    label.textContent = 'Already Claimed Today';
-                    icon.textContent = '✅';
-                    btn.disabled = true;
+                    if (claims.celo && claims.celo.reason === 'ubi_paused') {
+                        label.textContent = 'UBI Claim Paused';
+                        icon.textContent = '⏸️';
+                        btn.disabled = true;
+                        setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now. Please check back later.', '#d97706');
+                    } else if (claims.celo && claims.celo.reason === 'ubi_not_started') {
+                        label.textContent = 'Claim Not Started';
+                        icon.textContent = '⏳';
+                        btn.disabled = true;
+                        setStatus('The GoodDollar UBI claim period has not started yet.', '#d97706');
+                    } else {
+                        label.textContent = 'Already Claimed Today';
+                        icon.textContent = '✅';
+                        btn.disabled = true;
+                        setStatus('Come back tomorrow for your next claim.');
+                    }
                 }
             }
             renderClaimNetworks();
@@ -4481,11 +4494,23 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 _hideReVerifyHint();
                 needsVerification = false;
                 window._walletNeedsFV = false;
-                label.textContent = 'Already Claimed Today';
-                icon.textContent = '✅';
-                btn.disabled = true;
-                setStatus('Come back tomorrow for your next claim.');
-                startCountdown();
+                if (d.reason === 'ubi_paused') {
+                    label.textContent = 'UBI Claim Paused';
+                    icon.textContent = '⏸️';
+                    btn.disabled = true;
+                    setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now. Please check back later.', '#d97706');
+                } else if (d.reason === 'ubi_not_started') {
+                    label.textContent = 'Claim Not Started';
+                    icon.textContent = '⏳';
+                    btn.disabled = true;
+                    setStatus('The GoodDollar UBI claim period has not started yet.', '#d97706');
+                } else {
+                    label.textContent = 'Already Claimed Today';
+                    icon.textContent = '✅';
+                    btn.disabled = true;
+                    setStatus('Come back tomorrow for your next claim.');
+                    startCountdown();
+                }
                 window._celoCanClaim = false;
             } else {
                 needsVerification = false;
@@ -4587,7 +4612,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         setTimeout(openSavingsPopupAfterClaim, 900);
                     } else {
                         btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
-                        setStatus('Transaction failed. You may have already claimed today.', 'var(--red)');
+                        setStatus('Transaction failed. The UBI claim pool may be paused, or you may already have claimed today.', 'var(--red)');
                     }
                 }).catch(() => pollReceipt(txHash, attempts - 1));
             }, 3000);
