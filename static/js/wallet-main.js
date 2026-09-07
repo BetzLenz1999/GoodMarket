@@ -3691,6 +3691,8 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         let recommendedClaimNetwork = 'celo';
         window._walletNeedsFV = false;
         let _countdownInterval = null;
+        let _availabilityPollTimer = null;
+        let _seenPausedState = false;
 
         const btn    = document.getElementById('ubiClaimBtn');
         const label  = document.getElementById('ubiClaimLabel');
@@ -4254,7 +4256,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             let statusText = 'Claimed';
             let statusClass = 'claimed';
             let hint = meta.hint;
-            if (!isAvailable) {
+            if (info && info.reason === 'ubi_paused') {
+                statusText = 'Paused';
+                statusClass = 'warning';
+                hint = 'The GoodDollar UBI pool is currently paused — no user can claim on this network right now.';
+            } else if (info && info.reason === 'ubi_not_started') {
+                statusText = 'Not Started';
+                statusClass = 'warning';
+                hint = 'The GoodDollar UBI claim period has not started on this network yet.';
+            } else if (!isAvailable) {
                 statusText = 'Not Available';
                 statusClass = 'warning';
                 hint = info.error || `${meta.name} claiming is temporarily not available.`;
@@ -4380,6 +4390,18 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 heroAmount.innerHTML = `${formattedAmount} <span class="unit">G$</span>`;
                 heroSub.textContent = `available to claim${claimableNetworks.length ? ` on ${networkLabel}` : ''}`;
                 heroCta.textContent = 'Claim UBI G$';
+            } else if (claims.celo && claims.celo.reason === 'ubi_paused') {
+                heroEyebrow.textContent = 'UBI paused';
+                heroAmount.innerHTML = '⏸️';
+                heroSub.textContent = 'The GoodDollar UBI pool is paused — check back later';
+                heroCta.textContent = 'View claim details';
+                hero.classList.add('is-disabled');
+            } else if (claims.celo && claims.celo.reason === 'ubi_not_started') {
+                heroEyebrow.textContent = 'Claim not started';
+                heroAmount.innerHTML = '⏳';
+                heroSub.textContent = 'The GoodDollar UBI claim period has not started yet';
+                heroCta.textContent = 'View claim details';
+                hero.classList.add('is-disabled');
             } else {
                 heroEyebrow.textContent = 'Claimable UBI';
                 heroAmount.innerHTML = `0.00 <span class="unit">G$</span>`;
@@ -4395,6 +4417,53 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             }
         }
 
+        function _ubiBlockedReason(data) {
+            const claims = (data && data.claims) || {};
+            if (needsVerification) return null;
+            const celo = claims.celo || data;
+            if (celo && celo.reason === 'ubi_paused') return 'paused';
+            if (celo && celo.reason === 'ubi_not_started') return 'not_started';
+            return null;
+        }
+
+        function _scheduleAvailabilityPollIfBlocked(data) {
+            if (!btn || !label) return;
+            const blocking = _ubiBlockedReason(data);
+            if (blocking) {
+                // Pool is paused / period not started — keep polling until the
+                // pool resumes so the claim button silently unblocks without
+                // a manual reload. (Already-claimed does NOT poll — the
+                // daily countdown already communicates the wait.)
+
+                if (_availabilityPollTimer) return;
+                _seenPausedState = true;
+                _availabilityPollTimer = setInterval(() => {
+                    fetchEntitlement(true);
+                }, 60000);
+            } else {
+                if (_availabilityPollTimer) {
+                    clearInterval(_availabilityPollTimer);
+                    _availabilityPollTimer = null;
+                }
+                if (_seenPausedState) {
+                    // Only announce the resume when a network is genuinely claimable
+                    // now (or face-verification is the only gate left). If the user
+                    // already claimed elsewhere / hit an error, don't say "you can
+                    // claim now!" against a claimed/errored state..
+
+                    const claims = (data && data.claims) || {};
+                    const celo = claims.celo || data;
+                    const actuallyClaimable = !needsVerification && (
+                        !!recommendedClaimNetwork || !!(celo && celo.can_claim)
+                    );
+                    _seenPausedState = false;
+                    if (actuallyClaimable) {
+                        setStatus('🎉 The UBI pool has resumed — you can claim now!', 'var(--green)');
+                    }
+                }
+            }
+        }
+
         function applyClaimAvailabilityData(data) {
             claimAvailability = data;
             const claims = data.claims || {};
@@ -4402,6 +4471,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             applyEntitlementData(claims.celo || data);
             renderClaimNetworks();
             updateClaimButtonBox(data);
+            _scheduleAvailabilityPollIfBlocked(data);
 
             if (needsVerification) return;
             const caps = getClaimWalletCapabilities();
@@ -4444,7 +4514,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         label.textContent = 'UBI Claim Paused';
                         icon.textContent = '⏸️';
                         btn.disabled = true;
-                        setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now. Please check back later.', '#d97706');
+                        setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now, but we will auto-checkand enable the button the moment it resumes.', '#d97706');
                     } else if (claims.celo && claims.celo.reason === 'ubi_not_started') {
                         label.textContent = 'Claim Not Started';
                         icon.textContent = '⏳';
@@ -4498,7 +4568,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     label.textContent = 'UBI Claim Paused';
                     icon.textContent = '⏸️';
                     btn.disabled = true;
-                    setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now. Please check back later.', '#d97706');
+                    setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now, but we will auto-checkand enable the button the moment it resumes.', '#d97706');
                 } else if (d.reason === 'ubi_not_started') {
                     label.textContent = 'Claim Not Started';
                     icon.textContent = '⏳';
@@ -4536,8 +4606,17 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             if (rv) rv.style.display = 'none';
         };
 
-        function fetchEntitlement() {
-            setStatus('Checking entitlement…', 'var(--text-dim)');
+        // When the user returns to this tab after a pause, re-check
+        // availability immediately (don't wait upto 60s for the poller).
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && _seenPausedState) fetchEntitlement(true);
+        });
+        window.addEventListener('focus', () => {
+            if (_seenPausedState) fetchEntitlement(true);
+        });
+
+        function fetchEntitlement(silent) {
+            if (!silent) setStatus('Checking entitlement…', 'var(--text-dim)');
             // Always force-bypass the backend cache on the first check.
             // Stale cache (up to 3 min) caused "Already Claimed Today" to appear for
             // wallets whose face-verification status had just changed.
