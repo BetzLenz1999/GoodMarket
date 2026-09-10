@@ -7525,7 +7525,16 @@ GOODRESERVE_BROKER_CELO   = "0x88de45906D4F5a57315c133620cfa484cB297541"
 GOODRESERVE_PROVIDER_CELO = "0x2fFBB49055d487DdBBb0C052Cd7c2a02A7971e41"
 GOODRESERVE_GD_CELO       = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A"
 GOODRESERVE_CUSD_CELO     = "0x765DE816845861e75A25fCA122bb6898B8B1282a"
+# A quote is only useful when the user can actually sign it.  Do not make the
+# GoodReserve endpoint depend on a single public node: forno has intermittent
+# rate limiting/outages, which otherwise makes both the GoodReserve pane and
+# every G$ <-> cUSD swap appear to be broken.
 GOODRESERVE_RPC_CELO      = os.environ.get("CELO_RPC_URL", "https://forno.celo.org")
+GOODRESERVE_RPC_FALLBACKS = (
+    "https://forno.celo.org",
+    "https://celo-rpc.publicnode.com",
+    "https://rpc.ankr.com/celo",
+)
 
 _goodreserve_quote_cache = {"data": {}, "expires": {}}
 _GOODRESERVE_QUOTE_TTL   = 6  # seconds
@@ -7543,16 +7552,27 @@ def _goodreserve_eth_call_raw(to_addr, data_hex):
         "jsonrpc": "2.0", "id": 1, "method": "eth_call",
         "params": [{"to": to_addr, "data": data_hex}, "latest"],
     }
-    try:
-        resp = requests.post(GOODRESERVE_RPC_CELO, json=payload, timeout=8,
-                             headers={"User-Agent": "GoodMarket/1.0"})
-        resp.raise_for_status()
-        body = resp.json()
-    except Exception as e:
-        return None, str(e), False
-    if "error" in body:
-        return None, body["error"].get("message", "unknown"), True
-    return body.get("result", "0x"), None, False
+    # A JSON-RPC revert is deterministic for this call and must be returned to
+    # the caller (the sell-side feasibility check relies on that distinction).
+    # Only transport/HTTP failures fall through to another Celo endpoint.
+    urls = []
+    for url in (GOODRESERVE_RPC_CELO,) + GOODRESERVE_RPC_FALLBACKS:
+        if url and url not in urls:
+            urls.append(url)
+    last_error = "Celo RPC unavailable"
+    for url in urls:
+        try:
+            resp = requests.post(url, json=payload, timeout=8,
+                                 headers={"User-Agent": "GoodMarket/1.0"})
+            resp.raise_for_status()
+            body = resp.json()
+        except Exception as e:
+            last_error = str(e)
+            continue
+        if "error" in body:
+            return None, body["error"].get("message", "unknown"), True
+        return body.get("result", "0x"), None, False
+    return None, last_error, False
 
 
 def _goodreserve_eth_call(to_addr, data_hex):
@@ -7652,17 +7672,27 @@ def reserve_quote():
         if direction not in ("buy", "sell"):
             return jsonify({"success": False, "error": "direction must be 'buy' or 'sell'"}), 400
         try:
-            amount_human = float(amount_str)
-        except Exception:
+            # Never round a token amount through binary float. A one-wei drift
+            # between quote and the final post-approval quote is enough to make
+            # an exact ERC-20 approval look too small to the broker.
+            from decimal import Decimal, InvalidOperation
+            amount_human = Decimal(amount_str)
+        except (InvalidOperation, ValueError):
             return jsonify({"success": False, "error": "invalid amount"}), 400
-        if amount_human <= 0:
+        if not amount_human.is_finite() or amount_human <= 0:
             return jsonify({"success": False, "error": "amount must be > 0"}), 400
-        amount_in_wei = int(round(amount_human * (10 ** 18)))
+        amount_in_wei = int(amount_human * Decimal(10 ** 18))
+        if amount_in_wei <= 0:
+            return jsonify({"success": False, "error": "amount is too small"}), 400
         cache_key = f"{direction}:{amount_in_wei}"
         now = time.time()
         cached = _goodreserve_quote_cache["data"].get(cache_key)
         cached_exp = _goodreserve_quote_cache["expires"].get(cache_key, 0)
-        if cached and now < cached_exp:
+        # After an approval the browser asks for a forced quote immediately
+        # before swapIn.  Reusing the six-second quote here can leave a stale
+        # amountOutMin and cause an avoidable "Too little received" revert.
+        force_fresh = bool(body.get("force"))
+        if cached and now < cached_exp and not force_fresh:
             return jsonify(cached)
         exchange_id = _goodreserve_get_exchange_id()
         if not exchange_id:
