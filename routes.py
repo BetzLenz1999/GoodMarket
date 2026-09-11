@@ -7538,6 +7538,39 @@ GOODRESERVE_RPC_FALLBACKS = (
 
 _goodreserve_quote_cache = {"data": {}, "expires": {}}
 _GOODRESERVE_QUOTE_TTL   = 6  # seconds
+# Reads this public getter (selector computed from "paused()") to detect the
+# GoodReserve provider's protocol-level pause. The provider umbrella pause
+# (Pausable) is what makes EVERY buy/sell swapIn revert "Pausable: paused"
+# regardless of pool liquidity — surfacing that as a route-paused state keeps
+# users from approving/signing a tx that would revert. See the sell-side
+# simulation in reserve_quote for the non-paused liquidity gate.
+_GOODRESERVE_PAUSED_SELECTOR = "0x5c975abb"
+_goodreserve_paused_cache = {"value": None, "expires": 0.0}
+_GOODRESERVE_PAUSED_CACHE_TTL = 30  # seconds
+
+
+def _goodreserve_provider_is_paused():
+    """Return True when the GoodReserve provider contract's ``paused()`` getter
+    returns 1, False when it returns 0, None when the read failed/unknown.
+
+    The result is cached for _GOODRESERVE_PAUSED_CACHE_TTL seconds so quote
+    traffic doesn't hammer forno; a transient RPC failure yields None (callers
+    must NOT treat unknown as paused — that would block trading on a glitch)."""
+    now = time.time()
+    cached = _goodreserve_paused_cache["value"]
+    if cached is not None and now < _goodreserve_paused_cache["expires"]:
+        return cached
+    raw, _, _rpc_err = _goodreserve_eth_call_raw(
+        GOODRESERVE_PROVIDER_CELO, _GOODRESERVE_PAUSED_SELECTOR)
+    value = None
+    if raw is not None:
+        try:
+            value = int(raw, 16) > 0
+        except (TypeError, ValueError):
+            value = None
+    _goodreserve_paused_cache["value"] = value
+    _goodreserve_paused_cache["expires"] = now + _GOODRESERVE_PAUSED_CACHE_TTL
+    return value
 
 
 def _goodreserve_eth_call_raw(to_addr, data_hex):
@@ -7684,6 +7717,26 @@ def reserve_quote():
         amount_in_wei = int(amount_human * Decimal(10 ** 18))
         if amount_in_wei <= 0:
             return jsonify({"success": False, "error": "amount is too small"}), 400
+        # Protocol-level pause gate:the GoodDollar governance can pause the
+        # Mento exchange provider, which immediately makes EVERY buy/sell
+        # swapIn revert"Pausable: paused" (confirmed live on Celo mainnet —
+        # provider paused() returns 1). Block the quote BEFORE the user approves/
+        # signs so they never hit the on-chain revert. Only direct the frontend to
+        # hide the whole reserve tab (206) when paused; the individual-sell
+        # liquidity simulation below handles the non-paused "L0Out Exceeded" case.
+        _paused = _goodreserve_provider_is_paused()
+        if _paused is True:
+            return jsonify({
+                "success": False,
+                "error": (
+                    "The GoodReserve route is paused by GoodDollar — buy/sell G$ "
+                    "directly from the reserve cannot execute right now. Please use "
+                    "Uniswap V3 (G$ ↔ cUSD) instead, or check back later."
+                ),
+                "route_paused": True,
+                "direction": direction,
+                "amount": amount_str,
+            }), 503
         cache_key = f"{direction}:{amount_in_wei}"
         now = time.time()
         cached = _goodreserve_quote_cache["data"].get(cache_key)
@@ -7773,6 +7826,26 @@ def reserve_quote():
     except Exception as e:
         logger.error(f"reserve_quote error: {e}")
         return jsonify({"success": False, "error": "quote failed"}), 500
+
+
+@routes.route("/api/reserve/paused", methods=["GET"])
+def reserve_paused():
+    """Read-only pause status for the GoodReserve (Mento provider) on Celo.
+
+    Returns ``{"paused": true|false}``; of when the state is unknown, a 503
+    with ``{"paused": true}`` is returned instead so the UI fails closed to the
+    paused banner (unknown must never let the user approve/sign into a revert when
+    the chain may be paused).
+    """
+    try:
+        paused = _goodreserve_provider_is_paused()
+        if paused is None:
+            return jsonify({"paused": True, "unknown": True,
+                            "error": "Could not verify GoodReserve pause state"}), 503
+        return jsonify({"paused": paused})
+    except Exception as e:
+        logger.error(f"reserve_paused error: {e}")
+        return jsonify({"paused": True, "unknown": True, "error": "reserve pause check failed"}), 503
 
 
 @routes.route("/send-link")
