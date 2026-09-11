@@ -29,12 +29,10 @@ def savings_home():
     if not wallet or not verified:
         return redirect("/login")
 
-    # Human (face) verification gate — all login_methods must be
-    # face-verified on the GoodDollar Identity contract to enter.
-    from human_verification import human_verification_redirect
-    fv_gate = human_verification_redirect(wallet)
-    if fv_gate:
-        return fv_gate
+    # NOTE: /savings is intentionally NOT behind the human (face)
+    # verification gate — unverified users are allowed to save G$.
+    # Other earning/spending pages (dashboard, learn & earn, play & earn,
+    # reloadly) still bounce unverified wallets to /wallet?fv_required=1.
 
     wc_pid = os.environ.get('WALLETCONNECT_PROJECT_ID', '')
     has_explicit_sidecar = bool(os.getenv("WC_SERVICE_URL"))
