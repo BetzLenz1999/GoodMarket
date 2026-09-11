@@ -7442,12 +7442,10 @@ def swap_page():
     if not wallet or not session.get("verified"):
         return redirect(url_for("routes.index"))
 
-    # Human (face) verification gate — all login_methods must be
-    # face-verified on the GoodDollar Identity contract to enter.
-    from human_verification import human_verification_redirect
-    fv_gate = human_verification_redirect(wallet)
-    if fv_gate:
-        return fv_gate
+    # NOTE: /swap is intentionally NOT behind the human (face) verification
+    # gate — unverified users are allowed to swap G$ (goodswap + bridge).
+    # Other earning/spending pages (dashboard, learn & earn, play & earn,
+    # reloadly) still bounce unverified wallets to /wallet?fv_required=1.
 
     reserve_visible = False
     try:
