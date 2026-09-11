@@ -1333,6 +1333,11 @@
                     <div class="step" id="reserveStep2">2. Buy / Sell</div>
                 </div>
 
+                <!-- Protocol pause banner (shown when the GoodReserve provider is
+                     paused by GoodDollar governance; hides the whole form so users
+                     never approve/sign a swap that would revert on-chain) -->
+                <div id="reservePausedBanner" class="alert alert-error" style="display:none;margin-top:1rem;"></div>
+
                 <!-- Action button -->
                 <button class="swap-btn" id="reserveBtn" onclick="startReserveSwap()" disabled style="margin-top:1rem;">
                     Enter an amount
@@ -4519,8 +4524,27 @@
                 fuseBtn.classList.toggle("active", isFuse);
                 fuseBtn.setAttribute("aria-selected", String(isFuse));
             }
-            if (isReserve) updateReserveBalanceDisplay();
+            if (isReserve) {
+                updateReserveBalanceDisplay();
+                // One probe per pane visit (re-checks + repaints on the 2-min poll).
+                if (typeof _checkReservePaused === "function" && window.ethers) {
+                    _ensureReservePauseProbe();
+                }
+            }
         }
+
+        function _ensureReservePauseProbe() {
+            if (reservePauseCheckDone) {
+                _renderReservePauseState();
+            } else {
+                _checkReservePaused();
+            }
+            _armReservePausePoll();
+        }
+        // Expose so other panes/components could re-probe on demand (e.g. after
+        // a successful governance revisit); the reserve pane's own visit hook
+        // calls this already.
+        window._checkReservePaused = _checkReservePaused;
 
         // Toggle the active sub-pane inside the Bridge tab. Each direction
         // owns its own DOM (Celo → XDC was already on /swap; XDC → Celo
@@ -4556,6 +4580,106 @@
             } else {
                 if (typeof updateCeloBridgeBalanceDisplay === "function") updateCeloBridgeBalanceDisplay();
             }
+        }
+
+        // Protocol-level pause state for the GoodReserve provider. Fetched
+        // once per visiting the pane (cheap eth_call via the public RPC, also cached
+        // back-end side for 30s and front-end side for 2 min); when paused,
+        // the entire reserve sub-tab converts to a clear route-paused state — no
+        // direction buttons, no amount inputs, no approve/sign path (approving
+        // or signing would simply revert "Pausable: paused" on-chain).
+        let reservePaused = false;
+        let reservePauseCheckDone = false;
+        let reservePauseCheckTimer = null;
+        const RESERVE_PAUSE_BANNER_HTML = "⚠️ <strong>GoodReserve is paused by GoodDollar</strong> — buying or selling G$ directly from the reserve cannot execute right now. Please use <strong>Uniswap V3</strong> (G$ ↔ cUSD) instead, or check back later.";
+        function _reservePauseProbeRpc(raw) {
+            try {
+                return (parseInt(raw, 16) > 0);
+            } catch (_) { return null; }
+        }
+        async function _checkReservePaused() {
+            try {
+                const resp = await fetch("/api/reserve/paused", { method: "GET", headers: { "Accept": "application/json" } });
+                const body = await resp.json().catch(() => null);
+                if (resp.ok && body && typeof body.paused === "boolean") {
+                    reservePaused = body.paused;
+                } else if (body && typeof body.paused === "boolean") {
+                    reservePaused = body.paused;
+                } else {
+                    // Unknown — fall back to a direct public-RPC read so the tab
+                    // never permanently sticks on paused because of a proxy caching
+                    // quirk. Showing a "route paused" state when the chain says
+                    // routed paused is the correct user-facing behavior.
+                    const rpp = new ethers.JsonRpcProvider(CELO_RPC);
+                    const raw = await rpp.call({ to: RESERVE_PROVIDER, data: "0x5c975abb" });
+                    reservePaused = _reservePauseProbeRpc(raw) || false;
+                }
+            } catch (_) {
+                // Failure to determine pause state must never let the tab show
+                // enterable buttons while the chain is paused — fail-closed to
+                // the paused banner (the /api/reserve/paused endpoint fails
+                // closed for the same reason).
+                reservePaused = true;
+            } finally {
+                reservePauseCheckDone = true;
+            }
+            _renderReservePauseState();
+        }
+        function _renderReservePauseState() {
+            const dirWrap = document.querySelector(".reserve-direction");
+            const tokenBoxes = document.querySelectorAll("#swapPaneReserve .token-box");
+            const quoteBox = document.getElementById("reserveQuoteBox");
+            const exitPill = document.getElementById("reserveExitPill");
+            const stepIdx  = document.getElementById("reserveStepIndicators");
+            const maxBtns   = document.querySelectorAll("#swapPaneReserve .max-btn");
+            const amountIn  = document.getElementById("reserveAmountIn");
+            const amountOut = document.getElementById("reserveAmountOut");
+            const btn = document.getElementById("reserveBtn");
+            const alert = document.getElementById("reserveAlert");
+            const banner = document.getElementById("reservePausedBanner");
+            // Clear any in-flight quote state when the pause verdict lands (a quote
+            // fetched pre-verdict/while-unpaused must not linger into a paused UI.
+            if (reservePaused && reserveQuote) {
+                reserveQuote = null;
+                if (quoteBox) quoteBox.classList.add("hidden");
+            }
+            if (dirWrap) dirWrap.style.display = reservePaused ? "none" : "";
+            tokenBoxes.forEach((tb => { tb.style.display = reservePaused ? "none" : ""; }));
+            maxBtns.forEach((mb => { mb.style.display = reservePaused ? "none" : ""; }));
+            if (exitPill) exitPill.style.display = "none";
+            if (stepIdx) stepIdx.style.display = reservePaused ? "none" : "";
+            if (amountIn) amountIn.value = "";
+            if (amountOut) amountOut.value = "";
+            if (btn) {
+                if (reservePaused) {
+                    btn.disabled = true;
+                    btn.textContent = "Reserve paused";
+                } else if (reserveQuote) {
+                    setReserveBtnState("ready");
+                } else {
+                    setReserveBtnState("enter");
+                }
+            }
+            if (alert) alert.className = "alert";
+            if (banner) {
+                banner.style.display = reservePaused ? "block" : "none";
+            }
+            if (reservePaused) {
+                showReserveAlert("alert-error", RESERVE_PAUSE_BANNER_HTML);
+            } else {
+                clearReserveAlert();
+            }
+        }
+        function _armReservePausePoll() {
+            if (reservePauseCheckTimer) clearInterval(reservePauseCheckTimer);
+            // The pause verdict can change via governance; re-check every 2 min
+            // only while the user stays on the pane. When it flips, the render
+            // application updates the tab automatically (including the quote box hide).
+            reservePauseCheckTimer = setInterval(() => {
+                if (document.visibilityState === "hidden") return;
+                if (reservePaused && reserveQuote) reserveQuote = null;
+                _checkReservePaused();
+            }, 120000);
         }
 
         function setReserveDirection(dir) {
@@ -4672,8 +4796,10 @@
                 const err = new Error(data && data.error ? data.error : "Quote failed");
                 // Keep the sell-pool gate distinguishable from a normal RPC
                 // failure: users should not retry an L0-limited swap/approval.
+
                 err.liquidity_error = !!(data && data.liquidity_error);
-                if (err.liquidity_error) err._gmFriendly = true;
+                err._gmRoutePaused   = !!(data && data.route_paused);
+                if (err.liquidity_error || err._gmRoutePaused) err._gmFriendly = true;
                 throw err;
             }
             const amountIn  = BigInt(data.amount_in_wei);
@@ -4748,6 +4874,16 @@
                 const qb = document.getElementById("reserveQuoteBox");
                 if (qb) qb.classList.add("hidden");
                 setReserveBtnState("enter");
+                // Route-level pause (whole provider paused by governance). No
+                // approve/sign path exists when paused — every buy/sell hasto
+                // revert "Pausable: paused" on-chain, so surface the honest
+                // paused banner instead of an opaque HTTP/quote error.
+                if (err && err._gmRoutePaused) {
+                    reservePaused = true;
+                    reservePauseCheckDone = true;
+                    _renderReservePauseState();
+                    return;
+                }
                 if (err && err.liquidity_error) {
                     showReserveAlert("alert-warning", `⚠️ ${err.message || "The GoodReserve G$ sell pool currently cannot honor this amount. Please try a smaller amount or use Uniswap V3."}`);
                     return;
