@@ -2773,6 +2773,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         const via = (window.GMTxError && GMTxError.format) ? GMTxError.format(err)
             : (err && (err.shortMessage || err.message)) || 'Unknown error';
         const joined = String(via ?? err?.message ?? '');
+        if (/pausable:?.{0,12}paused|route\s+paused|paused\s+by\s+gooddollar|reserve\s+.*\bpaused/i.test(joined)) {
+            return 'The GoodReserve route is paused by GoodDollar right now — buy/sell G$ via it cannot execute until it is resumed. Please use Uniswap V3 instead, or check back later.';
+        }
         if (/l0out|exceeded.{0,20}l0|l0\b.{0,20}exceed/i.test(joined)) {
             return 'The GoodReserve G$ sell pool cannot honor this amount right now. Please try a smaller amount or use Uniswap V3.';
         }
@@ -2941,7 +2944,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 body: JSON.stringify({ direction, amount: String(amountStr) })
             });
             const quote = await quoteRes.json().catch(() => null);
-            if (!quote || !quote.success) throw new Error((quote && quote.error) || 'Could not fetch a reserve quote.');
+            if (!quote || !quote.success) {
+                // Route-level pause (whole provider paused by governance) — fail
+                // with the honest paused message instead of "could not fetch quote".
+                if (quote && quote.route_paused) {
+                    throw new Error(quote.error || 'The GoodReserve route is paused by GoodDollar right now. Please use Uniswap V3 instead, or check back later.');
+                }
+                throw new Error((quote && quote.error) || 'Could not fetch a reserve quote.');
+            }
             // The backend re-simulates swapIn at quote time; when the Mento
             // L0 cap can't honor a sell it returns liquidity_error=true so we
             // NEVER ask for an approval + signing round-trip that would revert
