@@ -107,6 +107,18 @@
         return /l0out|l0\b.{0,24}exceed|exceed.{0,24}l0\b/i.test(joined);
     }
 
+    function _isRoutePaused(joined) {
+        // Protocol-level route pause: GoodDollar governance paused the Mento
+        // exchange provider (``Pausable: paused``) which makes EVERY buy/sell
+        // swapIn revert regardless of pool liquidity. Also matches the app's own
+        // "route paused"/paused-by-GoodDollar preflight messages so bridge and
+        // reserve flows share one honest category instead of a misleading
+        // "cannot honor"/approval/balance diagnostic. Sorted BEFORE the L0
+        // and allowance branches in format().
+
+        return /pausable:?.{0,12}paused|already paused|route\s+paused|paused\s+(by\s+)?(gooddollar|route)|reserve\s+.*\bpaused/i.test(joined);
+    }
+
     function _isReverted(joined) {
         // "missing revert data in call exception" is ethers v6's opaque
         // wrapper for an eth_call/eth_estimateGas that reverted with no
@@ -259,6 +271,9 @@
         if (_isInsufficientFunds(joined)) {
             if (/celo|gas|xdc/i.test(joined)) return "Insufficient " + nativeSymbol + " for gas fees. Please top up " + nativeSymbol + " and try again.";
             return "Insufficient balance for this transaction.";
+        }
+        if (_isRoutePaused(joined)) {
+            return "This route is paused by GoodDollar right now — buy/sell G$ via it cannot execute until it is resumed. Please use Uniswap V3 instead, or check back later.";
         }
         if (_isL0OutExceeded(joined)) {
             return "The GoodReserve G$ pool cannot execute this sell right now (L0 out-limit exceeded. Please try a smaller amount or swap via Uniswap V3 — the G$ reserve side refills over time.";
