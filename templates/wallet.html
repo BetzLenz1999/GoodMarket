@@ -1804,9 +1804,9 @@
             width: 100%;
             max-width: 480px;
             display: grid;
-            /* A single centered launcher opens the six primary destinations. */
-            grid-template-columns: minmax(170px, 240px);
-            justify-content: center;
+            /* Four core destinations plus one overflow hub (More) reachable
+               directly from the bar — no two-level nesting for common actions. */
+            grid-template-columns: repeat(4, 1fr);
             gap: 0.15rem;
             padding: 0.5rem 0.4rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
             
@@ -2270,15 +2270,11 @@
         }
 
 
-        /* Keep the new GoodMarket Menu launcher visually centered and easy to
-           reach, without making the compact bottom navigation feel empty. */
-        .bn-menu-launcher {
-            width: 100%;
-            background: linear-gradient(135deg, rgba(var(--gold-rgb),0.20), rgba(var(--accent-rgb),0.14));
-            box-shadow: inset 0 0 0 1px rgba(var(--gold-rgb),0.32), 0 4px 14px rgba(67,56,43,0.10);
-        }
-        .bn-menu-launcher .bn-label { color: #9a3412; }
-        .bn-menu-launcher:hover { background: linear-gradient(135deg, rgba(var(--gold-rgb),0.30), rgba(var(--accent-rgb),0.22)); }
+        /* The four visible nav items keep the bar airy: subtle active pill,
+           comfortable tap targets even with four equal columns. */
+        .bn-item { padding: 0.45rem 0.1rem; gap: 0.18rem; border-radius: 14px; }
+        .bn-item .bn-icon { font-size: 1.1rem; }
+        .bn-item .bn-label { font-size: 0.56rem; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -3563,10 +3559,24 @@
     </div>
 
     <!-- ── Bottom Navigation Bar ── -->
+    <!-- Four core destinations always visible; More opens the full hub so every
+         sub-feature stays reachablein at most two taps from here. -->
     <nav class="wallet-bottom-nav" aria-label="Wallet navigation">
-        <button type="button" class="bn-item bn-menu-launcher" onclick="openBottomSheet('bnSheetMenu')" aria-haspopup="dialog" aria-controls="bnSheetMenu">
-            <span class="bn-icon">✨</span>
-            <span class="bn-label">GoodMarket Menu</span>
+        <button type="button" class="bn-item" onclick="openModal('sendModal')" aria-haspopup="dialog" aria-controls="sendModal">
+            <span class="bn-icon">↑</span>
+            <span class="bn-label">Send</span>
+        </button>
+        <button type="button" class="bn-item" onclick="openModal('receiveModal')" aria-haspopup="dialog" aria-controls="receiveModal">
+            <span class="bn-icon">↓</span>
+            <span class="bn-label">Receive</span>
+        </button>
+        <button type="button" class="bn-item" onclick="openBottomSheet('bnSheetEarn')" aria-haspopup="dialog" aria-controls="bnSheetEarn">
+            <span class="bn-icon">💰</span>
+            <span class="bn-label">Earn</span>
+        </button>
+        <button type="button" class="bn-item" onclick="openBottomSheet('bnSheetMenu')" aria-haspopup="dialog" aria-controls="bnSheetMenu">
+            <span class="bn-icon">⚙️</span>
+            <span class="bn-label">More</span>
         </button>
     </nav>
 
