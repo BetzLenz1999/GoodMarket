@@ -129,8 +129,26 @@ def pick():
     if meta['drawn']:
         return jsonify({'success': False, 'error': "Today's draw has already completed. Come back tomorrow!"}), 400
 
+    # Proof of wallet ownership — the user must sign the exact message that
+    # binds their wallet + round + numbers. Without a valid signature the pick
+    # is rejected (a session cookie alone is not ownership proof).
+    message = data.get('message')
+    signature = data.get('signature')
+    if not message or not signature:
+        return jsonify({
+            'success': False,
+            'error': 'A wallet signature is required to submit your pick.',
+            'error_type': 'signature_required',
+        }), 400
+    if not svc.verify_pick_signature(message, signature, wallet, meta['round_id'], numbers):
+        return jsonify({
+            'success': False,
+            'error': 'Signature verification failed — please sign with your GoodMarket wallet.',
+            'error_type': 'signature_invalid',
+        }), 400
+
     svc.ensure_round_exists(meta['round_id'], meta['game_date'])
-    result = svc.upsert_entry(meta['round_id'], wallet, numbers)
+    result = svc.upsert_entry(meta['round_id'], wallet, numbers, signature=signature, signed_message=message)
     if result.get('success'):
         return jsonify({'success': True, 'numbers': numbers, 'round_id': meta['round_id']})
     code = 409 if result.get('already_picked') else 400
