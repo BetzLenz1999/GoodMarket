@@ -399,6 +399,58 @@
         }
     }
 
+    function _toUtf8Hex(msg) {
+        return '0x' + Array.from(new TextEncoder().encode(msg))
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    function _isUserRejectedSigning(err) {
+        const code = err && err.code;
+        if (code === 4001 || code === 5000) return true;
+        const msg = String((err && (err.shortMessage || err.message)) || '').toLowerCase();
+        return msg.includes('user rejected') || msg.includes('user denied')
+            || msg.includes('cancelled') || msg.includes('canceled');
+    }
+
+    // Exact message mirrored from daily_lotto/service.py build_pick_message().
+    // The numbers MUST be sorted exactly like the backend before hashing, or
+    // ecrecover will fail even for the wallet's own signature.
+    function buildPickMessage(address, roundId, numbers) {
+        const nums = [...numbers].sort((a, b) => a - b).join(',');
+        return 'GoodMarket Daily Lotto — submit my pick\n'
+            + 'Wallet: ' + address + '\n'
+            + 'Round: ' + roundId + '\n'
+            + 'Numbers: ' + nums + '\n'
+            + 'I confirm I own this wallet.';
+    }
+
+    // Sign with the resolved wallet. Mirrors the FV personal_sign flow in
+    // wallet-main.js: hex-encode the message (Trust Wallet's mobile dApp
+    // browser hangs on plain-text payloads) and try every param ordering so
+    // injected wallets that deviate from the spec still work.
+    async function _signPick(message, provider, address) {
+        const msgHex = _toUtf8Hex(message);
+        const attempts = [
+            { method: 'personal_sign', params: [msgHex, address], label: 'personal_sign(hex,address)' },
+            { method: 'personal_sign', params: [address, msgHex], label: 'personal_sign(address,hex)' },
+            { method: 'personal_sign', params: [message, address], label: 'personal_sign(text,address)' },
+            { method: 'personal_sign', params: [address, message], label: 'personal_sign(address,text)' },
+        ];
+        let lastErr = null;
+        for (const attempt of attempts) {
+            try {
+                const sig = await provider.request(attempt);
+                if (!sig) throw new Error('Wallet did not return a signature.');
+                return sig.startsWith('0x') ? sig : '0x' + sig;
+            } catch (err) {
+                if (_isUserRejectedSigning(err)) throw err;
+                lastErr = err;
+            }
+        }
+        throw new Error(String((lastErr && lastErr.message) || 'Wallet signing failed. Please try again.'));
+    }
+
     // ── prize strip ──────────────────────────────────────────────────────
     function renderPrizeStrip(tiers) {
         const defs = [3, 4, 5, 6];
@@ -471,16 +523,75 @@
         renderBoard();
     });
 
+    function resetSubmitBtn(btn) {
+        btn.disabled = false;
+        btn.innerHTML = 'Submit my pick';
+    }
+
     $('submitPick').addEventListener('click', async () => {
         if (state.pick.length !== PICK_SIZE) return;
         const btn = $('submitPick');
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> Submitting…';
+        const submitting = () => { btn.innerHTML = '<span class="spinner"></span> Submitting…'; };
+        const signing = () => { btn.innerHTML = '<span class="spinner"></span> Sign with wallet…'; };
+        submitting();
         try {
+            // 1) Resolve the wallet and sign the pick message. This is the
+            //    "sign sa wallet" step — without it the backend rejects the pick.
+            signing();
+            let signer, provider;
+            try {
+                const resolved = await _resolveSigner();
+                signer = resolved.signer;
+                provider = resolved.provider;
+                if (!isLocal()) await _ensureCelo(provider);
+            } catch (err) {
+                toast(err.message || 'Wallet issue while signing.', 'error');
+                resetSubmitBtn(btn);
+                return;
+            }
+            // Fetch the CURRENT round before signing — a stale page open across
+            // the 8PM boundary would otherwise sign for yesterday's round and
+            // the backend would reject the signature.
+            let signingRound = state.meta ? state.meta.round_id : 0;
+            try {
+                const metaResp = await fetch('/lotto/api/state', { cache: 'no-store' });
+                const metaData = await metaResp.json();
+                if (metaData && metaData.meta && metaData.meta.round_id) {
+                    signingRound = metaData.meta.round_id;
+                }
+                if (metaData && metaData.meta && metaData.meta.drawn) {
+                    toast('Today\'s draw has already completed. Come back tomorrow!', 'info');
+                    state.lockPick = true;
+                    btn.innerHTML = 'Submit my pick';
+                    renderBoard(); // renderPickDisplay disables the button once locked
+                    return;
+                }
+            } catch (_) { /* keep state.meta's round as fallback */ }
+            // The signed text MUST embed the session wallet string verbatim —
+            // the backend verifies against the same `wallet` from the session
+            // (which is checksummed). Using a lowercased copy would mismatch.
+            const message = buildPickMessage(WALLET, signingRound, state.pick);
+            const signingAddress = signer.address || WALLET;
+            let signature;
+            try {
+                signature = await _signPick(message, provider, signingAddress);
+            } catch (err) {
+                if (_isUserRejectedSigning(err)) {
+                    toast('Signature cancelled in wallet.', 'info');
+                } else {
+                    toast(err.message || 'Signing failed.', 'error');
+                }
+                resetSubmitBtn(btn);
+                return;
+            }
+
+            // 2) Submit the signed pick.
+            submitting();
             const resp = await fetch('/lotto/api/pick', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ numbers: state.pick }),
+                body: JSON.stringify({ numbers: state.pick, message, signature }),
             });
             const data = await resp.json();
             if (data.success) {
@@ -488,18 +599,24 @@
                 state.lockPick = true;
                 renderBoard();
                 loadHistory(true);
+                btn.disabled = true;
+                btn.innerHTML = 'Pick submitted';
             } else if (data.already_picked) {
                 toast(data.error, 'info');
                 state.lockPick = true;
                 renderBoard();
+                btn.disabled = true;
+                btn.innerHTML = 'Pick submitted';
+            } else if (data.error_type === 'signature_invalid') {
+                toast(data.error || 'Signature verification failed.', 'error');
+                resetSubmitBtn(btn);
             } else {
                 toast(data.error || 'Could not submit pick.', 'error');
+                resetSubmitBtn(btn);
             }
         } catch (e) {
             toast('Network error submitting pick.', 'error');
-        } finally {
-            btn.disabled = true;
-            btn.textContent = 'Pick submitted';
+            resetSubmitBtn(btn);
         }
     });
 
