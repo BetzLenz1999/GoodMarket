@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/goodmarket-icon.png', v=ASSET_VERSION) }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GoodMarket Daily Lotto — Pick 6, Win Big</title>
+    <meta name="theme-color" content="#f97316">
+    <meta name="description" content="Pick 6 numbers from 1 to 100, match the 8PM draw, win up to 50,000 G$.">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+        :root {
+            --bg: #f7f4ef;
+            --card: #ffffff;
+            --card-soft: #fdf6ec;
+            --border: #e9e2d6;
+            --ink: #292524;
+            --ink-dim: #78716c;
+            --accent: #f97316;
+            --accent-deep: #ea580c;
+            --accent-soft: #ffedd5;
+            --green: #16a34a;
+            --green-soft: #dcfce7;
+            --gold: #b45309;
+            --gold-soft: #fef3c7;
+            --red: #dc2626;
+            --red-soft: #fee2e2;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            font-family: 'Sora', sans-serif;
+            background: var(--bg);
+            min-height: 100vh;
+            color: var(--ink);
+        }
+        .dotbg {
+            position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            background:
+                radial-gradient(circle at 12% 8%, rgba(249,115,22,0.08), transparent 42%),
+                radial-gradient(circle at 88% 18%, rgba(234,88,12,0.06), transparent 40%);
+        }
+        .navbar {
+            background: rgba(255,255,255,0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            padding: 0.85rem 1.25rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 800; font-size: 1.05rem; }
+        .ball { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: #fff; font-size: 0.7rem; font-weight: 800;
+            box-shadow: 0 3px 8px rgba(249,115,22,0.4); }
+        .nav-wallet { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--ink-dim); background: var(--card-soft);
+            border: 1px solid var(--border); padding: 0.35rem 0.7rem; border-radius: 999px; max-width: 130px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+        .container { max-width: 760px; margin: 0 auto; padding: 1rem 1rem 4rem; }
+        .hero { text-align: center; padding: 1.25rem 0.25rem 1rem; }
+        .hero .kicker { display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+            color: var(--accent-deep); background: var(--accent-soft); padding: 0.35rem 0.9rem; border-radius: 999px; margin-bottom: 0.75rem; }
+        .hero h1 { font-size: clamp(1.7rem, 6vw, 2.4rem); font-weight: 800; line-height: 1.08; letter-spacing: -0.02em;
+            background: linear-gradient(120deg, var(--ink) 40%, var(--accent-deep)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { color: var(--ink-dim); margin-top: 0.55rem; font-size: 0.95rem; max-width: 32rem; margin-inline: auto; }
+        .prize-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.55rem; margin: 1.1rem 0 1.4rem; }
+        .prize-cell { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 0.7rem 0.35rem; text-align: center; }
+        .prize-cell .tier-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); font-weight: 600; }
+        .prize-cell .tier-amt { font-size: 1.02rem; font-weight: 800; margin-top: 0.15rem; color: var(--accent-deep); }
+        .prize-cell.hot { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); border-color: transparent; }
+        .prize-cell.hot .tier-label, .prize-cell.hot .tier-amt { color: #fff; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 22px; padding: 1.25rem; margin-bottom: 1rem;
+            box-shadow: 0 2px 12px rgba(67,56,43,0.04); }
+        .countdown { display: flex; align-items: center; gap: 0.9rem; }
+        .countdown .ring { width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+            background: conic-gradient(var(--accent) var(--pct, 0%), var(--card-soft) 0); position: relative; }
+        .countdown .ring::after { content: ''; position: absolute; inset: 5px; background: #fff; border-radius: 50%; }
+        .countdown .ring span { position: relative; z-index: 1; font-weight: 800; font-size: 0.9rem; }
+        .countdown .info h3 { font-size: 1rem; font-weight: 700; }
+        .countdown .info .clock { font-family: 'DM Mono', monospace; font-size: 1.25rem; font-weight: 500; color: var(--accent-deep); margin-top: 0.1rem; }
+        .countdown .info .hint { font-size: 0.78rem; color: var(--ink-dim); margin-top: 0.15rem; }
+        .status-chip { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; font-weight: 600;
+            padding: 0.28rem 0.75rem; border-radius: 999px; }
+        .vault-banner { display: none; background: var(--gold-soft); border: 1px solid rgba(180,83,9,0.25); color: var(--gold);
+            font-size: 0.85rem; padding: 0.75rem 1rem; border-radius: 14px; margin-bottom: 1rem; align-items: flex-start; gap: 0.6rem; }
+        .vault-banner.show { display: flex; }
+        .section-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-dim); margin: 1.25rem 0 0.6rem; }
+        .board { display: grid; grid-template-columns: repeat(10, 1fr); gap: 0.4rem; }
+        .num-cell { aspect-ratio: 1; border-radius: 10px; border: 1px solid var(--border); background: var(--card);
+            display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600; color: var(--ink);
+            cursor: pointer; transition: transform 0.08s ease, background 0.15s ease, box-shadow 0.15s ease; user-select: none; }
+        .num-cell:active { transform: scale(0.92); }
+        .num-cell.picked { background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: #fff; border-color: transparent;
+            box-shadow: 0 3px 10px rgba(249,115,22,0.35); }
+        .num-cell:disabled { opacity: 0.4; cursor: not-allowed; }
+        .pick-display { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 1.1rem 0 0.9rem; flex-wrap: wrap; }
+        .picked-ball { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+            color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem;
+            box-shadow: 0 4px 12px rgba(249,115,22,0.3); animation: pop 0.18s ease; }
+        .picked-ball.empty { background: var(--card-soft); color: var(--ink-dim); border: 1.5px dashed var(--border); box-shadow: none; }
+        @keyframes pop { 0% { transform: scale(0.5); } 70% { transform: scale(1.12); } 100% { transform: scale(1); } }
+        .clear-pick { background: none; border: none; color: var(--ink-dim); font-size: 0.8rem; font-weight: 600;
+            text-decoration: underline; cursor: pointer; margin-left: 0.5rem; }
+        .btn { border: none; border-radius: 14px; font-family: inherit; font-weight: 700; font-size: 1rem; cursor: pointer; transition: transform 0.08s ease, box-shadow 0.2s ease, background 0.2s ease; }
+        .btn-primary { width: 100%; padding: 0.95rem; background: linear-gradient(135deg, var(--accent), var(--accent-deep)); color: #fff;
+            box-shadow: 0 6px 18px rgba(249,115,22,0.35); }
+        .btn-primary:active { transform: scale(0.98); }
+        .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-secondary { background: var(--card-soft); border: 1px solid var(--border); color: var(--ink); padding: 0.8rem 1.2rem; }
+        .last-results { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; }
+        .draw-ball { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #fff;
+            display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;
+            box-shadow: 0 3px 8px rgba(245,158,11,0.35); }
+        .draw-ball.early { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .draw-ball.late { background: linear-gradient(135deg, #f59e0b, #d97706); }
+        .win-card { border: 1px solid var(--border); border-radius: 16px; padding: 0.9rem 1rem; margin-bottom: 0.6rem; background: var(--card); }
+        .win-card .top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+        .win-card .amount { font-weight: 800; font-size: 1.05rem; }
+        .win-card .match-chip { font-size: 0.72rem; font-weight: 700; background: var(--accent-soft); color: var(--accent-deep); padding: 0.2rem 0.6rem; border-radius: 999px; }
+        .win-card .meta { font-size: 0.78rem; color: var(--ink-dim); margin-top: 0.3rem; }
+        .win-card .tx { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--accent-deep); word-break: break-all; }
+        .empty-note { color: var(--ink-dim); font-size: 0.85rem; text-align: center; padding: 1.2rem 0.5rem; }
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2.5px solid rgba(255,255,255,0.35); border-top-color: #fff;
+            border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px; }
+        .spinner.dark { border-color: var(--border); border-top-color: var(--accent-deep); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .toast { position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff;
+            padding: 0.8rem 1.2rem; border-radius: 14px; font-size: 0.88rem; font-weight: 600; z-index: 300; opacity: 0;
+            pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease; max-width: 90vw; text-align: center; }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .toast.success { background: var(--green); }
+        .toast.error { background: var(--red); }
+        .toast.info { background: var(--ink); }
+        .modal-overlay { position: fixed; inset: 0; background: rgba(41,37,36,0.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+            display: none; align-items: center; justify-content: center; padding: 1rem; z-index: 400; }
+        .modal-overlay.show { display: flex; }
+        .modal { background: #fff; border-radius: 22px; max-width: 420px; width: 100%; padding: 1.6rem; box-shadow: 0 20px 50px rgba(0,0,0,0.18);
+            text-align: center; position: relative; }
+        .modal h3 { font-size: 1.2rem; font-weight: 800; margin-bottom: 0.5rem; }
+        .modal p { font-size: 0.92rem; color: var(--ink-dim); line-height: 1.5; margin-bottom: 1rem; }
+        .modal .number-cols { font-family: 'DM Mono', monospace; background: var(--card-soft); border: 1px solid var(--border); border-radius: 12px; padding: 0.7rem; margin-bottom: 1rem; }
+        .modal .close-x { position: absolute; top: 0.8rem; right: 0.9rem; background: none; border: none; font-size: 1.3rem; cursor: pointer; color: var(--ink-dim); }
+        .fv-banner { display: none; background: var(--red-soft); border: 1px solid rgba(220,38,38,0.25); color: var(--red);
+            font-size: 0.85rem; padding: 0.75rem 1rem; border-radius: 14px; margin-bottom: 1rem; align-items: center; gap: 0.6rem; }
+        .fv-banner.show { display: flex; }
+        .fv-banner a, .vault-banner a { color: inherit; font-weight: 700; white-space: nowrap; }
+        .form-row { display: flex; gap: 0.6rem; margin-top: 0.4rem; }
+        .form-row input { flex: 1; padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 12px; font-family: inherit; font-size: 1rem; background: var(--card-soft); }
+        .form-row input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+        .payout-list { text-align: left; font-size: 0.88rem; }
+        .payout-list .row { display: flex; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px dashed var(--border); }
+        .payout-list .row:last-child { border-bottom: none; }
+        .payout-list .amt { font-weight: 700; color: var(--accent-deep); }
+        .updated-at { text-align: center; font-size: 0.72rem; color: var(--ink-dim); margin-top: 1.4rem; }
+        .refresh-btn { background: none; border: 1px solid var(--border); border-radius: 10px; padding: 0.35rem 0.8rem; font-size: 0.78rem;
+            font-weight: 600; cursor: pointer; color: var(--ink-dim); }
+        .refresh-btn:hover { border-color: var(--accent); color: var(--accent-deep); }
+        @media (max-width: 520px) {
+            .board { grid-template-columns: repeat(8, 1fr); gap: 0.32rem; }
+            .num-cell { font-size: 0.78rem; border-radius: 8px; }
+            .prize-strip { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+<div class="dotbg"></div>
+
+<nav class="navbar">
+    <div class="nav-brand"><span class="ball">6</span> GoodMarket Lotto</div>
+    <div class="nav-wallet" title="{{ wallet }}">{{ wallet[:6] }}…{{ wallet[-4:] }}</div>
+</nav>
+
+<div class="container">
+    <div class="hero">
+        <span class="kicker">Daily 6/100 · 8PM PHT</span>
+        <h1>Pick 6. Match the draw.<br>Win up to 50,000 G$.</h1>
+        <p>Choose six numbers from 1–100. Match 3, 4, 5 or all 6 balls in tonight's 8PM draw and win instantly.</p>
+    </div>
+
+    <div class="prize-strip" id="prizeStrip"></div>
+
+    <div class="fv-banner" id="fvBanner">
+        <span>⚠️</span>
+        <span>Face verification is required to join the Lotto. <a href="/wallet?fv_required=1">Verify now</a>.</span>
+    </div>
+
+    <div class="vault-banner" id="vaultBanner">
+        <span>🕓</span>
+        <span><b>Prizes are being prepared.</b> The prize vault is currently being refilled. Your balance is safe — please wait a few days and withdraw again.</span>
+    </div>
+
+    <div class="card countdown" id="countdownCard">
+        <div class="ring" id="countdownRing"><span id="countdownSecs">--:--</span></div>
+        <div class="info">
+            <h3 id="roundTitle">Today's draw</h3>
+            <div class="clock" id="countdownText">--:--:--</div>
+            <div class="hint" id="countdownHint">Loading…</div>
+        </div>
+    </div>
+
+    <div class="section-title">Your Pick — 6 numbers (once per day)</div>
+    <div class="card" id="pickCard">
+        <div class="pick-display" id="pickDisplay"></div>
+        <div class="board" id="numberBoard"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.9rem;">
+            <button class="clear-pick" id="clearPick" style="display:none;">Clear pick</button>
+            <button class="btn btn-secondary" id="shufflePick">🎲 Quick pick</button>
+        </div>
+        <button class="btn btn-primary" id="submitPick" style="margin-top:0.9rem;" disabled>Submit my pick</button>
+        <div class="pick-display" id="myPickSummary" style="margin-top:0.4rem;"></div>
+    </div>
+
+    <div class="section-title">Last Result</div>
+    <div class="card" id="lastResultCard">
+        <div class="last-results" id="lastResults"><span class="empty-note">No draw yet — the first is today at 8PM.</span></div>
+    </div>
+
+    <div class="section-title">My Winnings & Withdraw</div>
+    <div class="card" id="winningsCard">
+        <div id="winningsList"><div class="empty-note">No winnings yet. Match 3+ numbers and your prize appears here.</div></div>
+    </div>
+
+    <div class="section-title">My History</div>
+    <div class="card" id="historyCard">
+        <div id="historyList">
+            <div class="empty-note">Loading…</div>
+        </div>
+        <div style="text-align:center; margin-top:0.7rem;">
+            <button class="refresh-btn" onclick="loadHistory()">↻ Refresh history</button>
+        </div>
+    </div>
+
+    <div class="updated-at">How it works: 1 free pick/day · numbers 1–100 · draw at 8PM Manila time · prizes are sent on-chain to your wallet. GoodMarket Community Wallet.</div>
+</div>
+
+<!-- Claim confirmation modal -->
+<div class="modal-overlay" id="claimModal">
+    <div class="modal">
+        <button class="close-x" onclick="closeClaimModal()">✕</button>
+        <span style="font-size:2.2rem;">🎉</span>
+        <h3>You won!</h3>
+        <p id="claimModalSub">Your prize is ready to withdraw.</p>
+        <div class="number-cols" id="claimModalNumbers"></div>
+        <button class="btn btn-primary" id="claimBtn" onclick="runWithdrawFlow()">Withdraw my prize</button>
+        <p style="font-size:0.78rem; margin-top:0.8rem; color:var(--ink-dim);">You pay the network gas for the claim.</p>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
+        integrity="sha512-cF+U4KQh+Kzh6RTpx7X2GlnF/DpoaaXSGRaWGB3M3+VVEFD3aBMl3bYIhYQ4gpICEL0rlGLNNjUCpp4lIyfZ0A=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+<script>
+(function () {
+    "use strict";
+
+    const WALLET = "{{ wallet }}";
+    const LOGIN_METHOD = "{{ login_method }}";
+    const WC_PROJECT_ID = "{{ walletconnect_project_id }}";
+    const LOTTO_CONTRACT = "{{ lotto_contract_address }}";
+    const CELO_CHAIN_ID = 42220;
+    const CELO_HEX = "0xa4ec";
+    const CELO_RPC = "https://forno.celo.org";
+    const GD_ADDRESS = "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A";
+    const GD_DECIMALS = 18;
+    const PICK_SIZE = 6;
+
+    const state = {
+        meta: null, pick: [], canPick: false, lockPick: false,
+        pendingWins: [], claimableAmounts: [],
+    };
+
+    if (typeof GMWalletConnect !== "undefined") {
+        GMWalletConnect.configure({
+            walletAddress: WALLET,
+            loginMethod: LOGIN_METHOD,
+            projectId: WC_PROJECT_ID,
+            dappName: "GoodMarket — Lotto",
+            dappDescription: "Claim your GoodMarket Daily Lotto prize on Celo",
+            assetVersion: "{{ ASSET_VERSION }}",
+        });
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const isLocal = () => (LOGIN_METHOD || '').toLowerCase() === 'local';
+    const prefersWc = () => typeof GMWalletConnect !== 'undefined'
+        && typeof GMWalletConnect.prefersWcSigning === 'function'
+        && GMWalletConnect.prefersWcSigning();
+
+    function toast(msg, type) {
+        let t = $('toastEl');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'toastEl'; t.className = 'toast';
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.className = 'toast ' + (type || 'info') + ' show';
+        clearTimeout(t._delay);
+        t._delay = setTimeout(() => t.classList.remove('show'), 3200);
+    }
+
+    function fmt(n) {
+        const x = Number(n);
+        if (!isFinite(x)) return '0';
+        return x.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    }
+
+    // ── providers / signer (mirrors swap.html + send-link.html) ──────────
+    function _getInjectedProvider() {
+        // WC / local logins must NEVER use an injected wallet (different
+        // account). Same rule as every signer in this app.
+        if (prefersWc()) return null;
+        if (isLocal()) return null;
+        if (!window.ethereum) return null;
+        if (window.ethereum.providers && window.ethereum.providers.length) {
+            const mm = window.ethereum.providers.find(p => p && p.isMetaMask && !p.isBraveWallet);
+            if (mm) return mm;
+            const trust = window.ethereum.providers.find(p => p && (p.isTrust || p.isTrustWallet));
+            if (trust) return trust;
+            const miniPay = window.ethereum.providers.find(p => p && p.isMiniPay);
+            if (miniPay) return miniPay;
+            return window.ethereum.providers[0];
+        }
+        return window.ethereum;
+    }
+
+    async function _awaitProvider(timeoutMs) {
+        const budget = typeof timeoutMs === 'number' ? timeoutMs : 800;
+        const start = Date.now();
+        let ep = _getInjectedProvider();
+        if (ep) return ep;
+        while (Date.now() - start < budget) {
+            try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+            await new Promise(r => setTimeout(r, 100));
+            ep = _getInjectedProvider();
+            if (ep) return ep;
+        }
+        if (prefersWc()) {
+            try { return await GMWalletConnect.getProvider(); } catch (_) { /* fall through */ }
+        }
+        return null;
+    }
+
+    async function _localProvider() {
+        if (!isLocal() || typeof GMLocalWallet === 'undefined') return null;
+        if (!GMLocalWallet.isUnlocked()) {
+            if (typeof window._lwOpenUnlockModal === 'function') {
+                await window._lwOpenUnlockModal();
+            } else {
+                throw new Error('Please unlock your wallet and try again.');
+            }
+        }
+        return GMLocalWallet.getProvider();
+    }
+
+    async function _resolveSigner() {
+        if (isLocal()) {
+            const provider = await _localProvider();
+            const ethersProvider = new ethers.BrowserProvider(provider);
+            const signer = await ethersProvider.getSigner();
+            const addr = (signer.address || '').toLowerCase();
+            if (addr !== WALLET.toLowerCase()) {
+                throw new Error('Wrong wallet connected. Please use your GoodMarket wallet.');
+            }
+            return { signer, provider };
+        }
+        const provider = await _awaitProvider();
+        if (!provider) throw new Error('No wallet detected. Connect MetaMask/Trust/WalletConnect to withdraw.');
+        const ethersProvider = new ethers.BrowserProvider(provider);
+        let signer;
+        try { signer = await ethersProvider.getSigner(); } catch (_) {
+            signer = await ethersProvider.getSigner(0);
+        }
+        const addr = signer.address ? signer.address.toLowerCase() : null;
+        if ((addr || '').toLowerCase() !== WALLET.toLowerCase()) {
+            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet (' + WALLET.slice(0, 6) + '…) before withdrawing.');
+        }
+        return { signer, provider };
+    }
+
+    async function _ensureCelo(provider) {
+        try {
+            await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CELO_HEX }] });
+        } catch (switchErr) {
+            if (switchErr && (switchErr.code === 4902 || (switchErr.message || '').includes('Unrecognized chain'))) {
+                await provider.request({ method: 'wallet_addEthereumChain', params: [{ chainId: CELO_HEX, chainName: 'Celo Mainnet', rpcUrls: [CELO_RPC], nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 } }] });
+            }
+        }
+    }
+
+    // ── prize strip ──────────────────────────────────────────────────────
+    function renderPrizeStrip(tiers) {
+        const defs = [3, 4, 5, 6];
+        const strip = $('prizeStrip');
+        strip.innerHTML = defs.map(m => {
+            const amt = tiers && tiers[String(m)] ? fmt(tiers[String(m)]) : fmt(0);
+            return `<div class="prize-cell ${m === 6 ? 'hot' : ''}">
+                <div class="tier-label">${m} match${m === 6 ? ' — jackpot' : ''}</div>
+                <div class="tier-amt">${amt} G$</div>
+            </div>`;
+        }).join('');
+    }
+
+    function renderBoard() {
+        const board = $('numberBoard');
+        const cells = [];
+        for (let n = 1; n <= 100; n++) {
+            const cls = state.pick.includes(n) ? 'picked' : '';
+            cells.push(`<button class="num-cell ${cls}" data-n="${n}" ${state.lockPick ? 'disabled' : ''}>${n}</button>`);
+        }
+        board.innerHTML = cells.join('');
+        board.querySelectorAll('.num-cell').forEach(cell => {
+            cell.addEventListener('click', () => toggleNumber(+cell.dataset.n));
+        });
+        renderPickDisplay();
+    }
+
+    function renderPickDisplay() {
+        const disp = $('pickDisplay');
+        disp.innerHTML = '';
+        for (let i = 0; i < PICK_SIZE; i++) {
+            const v = state.pick[i];
+            disp.insertAdjacentHTML('beforeend',
+                `<div class="picked-ball ${v ? '' : 'empty'}">${v === undefined ? '•' : v}</div>`);
+        }
+        $('clearPick').style.display = state.pick.length ? 'inline-block' : 'none';
+        $('submitPick').disabled = state.pick.length !== PICK_SIZE || state.lockPick;
+    }
+
+    function toggleNumber(n) {
+        if (state.lockPick) return;
+        const i = state.pick.indexOf(n);
+        if (i >= 0) {
+            state.pick.splice(i, 1);
+        } else if (state.pick.length < PICK_SIZE) {
+            state.pick.push(n);
+        } else {
+            toast('You can only pick 6 numbers.', 'error');
+            return;
+        }
+        renderBoard();
+    }
+
+    $('shufflePick').addEventListener('click', () => {
+        if (state.lockPick) return;
+        const pool = Array.from({ length: 100 }, (_, i) => i + 1);
+        // Fisher-Yates — the same kind of unbiased shuffle used for the draw.
+        for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        state.pick = pool.slice(0, PICK_SIZE).sort((a, b) => a - b);
+        renderBoard();
+        toast('Quick pick done — review and submit.', 'info');
+    });
+
+    $('clearPick').addEventListener('click', () => {
+        if (state.lockPick) return;
+        state.pick = [];
+        renderBoard();
+    });
+
+    $('submitPick').addEventListener('click', async () => {
+        if (state.pick.length !== PICK_SIZE) return;
+        const btn = $('submitPick');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Submitting…';
+        try {
+            const resp = await fetch('/lotto/api/pick', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ numbers: state.pick }),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                toast('✅ Pick submitted! Good luck tonight.', 'success');
+                state.lockPick = true;
+                renderBoard();
+                loadHistory(true);
+            } else if (data.already_picked) {
+                toast(data.error, 'info');
+                state.lockPick = true;
+                renderBoard();
+            } else {
+                toast(data.error || 'Could not submit pick.', 'error');
+            }
+        } catch (e) {
+            toast('Network error submitting pick.', 'error');
+        } finally {
+            btn.disabled = true;
+            btn.textContent = 'Pick submitted';
+        }
+    });
+
+    // ── draw / countdown / state ─────────────────────────────────────────
+    function tickCountdown() {
+        const meta = state.meta;
+        if (!meta) return;
+        const drawDay = new Date(meta.draw_time_pht.replace(' ', 'T') + ':00');
+        if (isNaN(drawDay)) return;
+        const now = new Date();
+        const diff = drawDay - now;
+        if (diff <= 0) {
+            const ring = $('countdownRing');
+            const secs = $('countdownSecs');
+            if (secs.textContent !== '🎉') {
+                secs.textContent = '🎉';
+                refreshState(false); // draw may have just completed
+            }
+            $('countdownHint').textContent = 'The draw is happening — refresh for results.';
+            return;
+        }
+        const s = Math.floor(diff / 1000);
+        const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+        const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+        const ss = String(s % 60).padStart(2, '0');
+        $('countdownText').textContent = `${hh}:${mm}:${ss}`;
+        $('countdownSecs').textContent = `${hh}:${mm}`;
+        const pct = (s / meta.seconds_to_draw) * 100;
+        $('countdownRing').style.setProperty('--pct', Math.min(100, Math.max(0, pct)) + '%');
+        $('countdownHint').textContent = `Draw at 8PM Manila time`;
+    }
+
+    async function refreshState(quiet) {
+        try {
+            const resp = await fetch('/lotto/api/state', { cache: 'no-store' });
+            const data = await resp.json();
+            if (!data.success) throw new Error(data.error || 'state failed');
+            state.meta = data.meta;
+            state.canPick = data.can_pick;
+            state.pendingWins = (data.winnings || []).filter(w => w.status === 'pending');
+
+            renderPrizeStrip(data.tiers || {});
+            tickCountdown();
+
+            // vault-low banner
+            $('vaultBanner').classList.toggle('show', !!(data.vault_low && state.pendingWins.length));
+
+            // pick board state
+            const existingPick = data.pick && data.pick.numbers;
+            if (existingPick) {
+                state.pick = existingPick;
+                state.lockPick = true;
+                renderBoard();
+            } else {
+                state.lockPick = !state.canPick;
+                renderBoard();
+            }
+            if (data.can_pick && !existingPick) {
+                $('myPickSummary').textContent = '';
+            }
+
+            // last result
+            const lr = data.last_round;
+            const lrEl = $('lastResults');
+            if (lr && lr.winning_numbers && lr.winning_numbers.length) {
+                lrEl.innerHTML = lr.winning_numbers.map((n, i) =>
+                    `<span class="draw-ball ${i < 2 ? 'early' : i < 4 ? '' : 'late'}" title="Draw position ${i + 1}">${n}</span>`
+                ).join('');
+            } else {
+                lrEl.innerHTML = '<span class="empty-note">No draw yet — the first is today at 8PM.</span>';
+            }
+
+            renderWinnings(data.winnings || [], data.vault_balance);
+        } catch (e) {
+            if (!quiet) toast('Failed to load. Pull to refresh.', 'error');
+        }
+    }
+
+    function renderWinnings(winnings, vaultBalance) {
+        const list = $('winningsList');
+        if (!winnings || !winnings.length) {
+            list.innerHTML = '<div class="empty-note">No winnings yet. Match 3+ numbers and your prize appears here.</div>';
+            return;
+        }
+        list.innerHTML = '';
+        winnings.forEach(w => {
+            const rd = w.round_id;
+            const mc = w.match_count;
+            const amt = fmt(w.amount_gd);
+            let statusChip, statusHtml;
+            if (w.status === 'claimed') {
+                statusChip = `<span class="status-chip" style="background:var(--green-soft);color:var(--green);">✅ Claimed</span>`;
+                statusHtml = w.tx_hash ? `<div class="tx">Tx: <a href="https://celoscan.io/tx/${w.tx_hash}" target="_blank" rel="noopener" style="color:var(--accent-deep);">${w.tx_hash.slice(0, 18)}…</a></div>` : '';
+            } else if (w.status === 'claiming') {
+                statusChip = `<span class="status-chip" style="background:var(--gold-soft);color:var(--gold);">⏳ Claiming…</span>`;
+                statusHtml = '';
+            } else {
+                statusChip = `<span class="status-chip" style="background:var(--accent-soft);color:var(--accent-deep);">🎁 Ready to claim</span>`;
+                statusHtml = '';
+            }
+            list.insertAdjacentHTML('beforeend', `
+                <div class="win-card" data-round-id="${rd}" data-win-id="${w.id}" data-amount="${w.amount_gd}">
+                    <div class="top">
+                        <span class="amount">${amt} G$</span>
+                        ${statusChip}
+                    </div>
+                    <div class="meta">Round #${rd} · matched ${mc} numbers</div>
+                    ${statusHtml}
+                    ${w.status === 'pending'
+                        ? `<button class="btn btn-primary" style="margin-top:0.7rem;padding:0.65rem 1.1rem;font-size:0.9rem;" data-withdraw="${w.id}">Withdraw ${amt} G$</button>`
+                        : ''}
+                </div>
+            `);
+        });
+        list.querySelectorAll('[data-withdraw]').forEach(btn => {
+            btn.addEventListener('click', () => openClaimModalFor(btn.closest('.win-card')));
+        });
+        if (vaultBalance !== undefined && vaultBalance !== null) {
+            // informational only
+        }
+    }
+
+    // ── withdraw flow ────────────────────────────────────────────────────
+    function openClaimModalFor(winCard) {
+        $('claimModal').classList.add('show');
+        const amt = winCard.dataset.amount;
+        $('claimModalSub').textContent = `Round #${winCard.dataset.roundId} — ${fmt(amt)} G$ is ready.`;
+        $('claimModalNumbers').textContent = `Prize: ${fmt(amt)} G$ · pulled to your wallet (you pay gas).`;
+        $('claimBtn').dataset.winId = winCard.dataset.winId;
+        $('claimBtn').dataset.amount = amt;
+    }
+
+    function closeClaimModal() {
+        $('claimModal').classList.remove('show');
+    }
+
+    async function runWithdrawFlow() {
+        const btn = $('claimBtn');
+        const winId = btn.dataset.winId;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Checking…';
+        try {
+            const pre = await fetch('/lotto/api/withdraw', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ win_id: winId }),
+            });
+            const preData = await pre.json();
+            if (!preData.success) {
+                if (preData.error_type === 'insufficient_vault') {
+                    $('vaultBanner').classList.add('show');
+                    toast(preData.message || 'Vault is being refilled — please wait a few days.', 'info');
+                    closeClaimModal();
+                    return;
+                }
+                if (preData.error_type === 'not_granted_yet') {
+                    toast(preData.message || 'Your prize is being processed — checking back in a few minutes.', 'info');
+                    closeClaimModal();
+                    setTimeout(() => refreshState(true), 15000);
+                    return;
+                }
+                toast(preData.error || 'Could not start withdrawal.', 'error');
+                closeClaimModal();
+                return;
+            }
+
+            // Magic withdraw — everything is ready.
+            btn.innerHTML = '<span class="spinner"></span> Signing…';
+            let signer, provider;
+            try {
+                const resolved = await _resolveSigner();
+                signer = resolved.signer;
+                provider = resolved.provider;
+                if (!isLocal()) await _ensureCelo(provider);
+            } catch (err) {
+                toast(err.message || 'Wallet issue.', 'error');
+                resetClaimBtn(btn);
+                return;
+            }
+
+            const lotto = new ethers.Contract(
+                LOTTO_CONTRACT,
+                ["function claim(uint256 roundId) returns (bool)", "function contractBalance() view returns (uint256)"],
+                signer,
+            );
+
+            const roundId = parseInt(preData.winnings[0].round_id, 10);
+            const amountWei = ethers.parseUnits(String(preData.winnings[0].amount_gd).split('.')[0] || '0', GD_DECIMALS);
+            // The preflight verified the vault has G$ — this signed claim should
+            // succeed. If it still reverts (e.g. someone drained between screens)
+            // the catch below maps it back to the "vault refilling" message.
+            const tx = await lotto.claim(roundId);
+            btn.innerHTML = '<span class="spinner"></span> Confirming…';
+            const receipt = await tx.wait();
+
+            if (receipt.status === 1) {
+                const verify = await fetch('/lotto/api/verify-claim', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tx_hash: tx.hash, win_id: winId, round_id: roundId }),
+                });
+                const vData = await verify.json();
+                if (vData.success) {
+                    toast(`✅ ${fmt(vData.amount_gd)} G$ claimed!`, 'success');
+                    closeClaimModal();
+                    refreshState(true);
+                } else {
+                    toast('✅ Claim sent to chain! Confirming…', 'success');
+                    closeClaimModal();
+                    setTimeout(() => refreshState(true), 6000);
+                }
+            } else {
+                toast('Claim transaction was reverted. Please try again.', 'error');
+            }
+        } catch (err) {
+            const msg = (err && err.message) || '';
+            if (/vault|refill|insufficient|revert/i.test(msg) && !/already/i.test(msg)) {
+                $('vaultBanner').classList.add('show');
+                toast('The prize vault is being refilled — please wait a few days.', 'info');
+            } else if (/already/i.test(msg)) {
+                toast('Looks like you already claimed this prize.', 'info');
+                refreshState(true);
+            } else {
+                toast('Withdraw failed: ' + (msg.split('\n')[0] || 'unknown error'), 'error');
+            }
+        } finally {
+            resetClaimBtn(btn);
+        }
+    }
+
+    function resetClaimBtn(btn) {
+        btn.disabled = false;
+        btn.innerHTML = 'Withdraw my prize';
+    }
+
+    // ── history ──────────────────────────────────────────────────────────
+    async function loadHistory(quiet) {
+        const list = $('historyList');
+        try {
+            const resp = await fetch('/lotto/api/history', { cache: 'no-store' });
+            const data = await resp.json();
+            if (!data.success) { list.innerHTML = '<div class="empty-note">Could not load history.</div>'; return; }
+            const rows = data.rows || [];
+            if (!rows.length) {
+                list.innerHTML = '<div class="empty-note">You haven\u2019t picked numbers yet. Pick 6 and come back after 8PM!</div>';
+                return;
+            }
+            list.innerHTML = '';
+            rows.forEach(r => {
+                const pick = (r.pick || []).join(' · ');
+                const win = (r.winning_numbers || []);
+                const matched = r.match_count;
+                const hitClass = matched >= 3 ? 'style="color:var(--green);font-weight:800;"' : 'style="color:var(--ink-dim);"';
+                list.insertAdjacentHTML('beforeend', `
+                    <div class="win-card">
+                        <div class="top">
+                            <span class="meta" style="margin:0;">Round #${r.round_id} · ${r.game_date || ''}</span>
+                            <span style="font-size:0.8rem" ${hitClass}>${r.match_count === null ? '—' : matched + ' match' + (matched === 1 ? '' : 'es')}</span>
+                        </div>
+                        <div class="meta" style="font-family:'DM Mono',monospace;">Pick: ${pick}</div>
+                        ${win.length ? `<div class="meta" style="margin-top:0.35rem;">Draw: <b>${win.join(' · ')}</b></div>` : ''}
+                    </div>
+                `);
+            });
+        } catch (e) {
+            if (!quiet) list.innerHTML = '<div class="empty-note">Could not load history.</div>';
+        }
+    }
+
+    // ── boot ─────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+        refreshState(true);
+        loadHistory(true);
+        // Auto-withdraw when the URL carries a pending prize (deep link from wallet).
+        if (location.search.includes('claim=1')) {
+            try { history.replaceState({}, '', location.pathname); } catch (_) {}
+        }
+        setInterval(tickCountdown, 1000);
+    });
+
+    })();
+</script>
+</body>
+</html>
