@@ -120,6 +120,53 @@ def build_pick_message(address: str, round_id, numbers: list) -> str:
     )
 
 
+def _eip191_payloads(message: str, expected: str):
+    """Return (label, encode_defunct_obj) candidates that may have been signed.
+
+    The lotto page hex-encodes the UTF-8 message before personal_sign (Trust
+    Wallet's mobile dApp hangs on plain-text payloads with newlines), but
+    POSTs the readable ``message`` text. Wallets handle the payload they're
+    shown differently:
+
+    * MetaMask / spec: hex-decodes and signs the raw UTF-8 bytes
+      (``encode_defunct(hexstr=...)``).
+    * Some mobile wallets (Trust historically): sign the literal 0x-hex
+      string as UTF-8 text (``encode_defunct(text=<the hex string>)``).
+    * The in-app local wallet hex-decodes first and signs the readable text
+      (``encode_defunct(text=...)``).
+
+    ``expected`` is the canonical readable text. If ``message`` matches it we
+    try the text form plus both hex interpretations of that same text. The
+    signature still must ecrecover to the session wallet, so a wrong guess can
+    never accept a forgery — it only finds the payload the user signed.
+    """
+    from eth_account.messages import encode_defunct
+
+    stripped = (message or "").strip()
+    if stripped == expected.strip():
+        # The page POSTs the readable text. Its hex encoding (without the 0x
+        # prefix) is what personal_sign received, so the wallet may have
+        # signed any of: the text itself (local wallet), the raw UTF-8 bytes
+        # of the hex (MetaMask/spec), or the literal 0x-hex string (Trust).
+        hex_body = expected.encode("utf-8").hex()
+        return [
+            ("text", encode_defunct(text=stripped)),
+            ("hex-bytes", encode_defunct(hexstr=hex_body)),
+            ("hex-as-text", encode_defunct(text="0x" + hex_body)),
+        ]
+
+    # Defensive: if the caller POSTed the hex form directly, accept it too.
+    hex_body_expected = expected.encode("utf-8").hex()
+    if stripped in ("0x" + hex_body_expected, hex_body_expected):
+        return [
+            ("hex-bytes", encode_defunct(hexstr=hex_body_expected)),
+            ("hex-as-text", encode_defunct(text=stripped)),
+        ]
+
+    logger.warning("❌ Lotto pick message mismatch — refusing signature")
+    return []
+
+
 def verify_pick_signature(
     message: str,
     signature: str,
@@ -137,12 +184,19 @@ def verify_pick_signature(
         logger.warning("⚠️ eth_account unavailable for pick verification: %s", exc)
         return False
     try:
-        expected = build_pick_message(address, round_id, numbers)
-        if (message or "").strip() != expected.strip():
-            logger.warning("❌ Lotto pick message mismatch — refusing signature")
+        if not message or not signature:
             return False
-        recovered = Account.recover_message(encode_defunct(text=message), signature=signature)
-        return recovered.lower() == str(address).lower()
+        expected = build_pick_message(address, round_id, numbers)
+        candidates = _eip191_payloads(message, expected)
+        for label, msg_obj in candidates:
+            try:
+                recovered = Account.recover_message(msg_obj, signature=signature)
+                if recovered.lower() == str(address).lower():
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("⚠️ Lotto pick %s candidate rejected: %s", label, exc)
+        logger.warning("❌ Lotto pick signature did not match any payload form")
+        return False
     except Exception as exc:  # noqa: BLE001
         logger.warning("⚠️ Lotto pick signature verify failed: %s", exc)
         return False
