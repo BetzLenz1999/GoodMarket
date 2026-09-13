@@ -834,6 +834,12 @@
                         <span>GCash Cashout</span>
                     </a>
                 </li>
+                <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('daily-lotto-section')">
+                        <span class="menu-icon">🎰</span>
+                        <span>Daily Lotto</span>
+                    </a>
+                </li>
             </ul>
         </aside>
 
@@ -2965,6 +2971,102 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
+            <!-- Daily Lotto Section -->
+            <section id="daily-lotto-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">🎰 Daily Lotto (6/100)</h1>
+                    <p style="color: rgba(241,245,249,0.7);">Manage prizes, the daily draw, and the prize vault.</p>
+                </div>
+
+                <div class="admin-card" style="margin-bottom:1rem;">
+                    <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">🏆 Editable Prize Tiers</h3>
+                    <p style="color:rgba(241,245,249,0.6);font-size:0.85rem;margin-bottom:0.8rem;">
+                        Amounts below go live immediately — the next draw uses them. Match counts 3–6.
+                    </p>
+                    <div id="lottoTierGrid" style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-bottom:0.8rem;"></div>
+                    <button class="btn" onclick="saveLottoTiers()" style="background:#ea580c;color:#fff;padding:0.5rem 1.2rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
+                        💾 Save Prize Tiers
+                    </button>
+                    <span id="lottoTierSaveMsg" style="color:#34d399;font-size:0.8rem;margin-left:0.8rem;"></span>
+                </div>
+
+                <div class="admin-card" style="margin-bottom:1rem;">
+                    <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">💰 Prize Vault</h3>
+                    <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+                        <div>
+                            <div style="color:rgba(241,245,249,0.6);font-size:0.78rem;">Contract</div>
+                            <div id="lottoVaultAddress" style="font-family:monospace;font-size:0.85rem;color:#f1f5f9;">—</div>
+                        </div>
+                        <div>
+                            <div style="color:rgba(241,245,249,0.6);font-size:0.78rem;">G$ balance</div>
+                            <div id="lottoVaultBalance" style="font-size:1.4rem;font-weight:800;color:#34d399;">—</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:1.2rem;align-items:center;flex-wrap:wrap;">
+                        <div style="display:flex;flex:1;min-width:220px;gap:0.5rem;">
+                            <input id="lottoFundAmount" type="number" min="0" step="any" placeholder="G$ amount"
+                                   style="flex:1;background:#1e293b;border:1px solid #334155;color:#f1f5f9;padding:0.6rem 0.8rem;border-radius:8px;" />
+                            <button class="btn" onclick="fundLottoVault()"
+                                    style="background:#10b981;color:#fff;padding:0.6rem 1.1rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
+                                🔋 Fund Vault
+                            </button>
+                        </div>
+                        <div style="flex:1;min-width:220px;display:flex;gap:0.5rem;align-items:center;">
+                            <label style="color:rgba(241,245,249,0.7);font-size:0.85rem;white-space:nowrap;">Daily cap (G$):</label>
+                            <input id="lottoPoolCap" type="number" min="0" step="any" placeholder="0 = unlimited"
+                                   style="width:110px;background:#1e293b;border:1px solid #334155;color:#f1f5f9;padding:0.6rem 0.8rem;border-radius:8px;" />
+                            <button class="btn" onclick="saveLottoPoolCap()"
+                                    style="background:#6366f1;color:#fff;padding:0.6rem 1rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">Set</button>
+                        </div>
+                    </div>
+                    <div id="lottoVaultAlert" style="margin-top:0.8rem;font-size:0.85rem;"></div>
+                </div>
+
+                <div class="admin-card" style="margin-bottom:1rem;">
+                    <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">🔔 Vault Alerts (unresolved)</h3>
+                    <div id="lottoAlertsList" style="color:rgba(241,245,249,0.7);font-size:0.85rem;"></div>
+                </div>
+
+                <div class="admin-card" style="margin-bottom:1rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.8rem;">
+                        <h3 style="margin:0;color:#f1f5f9;">📅 Recent Rounds</h3>
+                        <button class="btn" onclick="manualLottoDraw()"
+                                style="background:#f59e0b;color:#fff;padding:0.5rem 1rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
+                            🎲 Run / Re-run Today's Draw
+                        </button>
+                        <button class="btn" onclick="manualLottoGrant()"
+                                style="background:#8b5cf6;color:#fff;padding:0.5rem 1rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
+                            ⛓️ Re-grant Winners (on-chain)
+                        </button>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                            <thead>
+                                <tr style="background:#1e293b;">
+                                    <th style="padding:0.5rem;text-align:left;color:rgba(241,245,249,0.7);">Round</th>
+                                    <th style="padding:0.5rem;text-align:left;color:rgba(241,245,249,0.7);">Date</th>
+                                    <th style="padding:0.5rem;text-align:left;color:rgba(241,245,249,0.7);">Status</th>
+                                    <th style="padding:0.5rem;text-align:left;color:rgba(241,245,249,0.7);">Grant</th>
+                                    <th style="padding:0.5rem;text-align:left;color:rgba(241,245,249,0.7);">Prorated</th>
+                                </tr>
+                            </thead>
+                            <tbody id="lottoRoundsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">🧮 Draw math</h3>
+                    <p style="color:rgba(241,245,249,0.6);font-size:0.85rem;line-height:1.5;">
+                        Every Philippines game date (00:00–23:59 PHT) is one round. Users pick 1–100 once/day.
+                        Draw runs at 8PM PHT via CSPRNG (<code>secrets</code> → Python <code>random</code>).
+                        Match 3→10k, 4→20k, 5→30k, 6→50k G$ (editable above). Winners pull their own prize
+                        on-chain and pay their own CELO gas. If the vault has no G$ we park the claim, tell the
+                        user to wait a few days, and show this alert.
+                    </p>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -3180,6 +3282,9 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     break;
                 case 'gcash-cashout':
                     loadGcashRequests();
+                    break;
+                case 'daily-lotto':
+                    loadLottoAdmin();
                     break;
             }
         }
@@ -8497,6 +8602,209 @@ async function loadMinigamesMaintenance() {
                 el.textContent = '✅ Copied!';
                 setTimeout(() => { el.textContent = original; }, 1200);
             });
+        }
+
+        // ── Daily Lotto Admin ───────────────────────────────────────────
+
+        let _lottoAdminData = null;
+
+        async function loadLottoAdmin() {
+            const tierMsg = document.getElementById('lottoTierSaveMsg');
+            if (tierMsg) tierMsg.textContent = '';
+            fetchLottoOverview();
+            fetchLottoSettings();
+        }
+
+        async function fetchLottoOverview() {
+            try {
+                const res = await fetch('/lotto/api/admin/overview');
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'overview failed');
+                _lottoAdminData = data;
+
+                // Contract + vault balance
+                const addrEl = document.getElementById('lottoVaultAddress');
+                const balEl = document.getElementById('lottoVaultBalance');
+                const contractAddr = '{{ lotto_contract_address }}';
+                if (addrEl) addrEl.textContent = contractAddr || 'Not configured — set GOODMARKET_LOTTO_CONTRACT';
+                if (balEl) balEl.textContent = data.contract_balance != null
+                    ? Number(data.contract_balance).toLocaleString(undefined, {maximumFractionDigits: 2}) + ' G$'
+                    : '—';
+
+                // Prize tiers
+                renderLottoTierGrid(data.tiers || {});
+
+                // Alerts
+                const alertsEl = document.getElementById('lottoAlertsList');
+                const alerts = data.alerts || [];
+                if (!alerts.length) {
+                    alertsEl.innerHTML = '<span style="color:#34d399;">✅ No unresolved vault alerts.</span>';
+                } else {
+                    alertsEl.innerHTML = alerts.map(function(a) {
+                        const d = new Date(a.created_at).toLocaleDateString('en-PH', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+                        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:0.8rem;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.08);">
+                            <span>⚠️ ${a.message || ''} <span style="color:rgba(241,245,249,0.5);font-size:0.75rem;">(${d})</span></span>
+                            <button onclick="resolveLottoAlert(${a.id})" style="background:#6366f1;color:#fff;border:none;border-radius:6px;padding:0.3rem 0.7rem;cursor:pointer;font-size:0.75rem;white-space:nowrap;">Resolve</button>
+                        </div>`;
+                    }).join('');
+                }
+
+                // Rounds
+                const roundsBody = document.getElementById('lottoRoundsBody');
+                const rounds = data.rounds || [];
+                if (!rounds.length) {
+                    roundsBody.innerHTML = '<tr><td colspan="5" style="padding:1rem;text-align:center;color:rgba(241,245,249,0.5);">No rounds yet.</td></tr>';
+                } else {
+                    roundsBody.innerHTML = rounds.map(function(r) {
+                        const statusColor = r.status === 'completed' ? '#34d399' : r.status === 'pending' ? '#f59e0b' : '#f87171';
+                        const grantColor = r.grant_status === 'granted' ? '#34d399' : r.grant_status === 'none' ? '#94a3b8' : r.grant_status === 'partial' ? '#f59e0b' : '#f87171';
+                        return `<tr>
+                            <td style="padding:0.4rem;color:#f1f5f9;">#${r.id}</td>
+                            <td style="padding:0.4rem;color:rgba(241,245,249,0.7);">${r.game_date || ''}</td>
+                            <td style="padding:0.4rem;color:${statusColor};">${r.status || ''}</td>
+                            <td style="padding:0.4rem;color:${grantColor};">${r.grant_status || ''}</td>
+                            <td style="padding:0.4rem;color:rgba(241,245,249,0.7);">${r.prorated ? '⚠️ yes' : 'no'}</td>
+                        </tr>`;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error('❌ Lotto admin overview error:', e);
+                const alertsEl = document.getElementById('lottoAlertsList');
+                if (alertsEl) alertsEl.innerHTML = '<span style="color:#f87171;">Could not load overview.</span>';
+            }
+        }
+
+        function renderLottoTierGrid(tiers) {
+            const grid = document.getElementById('lottoTierGrid');
+            if (!grid) return;
+            const defs = [3, 4, 5, 6];
+            grid.innerHTML = defs.map(function(m) {
+                const v = tiers[String(m)] !== undefined ? tiers[String(m)] : '0';
+                return `<div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:0.6rem 0.8rem;text-align:center;">
+                    <div style="font-size:0.72rem;color:rgba(241,245,249,0.6);margin-bottom:0.3rem;">${m} matches</div>
+                    <input id="lottoTierInput_${m}" type="number" min="0" step="any" value="${v}"
+                           style="width:96px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;padding:0.4rem;border-radius:6px;text-align:center;" />
+                </div>`;
+            }).join('');
+        }
+
+        async function saveLottoTiers() {
+            const tiers = {3: 0, 4: 0, 5: 0, 6: 0};
+            for (const m of [3, 4, 5, 6]) {
+                const el = document.getElementById('lottoTierInput_' + m);
+                tiers[m] = parseFloat(el.value);
+            }
+            const msg = document.getElementById('lottoTierSaveMsg');
+            try {
+                const res = await fetch('/lotto/api/admin/tiers', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tiers: tiers}),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    msg.textContent = '✅ Saved — next draw uses these amounts.';
+                    setTimeout(() => { msg.textContent = ''; }, 4000);
+                } else {
+                    msg.textContent = '❌ ' + (data.error || 'Failed');
+                    msg.style.color = '#f87171';
+                    setTimeout(() => { msg.textContent = ''; msg.style.color = '#34d399'; }, 5000);
+                }
+            } catch (e) {
+                msg.textContent = '❌ Network error';
+            }
+        }
+
+        async function fetchLottoSettings() {
+            try {
+                const res = await fetch('/lotto/api/admin/settings');
+                const data = await res.json();
+                if (data.success && document.getElementById('lottoPoolCap')) {
+                    document.getElementById('lottoPoolCap').value = data.daily_prize_pool_cap_gd || '0';
+                }
+            } catch (e) { /* non-fatal */ }
+        }
+
+        async function saveLottoPoolCap() {
+            const cap = document.getElementById('lottoPoolCap').value;
+            const alertBox = document.getElementById('lottoVaultAlert');
+            try {
+                const res = await fetch('/lotto/api/admin/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({daily_prize_pool_cap_gd: cap}),
+                });
+                const data = await res.json();
+                if (alertBox) {
+                    alertBox.innerHTML = data.success
+                        ? '<span style="color:#34d399;">✅ Daily cap saved (0 = unlimited).</span>'
+                        : '<span style="color:#f87171;">❌ ' + (data.error || 'Failed') + '</span>';
+                }
+            } catch (e) {
+                if (alertBox) alertBox.innerHTML = '<span style="color:#f87171;">Network error</span>';
+            }
+        }
+
+        async function fundLottoVault() {
+            const amount = document.getElementById('lottoFundAmount').value;
+            const alertBox = document.getElementById('lottoVaultAlert');
+            alertBox.innerHTML = '<span style="color:#f59e0b;">Sending… please wait.</span>';
+            try {
+                const res = await fetch('/lotto/api/admin/fund-vault', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({amount_gd: amount}),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alertBox.innerHTML = '<span style="color:#34d399;">✅ Vault funded. Tx: <a href="https://celoscan.io/tx/' + data.tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">' + data.tx_hash.slice(0, 18) + '…</a></span>';
+                    document.getElementById('lottoFundAmount').value = '';
+                    fetchLottoOverview();
+                } else {
+                    alertBox.innerHTML = '<span style="color:#f87171;">❌ ' + (data.error || 'Failed') + '</span>';
+                }
+            } catch (e) {
+                alertBox.innerHTML = '<span style="color:#f87171;">Network error</span>';
+            }
+        }
+
+        async function manualLottoDraw() {
+            const confirmOk = window.confirm('Run / re-run today\u2019s draw? (idempotent — safe to press twice)');
+            if (!confirmOk) return;
+            const alertBox = document.getElementById('lottoVaultAlert');
+            try {
+                const res = await fetch('/lotto/api/admin/manual-draw', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+                const data = await res.json();
+                alertBox.innerHTML = data.success
+                    ? '<span style="color:#34d399;">✅ Draw #' + (data.round_id || '') + ' = ' + (data.numbers || []).join(' · ') + (data.winner_count ? ' — ' + data.winner_count + ' winner(s).' : ' — no winners.') + '</span>'
+                    : '<span style="color:#f87171;">❌ ' + (data.error || 'Draw failed') + '</span>';
+                fetchLottoOverview();
+            } catch (e) {
+                alertBox.innerHTML = '<span style="color:#f87171;">Network error</span>';
+            }
+        }
+
+        async function manualLottoGrant() {
+            const alertBox = document.getElementById('lottoVaultAlert');
+            try {
+                const res = await fetch('/lotto/api/admin/grant', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+                const data = await res.json();
+                alertBox.innerHTML = data.success
+                    ? '<span style="color:#34d399;">✅ Granted ' + (data.granted || 0) + ' winner(s) on-chain. Tx: <a href="https://celoscan.io/tx/' + data.tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">' + (data.tx_hash || '').slice(0, 18) + '…</a></span>'
+                    : '<span style="color:#f87171;">❌ ' + (data.error || 'Grant failed') + '</span>';
+                fetchLottoOverview();
+            } catch (e) {
+                alertBox.innerHTML = '<span style="color:#f87171;">Network error</span>';
+            }
+        }
+
+        async function resolveLottoAlert(alertId) {
+            try {
+                const res = await fetch('/lotto/api/admin/alerts/' + alertId + '/resolve', {method: 'POST'});
+                const data = await res.json();
+                if (data.success) fetchLottoOverview();
+                else alert('Could not resolve alert.');
+            } catch (e) { alert('Network error'); }
         }
     </script>
 </body>
