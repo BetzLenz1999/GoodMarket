@@ -833,6 +833,28 @@ try:
 except Exception as e:
     logger.error(f"❌ GoodMarket attribution backfill initialization failed: {e}")
 
+# Daily Lotto (6/100) — user-facing page + admin API + background draw
+# scheduler. Env-gated draw automation (DAILY_LOTTO_AUTOMATION_ENABLED,
+# default ON once the SQL migration + contract env vars are set).
+logger.info("🎰 Initializing Daily Lotto system...")
+try:
+    from daily_lotto import init_daily_lotto
+    if init_daily_lotto(app):
+        logger.info("✅ Daily Lotto system initialized")
+    else:
+        logger.error("❌ Daily Lotto initialization failed")
+except Exception as e:
+    logger.error(f"❌ Daily Lotto initialization failed: {e}")
+
+try:
+    from daily_lotto.draw_automation import init_daily_lotto_draw_scheduler
+    if init_daily_lotto_draw_scheduler(app):
+        logger.info("✅ Daily Lotto draw scheduler started")
+    else:
+        logger.info("ℹ️ Daily Lotto draw scheduler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ Daily Lotto draw scheduler initialization failed: {e}")
+
 
 @app.route("/health")
 def health_check():
