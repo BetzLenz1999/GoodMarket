@@ -31,9 +31,16 @@ CREATE TABLE IF NOT EXISTS daily_lotto_entries (
     round_id       BIGINT NOT NULL REFERENCES daily_lotto_rounds(id) ON DELETE CASCADE,
     wallet_address TEXT NOT NULL,
     numbers        INTEGER[] NOT NULL,             -- exactly 6, each 1..100, unique
+    signature      TEXT,                           -- EIP-191 personal_sign proof of wallet ownership
+    signed_message TEXT,                           -- exact signed text (binds wallet + round + numbers)
     created_at     TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT uq_lotto_entry_per_day UNIQUE (round_id, wallet_address)
 );
+-- Backfill for deployments that already ran the original migration (columns are
+-- optional; old rows stay valid, new rows must carry a signature).
+ALTER TABLE daily_lotto_entries
+    ADD COLUMN IF NOT EXISTS signature TEXT,
+    ADD COLUMN IF NOT EXISTS signed_message TEXT;
 
 -- Computed winnings per round. Rows are written by the draw routine (the only
 -- place that ever writes winners) and by claim verification.
