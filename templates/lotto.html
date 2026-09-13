@@ -255,7 +255,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
-        integrity="sha512-V3xRGsQMQ8CG4l2gVN44TCDmNY5cdlxbSvejrgmWxcLKHft0Q3XQDbeuJ9aot14mpNuRWGtI//WKraedDGNZ+g=="
+        integrity="sha512-cF+U4KQh+Kzh6RTpx7X2GlnF/DpoaaXSGRaWGB3M3+VVEFD3aBMl3bYIhYQ4gpICEL0rlGLNNjUCpp4lIyfZ0A=="
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
 <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
@@ -426,16 +426,26 @@
     }
 
     // Sign with the resolved wallet. Mirrors the FV personal_sign flow in
-    // wallet-main.js: hex-encode the message (Trust Wallet's mobile dApp
-    // browser hangs on plain-text payloads) and try every param ordering so
-    // injected wallets that deviate from the spec still work.
+    // wallet-main.js, but signs the readable TEXT first (FV has no backend
+    // signature verifier so its hex-or-text choice is invisible to us; the
+    // lotto backend must ecrecover, so the payload the wallet sees must be
+    // one the backend accepts). Hex forms remain as fallback for Trust-style
+    // wallets, and the backend tries all three interpretations.
     async function _signPick(message, provider, address) {
         const msgHex = _toUtf8Hex(message);
+        // Sign the readable text FIRST — it's what the user audits in the
+        // wallet, and local-wallet.js / ethers sign text as UTF-8 (the vast
+        // majority of wallets). The hex forms stay as fallbacks for wallets
+        // that hang on plain-text payloads (Trust mobile) or accept hex only.
+        // The backend (verify_pick_signature) tries the text form, the raw
+        // hex bytes, and the literal hex-as-text interpretation, so every
+        // signature produced by the attempts below verifies and the pick is
+        // saved.
         const attempts = [
-            { method: 'personal_sign', params: [msgHex, address], label: 'personal_sign(hex,address)' },
-            { method: 'personal_sign', params: [address, msgHex], label: 'personal_sign(address,hex)' },
             { method: 'personal_sign', params: [message, address], label: 'personal_sign(text,address)' },
             { method: 'personal_sign', params: [address, message], label: 'personal_sign(address,text)' },
+            { method: 'personal_sign', params: [msgHex, address], label: 'personal_sign(hex,address)' },
+            { method: 'personal_sign', params: [address, msgHex], label: 'personal_sign(address,hex)' },
         ];
         let lastErr = null;
         for (const attempt of attempts) {
