@@ -104,6 +104,50 @@ def _seed_hash(numbers, round_id, salt: str = "goodmarket-lotto") -> str:
     return "0x" + hashlib.sha256(payload.encode()).hexdigest()
 
 
+# ── Pick-signature proof of wallet ownership ─────────────────────────────────
+
+def build_pick_message(address: str, round_id, numbers: list) -> str:
+    """The exact text a user signs (personal_sign / EIP-191) to prove they own
+    the wallet before their pick is recorded. Binds the wallet + round + numbers
+    so a captured signature can't be replayed on another pick/day."""
+    nums = ",".join(str(n) for n in sorted(int(x) for x in numbers))
+    return (
+        "GoodMarket Daily Lotto — submit my pick\n"
+        f"Wallet: {address}\n"
+        f"Round: {round_id}\n"
+        f"Numbers: {nums}\n"
+        "I confirm I own this wallet."
+    )
+
+
+def verify_pick_signature(
+    message: str,
+    signature: str,
+    address: str,
+    round_id,
+    numbers: list,
+) -> bool:
+    """ecrecover the personal_sign payload and confirm it matches the session
+    wallet. Same pattern as the app-wide local-wallet login verifier
+    (encode_defunct + Account.recover_message)."""
+    try:
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ eth_account unavailable for pick verification: %s", exc)
+        return False
+    try:
+        expected = build_pick_message(address, round_id, numbers)
+        if (message or "").strip() != expected.strip():
+            logger.warning("❌ Lotto pick message mismatch — refusing signature")
+            return False
+        recovered = Account.recover_message(encode_defunct(text=message), signature=signature)
+        return recovered.lower() == str(address).lower()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ Lotto pick signature verify failed: %s", exc)
+        return False
+
+
 # ── Prize tiers ──────────────────────────────────────────────────────────────
 
 _DEFAULT_TIERS = {3: Decimal("10000"), 4: Decimal("20000"), 5: Decimal("30000"), 6: Decimal("50000")}
@@ -224,7 +268,13 @@ def ensure_round_exists(round_id: int, game_date: str) -> None:
         logger.warning("⚠️ ensure_round_exists failed for %s: %s", round_id, exc)
 
 
-def upsert_entry(round_id: int, wallet: str, numbers: list) -> dict:
+def upsert_entry(
+    round_id: int,
+    wallet: str,
+    numbers: list,
+    signature: str | None = None,
+    signed_message: str | None = None,
+) -> dict:
     """Record a pick. Returns already_picked=True when the wallet already has
     an entry for this round (the UNIQUE constraint is the atomic guard)."""
     wallet = wallet.lower()
@@ -243,12 +293,17 @@ def upsert_entry(round_id: int, wallet: str, numbers: list) -> dict:
                 "error": "You already picked for today. Come back tomorrow!",
                 "already_picked": True,
             }
-        sb.table("daily_lotto_entries").insert({
+        row = {
             "round_id": round_id,
             "wallet_address": wallet,
             "numbers": numbers,
             "created_at": _now_utc_iso(),
-        }).execute()
+        }
+        if signature:
+            row["signature"] = signature
+        if signed_message:
+            row["signed_message"] = signed_message
+        sb.table("daily_lotto_entries").insert(row).execute()
         return {"success": True}
     except Exception as exc:  # noqa: BLE001
         if "uq_lotto_entry_per_day" in str(exc).lower() or "duplicate" in str(exc).lower():
