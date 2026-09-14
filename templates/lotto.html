@@ -118,6 +118,26 @@
             box-shadow: 0 3px 8px rgba(245,158,11,0.35); }
         .draw-ball.early { background: linear-gradient(135deg, #f97316, #ea580c); }
         .draw-ball.late { background: linear-gradient(135deg, #f59e0b, #d97706); }
+        .result-banner { display: flex; align-items: center; gap: 0.9rem; border-radius: 20px; padding: 1.1rem 1.2rem; margin-bottom: 1rem;
+            border: 1px solid; box-shadow: 0 6px 20px rgba(0,0,0,0.18); }
+        .result-banner .emoji { font-size: 2.1rem; }
+        .result-banner h3 { font-size: 1.12rem; font-weight: 800; }
+        .result-banner .sub { font-size: 0.82rem; opacity: 0.85; margin-top: 0.15rem; }
+        .result-banner .mega { font-size: 1.05rem; font-weight: 800; margin-top: 0.3rem; }
+        .result-banner.won { background: linear-gradient(135deg, rgba(34,197,94,0.16), rgba(34,197,94,0.06)); border-color: rgba(74,222,128,0.35); }
+        .result-banner.won h3, .result-banner.won .mega { color: #4ade80; }
+        .result-banner.lost { background: linear-gradient(135deg, rgba(248,113,113,0.14), rgba(248,113,113,0.05)); border-color: rgba(248,113,113,0.3); }
+        .result-banner.lost h3 { color: #f87171; }
+        .result-banner.pending { background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
+        .result-banner.pending h3 { color: #fbbf24; }
+        .result-banner .chs { display: flex; gap: 0.3rem; margin-top: 0.55rem; }
+        .result-banner .chs .draw-ball { width: 28px; height: 28px; font-size: 0.72rem; }
+        .result-banner .pick-note { font-size: 0.72rem; opacity: 0.7; margin-top: 0.45rem; }
+        .result-chip { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.74rem; font-weight: 800;
+            padding: 0.26rem 0.7rem; border-radius: 999px; white-space: nowrap; }
+        .result-chip.won { background: rgba(34,197,94,0.16); color: #4ade80; }
+        .result-chip.lost { background: rgba(248,113,113,0.15); color: #f87171; }
+        .result-chip.pending { background: rgba(251,191,36,0.13); color: #fbbf24; }
         .win-card { border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 0.9rem 1rem; margin-bottom: 0.6rem; background: rgba(255,255,255,0.04); }
         .win-card .top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
         .win-card .amount { font-weight: 800; font-size: 1.05rem; color: #fbbf24; }
@@ -212,6 +232,17 @@
     <div class="vault-banner" id="vaultBanner">
         <span>🕓</span>
         <span><b>Prizes are being prepared.</b> The prize vault is currently being refilled. Your balance is safe — please wait a few days and withdraw again.</span>
+    </div>
+
+    <div class="result-banner" id="resultBanner" style="display:none;">
+        <span class="emoji" id="resultEmoji"></span>
+        <div>
+            <h3 id="resultTitle"></h3>
+            <div class="sub" id="resultSub"></div>
+            <div class="mega" id="resultMega"></div>
+            <div class="chs" id="resultBalls"></div>
+            <div class="pick-note" id="resultPickNote"></div>
+        </div>
     </div>
 
     <div class="card countdown" id="countdownCard">
@@ -729,9 +760,45 @@
                 lrEl.innerHTML = '<span class="empty-note">No draw yet — the first is today at 8PM.</span>';
             }
 
+            renderResultBanner(data.my_last_round);
             renderWinnings(data.winnings || [], data.vault_balance);
         } catch (e) {
             if (!quiet) toast('Failed to load. Pull to refresh.', 'error');
+        }
+    }
+
+    // ── "You won / you lost" result banner ──────────────────────────────
+    // Fed by /lotto/api/state -> my_last_round. The verdict is computed on the
+    // backend (classify_result): won = 3+ matches in a drawn round, lost =
+    // fewer, pending = the round hasn't drawn yet. Losers have no winnings row
+    // so this is the ONLY place the "talo" verdict is shown.
+    function renderResultBanner(info) {
+        const banner = $('resultBanner');
+        if (!info || !info.picked || info.result === 'pending') {
+            banner.style.display = 'none';
+            return;
+        }
+        const pickStr = (info.pick || []).join(' · ');
+        const won = info.result === 'won';
+        banner.className = 'result-banner ' + info.result;
+        $('resultEmoji').textContent = won ? '🎉' : '😢';
+        $('resultTitle').textContent = won
+            ? (info.match_count === 6 ? 'You won — JACKPOT!' : `You won — ${info.match_count} numbers matched!`)
+            : 'You lost this round.';
+        $('resultSub').textContent = won
+            ? `Round #${info.round_id} · you matched ${info.match_count} numbers`
+            : `Round #${info.round_id} · you matched ${info.match_count} of 6`;
+        $('resultMega').textContent = won
+            ? `🎁 ${fmt(info.amount_gd)} G$ is ready for you`
+            : 'Better luck next draw! Your numbers are locked in for tonight\u2019s draw.';
+        $('resultBalls').innerHTML = (info.winning_numbers || []).map(n =>
+            `<span class="draw-ball">${n}</span>`).join('');
+        $('resultPickNote').textContent = `Your pick: ${pickStr}`;
+        banner.style.display = 'flex';
+        // A won-but-pending status means the vault grant hasn't landed yet —
+        // keep a gentle reminder near the pick board.
+        if (won && info.win_status === 'pending') {
+            $('resultMega').textContent = `🎁 ${fmt(info.amount_gd)} G$ — withdraw it once it\u2019s ready.`;
         }
     }
 
@@ -761,7 +828,10 @@
                 <div class="win-card" data-round-id="${rd}" data-win-id="${w.id}" data-amount="${w.amount_gd}">
                     <div class="top">
                         <span class="amount">${amt} G$</span>
-                        ${statusChip}
+                        <span style="display:flex;align-items:center;gap:0.4rem;">
+                            <span class="result-chip won">🎉 Won</span>
+                            ${statusChip}
+                        </span>
                     </div>
                     <div class="meta">Round #${rd} · matched ${mc} numbers</div>
                     ${statusHtml}
@@ -909,12 +979,21 @@
                 const pick = (r.pick || []).join(' · ');
                 const win = (r.winning_numbers || []);
                 const matched = r.match_count;
-                const hitClass = matched >= 3 ? 'style="color:var(--green);font-weight:800;"' : 'style="color:var(--ink-dim);"';
+                const res = r.result || (matched === null ? 'pending' : (matched >= 3 ? 'won' : 'lost'));
+                const resChip = res === 'won'
+                    ? '<span class="result-chip won">🎉 Won</span>'
+                    : res === 'lost'
+                        ? '<span class="result-chip lost">😢 Lost</span>'
+                        : '<span class="result-chip pending">⏳ Running</span>';
+                const matchTxt = r.match_count === null ? '—' : matched + ' match' + (matched === 1 ? '' : 'es');
                 list.insertAdjacentHTML('beforeend', `
                     <div class="win-card">
                         <div class="top">
                             <span class="meta" style="margin:0;">Round #${r.round_id} · ${r.game_date || ''}</span>
-                            <span style="font-size:0.8rem" ${hitClass}>${r.match_count === null ? '—' : matched + ' match' + (matched === 1 ? '' : 'es')}</span>
+                            <span style="display:flex;align-items:center;gap:0.4rem;">
+                                ${resChip}
+                                <span style="font-size:0.8rem;color:var(--ink-dim);">${matchTxt}</span>
+                            </span>
                         </div>
                         <div class="meta" style="font-family:'DM Mono',monospace;">Pick: ${pick}</div>
                         ${win.length ? `<div class="meta" style="margin-top:0.35rem;">Draw: <b>${win.join(' · ')}</b></div>` : ''}
