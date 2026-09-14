@@ -39,9 +39,13 @@ ALERT_THROTTLE_SEC = float(os.getenv("DAILY_LOTTO_ALERT_THROTTLE_SEC", "3600"))
 
 
 def _get_supabase():
-    """Public client for reads. Writes use the service-role client."""
-    from supabase_client import get_supabase_client
-    return get_supabase_client()
+    """Reads use the service-role (admin) client so row-level security can never
+    hide a user's own rows (a saved pick / win that reads back as empty looks
+    like the pick was never saved — the root cause of the "wala sa database"
+    reports). Falls back to the anon client only when the admin client is
+    unconfigured."""
+    from supabase_client import get_supabase_admin_client, get_supabase_client
+    return get_supabase_admin_client() or get_supabase_client()
 
 
 def _get_supabase_admin():
