@@ -92,6 +92,24 @@ def _process_draw_for_round(round_row) -> None:
         sb.table("daily_lotto_rounds").update({"grant_status": "failed"}).eq("id", round_id).execute()
         return
 
+    # The contract requires each round to be FINALIZED before winners can be
+    # granted (grantWinners reverts "round_not_finalized" otherwise), and
+    # claim() needs claimable to be set — so finalize the round on-chain FIRST.
+    # Without this step a draw completes in the DB but winners can NEVER pull a
+    # prize: no grant, no claim, nothing on Celoscan.
+    finalize = lotto_blockchain.finalize_round(
+        round_id, [int(n) for n in round_row.get("winning_numbers", [])]
+    )
+    if not finalize.get("success"):
+        err_type = finalize.get("error_type")
+        if err_type in ("insufficient_gas", "nonce_collision", "submitted_unconfirmed", "rpc_unreachable", "finalize_exception"):
+            logger.warning("🎟️ Lotto round #%s finalize transient (%s) — will retry", round_id, err_type)
+            sb.table("daily_lotto_rounds").update({"grant_status": "partial"}).eq("id", round_id).execute()
+        else:
+            logger.error("🎟️ Lotto round #%s finalize failed: %s", round_id, finalize.get("error"))
+            sb.table("daily_lotto_rounds").update({"grant_status": "partial"}).eq("id", round_id).execute()
+        return
+
     winners = [w["wallet_address"] for w in winner_rows]
     amounts = [w["amount_gd"] for w in winner_rows]
 
