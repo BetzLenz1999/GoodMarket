@@ -583,6 +583,81 @@ def get_my_winnings(wallet: str, limit: int = 20) -> list:
         return []
 
 
+def _short_wallet(wallet: str | None) -> str:
+    """Truncate a wallet address for public display (leading 6 / trailing 4)."""
+    if not wallet:
+        return '???'
+    wallet = str(wallet).strip().lower()
+    if len(wallet) <= 12:
+        return wallet
+    return f"{wallet[:6]}...{wallet[-4:]}"
+
+
+# ── Public participants feed (mirrors price_prediction's live feed) ──────────
+
+def get_round_participants(round_id: int, wallet: str | None = None, limit: int = 60) -> dict:
+    """Return the wallets (truncated) + numbers that picked this round, plus the
+    total participant count for the day.
+
+    Wallet addresses are truncated server-side so no user ever sees another
+    user's full address (same truncation convention as the Price Prediction
+    live feed). The 6 picked numbers ARE shown next to each wallet — that is
+    exactly what makes the lotto social: you can see who's in today, and which
+    balls they chose, before the 8PM draw.
+    """
+    round_id = int(round_id)
+    try:
+        total = get_round_participant_count(round_id)
+
+        sb = _get_supabase()
+        res = sb.table("daily_lotto_entries") \
+            .select("wallet_address, numbers, created_at") \
+            .eq("round_id", round_id) \
+            .order("created_at", desc=True) \
+            .limit(limit) \
+            .execute()
+        rows = res.data or []
+
+        my_wallet = (wallet or '').strip().lower()
+        sanitized = []
+        for row in rows:
+            full = row.get("wallet_address") or ''
+            is_me = bool(my_wallet) and full.lower() == my_wallet
+            sanitized.append({
+                "wallet_short": _short_wallet(full),
+                "is_me": is_me,
+                "numbers": sorted(int(n) for n in (row.get("numbers") or [])),
+                "created_at": row.get("created_at"),
+            })
+
+        return {
+            "success": True,
+            "round_id": round_id,
+            "participants": sanitized,
+            "total_participants": total,
+            "truncated": total > limit,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ get_round_participants failed: %s", exc)
+        return {"success": False, "error": str(exc), "round_id": round_id, "participants": [], "total_participants": 0}
+
+
+def get_round_participant_count(round_id: int) -> int:
+    """Total entries for a round, used by the public feed to show "N players"
+    today. Runs on the service-role client so RLS can never hide rows."""
+    round_id = int(round_id)
+    try:
+        sb = _get_supabase()
+        res = sb.table("daily_lotto_entries") \
+            .select("id") \
+            .eq("round_id", round_id) \
+            .execute()
+        return len(res.data or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ get_round_participant_count failed: %s", exc)
+        return 0
+
+
 def get_my_history(wallet: str, limit: int = 20) -> list:
     """Combined recent entries + matches for the user page history."""
     wallet = wallet.lower()
