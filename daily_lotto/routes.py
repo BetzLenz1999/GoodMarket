@@ -408,6 +408,18 @@ def admin_grant():
 
     winners = [w['wallet_address'] for w in winner_rows]
     amounts = [w['amount_gd'] for w in winner_rows]
+
+    # The contract requires finalizeRound BEFORE grantWinners ('round_not_finalized'
+    # revert otherwise) and claim() needs claimable set — without this a manual
+    # grant writes nothing on-chain and winners can never pull their prize.
+    round_row = svc.get_round(round_id) or {}
+    winning_numbers = round_row.get('winning_numbers') or []
+    if not winning_numbers:
+        return jsonify({'success': False, 'error': 'Round has no winning numbers yet — run the draw first.'}), 400
+    finalize = lotto_blockchain.finalize_round(round_id, [int(n) for n in winning_numbers])
+    if not finalize.get('success'):
+        return jsonify(finalize), 409
+
     result = lotto_blockchain.grant_winners(round_id, winners, amounts)
     if not result.get('success'):
         return jsonify(result), 409
