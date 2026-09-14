@@ -76,6 +76,7 @@ def api_state():
 
     entry = svc.get_entry(round_id, wallet)
     winnings = svc.get_my_winnings(wallet, limit=20)
+    my_last_round = svc.get_my_last_round_result(wallet)
 
     # Last completed round (for "last result" + match-checking).
     last_round = svc.get_round(round_id - 1) if round_id > 1 else None
@@ -99,6 +100,7 @@ def api_state():
         'meta': meta,
         'pick': entry,
         'entries_this_round': svc.get_round_participant_count(round_id),
+        'my_last_round': my_last_round,
         'last_round': last_round and {
             'round_id': last_round['id'],
             'game_date': last_round.get('game_date'),
