@@ -116,6 +116,7 @@
         .draw-ball { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #fff;
             display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;
             box-shadow: 0 3px 8px rgba(245,158,11,0.35); }
+        .draw-ball-title { font-size: 0.72rem; font-weight: 700; color: rgba(226,232,240,0.6); text-transform: uppercase; letter-spacing: 0.04em; }
         .draw-ball.early { background: linear-gradient(135deg, #f97316, #ea580c); }
         .draw-ball.late { background: linear-gradient(135deg, #f59e0b, #d97706); }
         .result-banner { display: flex; align-items: center; gap: 0.9rem; border-radius: 20px; padding: 1.1rem 1.2rem; margin-bottom: 1rem;
@@ -189,6 +190,7 @@
         .participant-wallet { font-family: 'DM Mono', monospace; color: rgba(226,232,240,0.55); font-size: 0.76rem; min-width: 88px; }
         .participant-item.is-me .participant-wallet { color: #4ade80; font-weight: 700; }
         .participant-nums { display: flex; gap: 0.22rem; flex-wrap: wrap; flex: 1; justify-content: flex-end; }
+        .participant-nums .pick-label { font-size: 0.62rem; font-weight: 700; color: rgba(226,232,240,0.55); text-transform: uppercase; letter-spacing: 0.04em; align-self: center; margin-right: 0.1rem; }
         .participant-nums .mini-ball { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
             font-size: 0.65rem; font-weight: 700; background: linear-gradient(135deg, #f97316, #ea580c); color: #fff; }
         .participants-empty { text-align: center; color: rgba(226,232,240,0.4); font-size: 0.85rem; padding: 1.1rem 0.5rem; }
@@ -293,7 +295,7 @@
             <span class="count-badge" id="participantsCount"><span class="spinner dark"></span> Loading…</span>
         </div>
         <div id="participantsList" style="margin-top:0.7rem;"><div class="participants-empty">Loading participants…</div></div>
-        <div class="participants-note">Wallets are shown partially masked — the numbers you pick are visible to everyone until the 8PM draw.</div>
+        <div class="participants-note">Wallets are shown partially masked — the numbers you pick are visible to everyone until the 8PM draw. Each row's numbers are that player's <b>pick</b>, not the draw; the one winning set is published for everyone at 8PM.</div>
         <div class="participants-refresh">
             <button class="refresh-btn" id="participantsRefresh" onclick="loadParticipants(true)">↻ Refresh players</button>
         </div>
@@ -753,7 +755,7 @@
             const lr = data.last_round;
             const lrEl = $('lastResults');
             if (lr && lr.winning_numbers && lr.winning_numbers.length) {
-                lrEl.innerHTML = lr.winning_numbers.map((n, i) =>
+                lrEl.innerHTML = `<span class="draw-ball-title">Draw:</span>` + lr.winning_numbers.map((n, i) =>
                     `<span class="draw-ball ${i < 2 ? 'early' : i < 4 ? '' : 'late'}" title="Draw position ${i + 1}">${n}</span>`
                 ).join('');
             } else {
@@ -788,18 +790,18 @@
         $('resultSub').textContent = won
             ? `Round #${info.round_id} · you matched ${info.match_count} numbers`
             : `Round #${info.round_id} · you matched ${info.match_count} of 6`;
-        $('resultMega').textContent = won
-            ? `🎁 ${fmt(info.amount_gd)} G$ is ready for you`
-            : 'Better luck next draw! Your numbers are locked in for tonight\u2019s draw.';
-        $('resultBalls').innerHTML = (info.winning_numbers || []).map(n =>
+        if (!won) {
+            $('resultMega').textContent = 'Better luck next draw! The 8PM draw is done — your numbers are locked in for tomorrow\u2019s pick.';
+        } else if (info.win_status === 'pending') {
+            // The vault grant hasn't landed yet — keep a gentle reminder.
+            $('resultMega').textContent = `🎁 ${fmt(info.amount_gd)} G$ — withdraw it once it\u2019s ready.`;
+        } else {
+            $('resultMega').textContent = `🎁 ${fmt(info.amount_gd)} G$ is ready for you`;
+        }
+        $('resultBalls').innerHTML = `<span class="draw-ball-title">Draw:</span>` + (info.winning_numbers || []).map(n =>
             `<span class="draw-ball">${n}</span>`).join('');
         $('resultPickNote').textContent = `Your pick: ${pickStr}`;
         banner.style.display = 'flex';
-        // A won-but-pending status means the vault grant hasn't landed yet —
-        // keep a gentle reminder near the pick board.
-        if (won && info.win_status === 'pending') {
-            $('resultMega').textContent = `🎁 ${fmt(info.amount_gd)} G$ — withdraw it once it\u2019s ready.`;
-        }
     }
 
     function renderWinnings(winnings, vaultBalance) {
@@ -1039,7 +1041,7 @@
             const balls = nums.map(n => `<span class="mini-ball">${n}</span>`).join('');
             item.innerHTML = `
                 <span class="participant-wallet">${walletLabel}</span>
-                <span class="participant-nums">${balls}</span>
+                <span class="participant-nums"><span class="pick-label">Pick:</span>${balls}</span>
             `;
             list.appendChild(item);
         });
