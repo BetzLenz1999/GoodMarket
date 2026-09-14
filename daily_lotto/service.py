@@ -402,11 +402,75 @@ def get_round(round_id: int):
         return None
 
 
+def get_my_last_round_result(wallet: str) -> dict:
+    """Explicit win/lose verdict for the user's most recent pick (the "You
+    Won 🎉 / You Lost 😢" banner). Losers are never stored in
+    daily_lotto_winnings, so the verdict is derived from the published draw.
+
+    Returns ``{picked: False}`` when the wallet never picked, or
+    ``{picked, round_id, game_date, pick, winning_numbers, match_count,
+    result}`` where ``result`` is 'won' / 'lost' / 'pending'. ``amount_gd`` +
+    ``win_status`` are attached only for wins (from the winnings row)."""
+    wallet = wallet.lower()
+    try:
+        sb = _get_supabase()
+        entries = sb.table("daily_lotto_entries") \
+            .select("round_id, numbers, created_at, daily_lotto_rounds(game_date, winning_numbers)") \
+            .eq("wallet_address", wallet) \
+            .order("round_id", desc=True) \
+            .limit(1) \
+            .execute()
+        if not entries.data:
+            return {"picked": False}
+        e = entries.data[0]
+        linked = e.get("daily_lotto_rounds") or {}
+        draw = linked.get("winning_numbers") if isinstance(linked, dict) else None
+        match = compute_matches(e["numbers"], draw) if draw else None
+        result = classify_result(e["numbers"], draw)
+        info = {
+            "picked": True,
+            "round_id": e["round_id"],
+            "game_date": linked.get("game_date") if isinstance(linked, dict) else None,
+            "pick": e["numbers"],
+            "winning_numbers": draw,
+            "match_count": match,
+            "result": result,
+        }
+        if result == "won":
+            wins = sb.table("daily_lotto_winnings") \
+                .select("amount_gd, status") \
+                .eq("round_id", e["round_id"]) \
+                .eq("wallet_address", wallet) \
+                .limit(1) \
+                .execute()
+            if wins.data:
+                info["amount_gd"] = str(wins.data[0].get("amount_gd") or "0")
+                info["win_status"] = wins.data[0].get("status", "pending")
+        return info
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("⚠️ get_my_last_round_result failed: %s", exc)
+        return {"picked": False}
+
+
 def compute_matches(pick: list, draw: list) -> int:
     """Match count between a 6-pick and the 6 drawn numbers."""
     if not draw:
         return 0
     return len(set(pick) & set(draw))
+
+
+def classify_result(pick: list | None, winning_numbers: list | None) -> str:
+    """Explicit per-pick verdict for the user: ``won`` (matched 3+), ``lost``
+    (matched <3) or ``pending`` (round hasn't drawn / no winning numbers yet).
+
+    This is the answer to "natuloy ba 'yung panalo o talo ko?": every pick has
+    exactly one verdict once the winning numbers are published. Losers are NOT
+    stored in daily_lotto_winnings (only winners get rows), so the verdict is
+    derived from the draw — never read from the winnings table."""
+    if not pick or not winning_numbers:
+        return "pending"
+    match_count = compute_matches(pick, winning_numbers)
+    return "won" if match_count >= 3 else "lost"
 
 
 def _compute_round_winners(round_id: int, winning_numbers: list) -> dict:
@@ -659,7 +723,8 @@ def get_round_participant_count(round_id: int) -> int:
 
 
 def get_my_history(wallet: str, limit: int = 20) -> list:
-    """Combined recent entries + matches for the user page history."""
+    """Combined recent entries + matches + explicit win/lose verdict for the
+    user page history."""
     wallet = wallet.lower()
     rows = []
     try:
@@ -680,6 +745,7 @@ def get_my_history(wallet: str, limit: int = 20) -> list:
                 "pick": e["numbers"],
                 "winning_numbers": draw,
                 "match_count": match,
+                "result": classify_result(e["numbers"], draw),
                 "created_at": e.get("created_at"),
             })
     except Exception as exc:  # noqa: BLE001
