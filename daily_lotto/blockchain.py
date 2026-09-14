@@ -182,6 +182,118 @@ class LottoBlockchainService:
         except Exception:  # noqa: BLE001
             return None
 
+    def finalize_round(self, round_id: int, numbers: list) -> dict:
+        """Record the winning numbers on-chain BEFORE granting (owner-only).
+
+        ``GoodMarketLotto.grantWinners`` reverts with ``round_not_finalized``
+        unless a round has been finalized first, so the draw scheduler (and the
+        manual admin grant) MUST call this before ``grant_winners`` — otherwise
+        no winner can ever claim and nothing is ever written to Celo (the
+        "not saved to Celoscan" bug).
+
+        Idempotent: the contract only ever moves ``latestRoundId`` forward, so
+        re-finalizing an already-finalized round reverts with ``stale_round`` —
+        treated as success here. Returns the same balance-safe shape as
+        ``grant_winners``."""
+        if not numbers or len(numbers) != 6:
+            return {"success": False, "error": "Winning numbers must be exactly 6.", "error_type": "invalid_numbers"}
+        key = _get_key()
+        if not key:
+            return {"success": False, "error": "GOODMARKET_LOTTO_KEY is not configured", "error_type": "no_key"}
+        if not self.contract:
+            return {"success": False, "error": "GOODMARKET_LOTTO_CONTRACT is not configured", "error_type": "no_contract"}
+
+        with _grant_lock:
+            try:
+                from web3 import Web3
+                from eth_account import Account
+
+                w3 = self.w3
+                if not w3.is_connected():
+                    return {"success": False, "error": "Cannot connect to Celo network", "error_type": "rpc_unreachable"}
+
+                account = Account.from_key(key)
+                lotto = self._lotto_contract()
+
+                # Already finalized (or a later round finalized) → nothing to do.
+                try:
+                    if lotto.functions.latestRoundId().call() >= round_id:
+                        logger.info("🎰 Round #%s already finalized on-chain — skip finalizeRound", round_id)
+                        return {"success": True, "already_finalized": True}
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("⚠️ Could not read latestRoundId for #%s: %s", round_id, exc)
+
+                gas_price = int(w3.eth.gas_price * 1.2)
+                gas_limit = 90_000
+                if w3.eth.get_balance(account.address) < gas_limit * gas_price:
+                    return {
+                        "success": False,
+                        "error": "Grant signer (GOODMARKET_LOTTO_KEY) needs a CELO gas refill.",
+                        "error_type": "insufficient_gas",
+                        "balance_safe": True,
+                    }
+
+                nonce = w3.eth.get_transaction_count(account.address, "pending")
+                tx_hash = None
+                for attempt in range(2):
+                    try:
+                        tx = lotto.functions.finalizeRound(round_id, [int(n) for n in numbers]) \
+                            .build_transaction({
+                                "chainId": CHAIN_ID,
+                                "gas": gas_limit,
+                                "gasPrice": gas_price,
+                                "nonce": nonce,
+                                "from": account.address,
+                            })
+                        signed = w3.eth.account.sign_transaction(tx, private_key=key)
+                        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+                        if not tx_hash.startswith("0x"):
+                            tx_hash = "0x" + tx_hash
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        low = str(exc).lower()
+                        if _is_nonce_error(low) and attempt == 0:
+                            nonce = w3.eth.get_transaction_count(account.address, "pending")
+                            continue
+                        if _is_nonce_error(low):
+                            return {
+                                "success": False,
+                                "pending": True,
+                                "error": "nonce_collision",
+                                "error_type": "nonce_collision",
+                            }
+                        if "stale_round" in low:
+                            return {"success": True, "already_finalized": True}
+                        raise
+
+                receipt = _wait_for_receipt_patient(w3, tx_hash, timeout=90)
+                if receipt is None:
+                    return {
+                        "success": False,
+                        "pending": True,
+                        "error": "Finalize broadcast but not yet confirmed.",
+                        "error_type": "submitted_unconfirmed",
+                        "tx_hash": tx_hash,
+                    }
+                if receipt.get("status") != 1:
+                    return {
+                        "success": False,
+                        "pending": False,
+                        "error": "Finalize transaction reverted on-chain.",
+                        "error_type": "tx_reverted",
+                        "tx_hash": tx_hash,
+                    }
+                return {"success": True, "tx_hash": tx_hash}
+            except Exception as exc:  # noqa: BLE001
+                err_text = str(exc) + " " + repr(exc)
+                low = err_text.lower()
+                logger.error("❌ lotto finalize_round error: %s", err_text)
+                if "insufficient funds" in low or "gas required exceeds" in low:
+                    return {"success": False, "error": "Grant signer needs CELO gas.", "error_type": "insufficient_gas", "balance_safe": True}
+                if _is_nonce_error(low):
+                    return {"success": False, "pending": True, "error": "nonce_collision", "error_type": "nonce_collision"}
+                return {"success": False, "error": str(exc), "error_type": "finalize_exception", "balance_safe": True}
+
     def preflight_claim(self, round_id: int, wallet: str) -> dict:
         """Read-only eth_call of claim() for a winner. Distinguishes:
         - {"claimable": True}  — vault has G$; user can sign now
