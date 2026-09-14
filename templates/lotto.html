@@ -160,7 +160,24 @@
         .refresh-btn { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 0.35rem 0.8rem; font-size: 0.78rem;
             font-weight: 600; cursor: pointer; color: rgba(226,232,240,0.6); }
         .refresh-btn:hover { border-color: var(--accent); color: #fdba74; }
+        .participants-header { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+        .participants-header .count-badge { font-size: 0.75rem; font-weight: 700; background: rgba(34,197,94,0.16); color: #4ade80;
+            padding: 0.28rem 0.75rem; border-radius: 999px; white-space: nowrap; }
+        .participant-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.6rem; border-radius: 12px;
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); margin-bottom: 0.45rem; font-size: 0.82rem; }
+        .participant-item.is-me { border-color: rgba(74,222,128,0.45); background: rgba(74,222,128,0.08); }
+        .participant-wallet { font-family: 'DM Mono', monospace; color: rgba(226,232,240,0.55); font-size: 0.76rem; min-width: 88px; }
+        .participant-item.is-me .participant-wallet { color: #4ade80; font-weight: 700; }
+        .participant-nums { display: flex; gap: 0.22rem; flex-wrap: wrap; flex: 1; justify-content: flex-end; }
+        .participant-nums .mini-ball { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+            font-size: 0.65rem; font-weight: 700; background: linear-gradient(135deg, #f97316, #ea580c); color: #fff; }
+        .participants-empty { text-align: center; color: rgba(226,232,240,0.4); font-size: 0.85rem; padding: 1.1rem 0.5rem; }
+        .participants-note { text-align: center; font-size: 0.7rem; color: rgba(226,232,240,0.4); margin-top: 0.6rem; }
+        .participants-refresh { text-align: center; margin-top: 0.75rem; }
         @media (max-width: 520px) {
+            .participant-nums .mini-ball { width: 19px; height: 19px; font-size: 0.58rem; }
+            .participant-wallet { min-width: 70px; }
+            .participants-header { flex-wrap: wrap; }
             .board { grid-template-columns: repeat(8, 1fr); gap: 0.32rem; }
             .num-cell { font-size: 0.78rem; border-radius: 8px; }
             .prize-strip { grid-template-columns: repeat(2, 1fr); }
@@ -235,6 +252,19 @@
         </div>
         <div style="text-align:center; margin-top:0.7rem;">
             <button class="refresh-btn" onclick="loadHistory()">↻ Refresh history</button>
+        </div>
+    </div>
+
+    <div class="section-title">Today's Players</div>
+    <div class="card" id="participantsCard">
+        <div class="participants-header">
+            <span style="font-size:0.9rem; font-weight:700;">👥 Who's in today's draw</span>
+            <span class="count-badge" id="participantsCount"><span class="spinner dark"></span> Loading…</span>
+        </div>
+        <div id="participantsList" style="margin-top:0.7rem;"><div class="participants-empty">Loading participants…</div></div>
+        <div class="participants-note">Wallets are shown partially masked — the numbers you pick are visible to everyone until the 8PM draw.</div>
+        <div class="participants-refresh">
+            <button class="refresh-btn" id="participantsRefresh" onclick="loadParticipants(true)">↻ Refresh players</button>
         </div>
     </div>
 
@@ -896,10 +926,72 @@
         }
     }
 
+    // ── today's players ──────────────────────────────────────────────────
+    function esc(s) {
+        if (s == null) return '';
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    function renderParticipants(data) {
+        const countEl = $('participantsCount');
+        if (!data || !data.success) {
+            countEl.textContent = '—';
+            $('participantsList').innerHTML = '<div class="participants-empty">Could not load today\u2019s players.</div>';
+            return;
+        }
+        const list = $('participantsList');
+        const rows = data.participants || [];
+        const total = (data.total_participants !== undefined && data.total_participants !== null)
+            ? data.total_participants : rows.length;
+        countEl.textContent = total + ' player' + (total === 1 ? '' : 's');
+        if (!rows.length) {
+            list.innerHTML = '<div class="participants-empty">No players yet today — be the first to pick numbers!</div>';
+            return;
+        }
+        list.innerHTML = '';
+        rows.forEach(p => {
+            const isMe = !!p.is_me;
+            const walletLabel = isMe ? '👤 You' : esc(p.wallet_short || '???');
+            const item = document.createElement('div');
+            item.className = 'participant-item' + (isMe ? ' is-me' : '');
+            const nums = (p.numbers || []).slice(0, PICK_SIZE);
+            const balls = nums.map(n => `<span class="mini-ball">${n}</span>`).join('');
+            item.innerHTML = `
+                <span class="participant-wallet">${walletLabel}</span>
+                <span class="participant-nums">${balls}</span>
+            `;
+            list.appendChild(item);
+        });
+        if (data.truncated) {
+            const note = $('participantsCard').querySelector('.participants-note');
+            if (note) note.textContent = `Showing the latest ${rows.length} players — ${total} joined today. Wallets are masked.`;
+        }
+    }
+
+    async function loadParticipants(quiet) {
+        try {
+            const resp = await fetch('/lotto/api/participants?limit=60', { cache: 'no-store' });
+            const data = await resp.json();
+            if (data.current_round_id && state.meta && data.current_round_id !== state.meta.round_id) {
+                // The page is stale across the 8PM boundary — refresh state so
+                // the board/countdown and the players section agree again.
+                state.meta = { ...state.meta, round_id: data.current_round_id };
+                refreshState(true);
+            }
+            renderParticipants(data);
+        } catch (e) {
+            if (!quiet) $('participantsList').innerHTML = '<div class="participants-empty">Could not load today\u2019s players.</div>';
+        }
+    }
+
     // ── boot ─────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
         refreshState(true);
         loadHistory(true);
+        loadParticipants(true);
+        setInterval(() => loadParticipants(true), 60000);
         // Auto-withdraw when the URL carries a pending prize (deep link from wallet).
         if (location.search.includes('claim=1')) {
             try { history.replaceState({}, '', location.pathname); } catch (_) {}
