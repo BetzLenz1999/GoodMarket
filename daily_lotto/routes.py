@@ -98,7 +98,7 @@ def api_state():
         'success': True,
         'meta': meta,
         'pick': entry,
-        'entries_this_round': None,  # intentionally omitted (privacy)
+        'entries_this_round': svc.get_round_participant_count(round_id),
         'last_round': last_round and {
             'round_id': last_round['id'],
             'game_date': last_round.get('game_date'),
@@ -161,6 +161,33 @@ def history():
     if not wallet:
         return jsonify({'success': False, 'error': 'Not authenticated'}), 401
     return jsonify({'success': True, 'rows': svc.get_my_history(wallet, limit=20)})
+
+
+@lotto_bp.route('/api/participants')
+def participants():
+    """Public per-round participants feed: truncated wallets + their picked
+    numbers + the total participant count for the day. Mirrors the Price
+    Prediction live feed so users can see who is in today's draw and which
+    balls they chose (wallets stay truncated server-side)."""
+    wallet = _session_wallet()
+    if not wallet:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    meta = svc.current_round_metadata()
+    round_id = meta['round_id']
+    try:
+        rid = int(request.args.get('round_id') or round_id)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid round_id.'}), 400
+
+    try:
+        limit = max(1, min(int(request.args.get('limit') or 60), 200))
+    except (TypeError, ValueError):
+        limit = 60
+
+    result = svc.get_round_participants(rid, wallet=wallet, limit=limit)
+    result['current_round_id'] = round_id
+    return jsonify(result)
 
 
 # ── Withdraw ──────────────────────────────────────────────────────────────────
