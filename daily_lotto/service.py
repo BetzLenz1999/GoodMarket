@@ -659,17 +659,30 @@ def _short_wallet(wallet: str | None) -> str:
 
 # ── Public participants feed (mirrors price_prediction's live feed) ──────────
 
-def get_round_participants(round_id: int, wallet: str | None = None, limit: int = 60) -> dict:
+def get_round_participants(round_id: int, wallet: str | None = None, limit: int = 60,
+                           winning_numbers: list | None = None) -> dict:
     """Return the wallets (truncated) + numbers that picked this round, plus the
-    total participant count for the day.
+    total participant count for the day and an explicit won/lost verdict per
+    row once the round has drawn.
 
     Wallet addresses are truncated server-side so no user ever sees another
     user's full address (same truncation convention as the Price Prediction
     live feed). The 6 picked numbers ARE shown next to each wallet — that is
     exactly what makes the lotto social: you can see who's in today, and which
     balls they chose, before the 8PM draw.
-    """
+
+    ``winning_numbers`` (the published draw, when available) turns every row
+    into a winner/loser verdict via the same ``classify_result`` used by the
+    user's own history — losers have no winnings row, so the verdict MUST be
+    derived from the draw and never from the winnings table. ``winner_count``
+    is the number of winners in this round (badge on the header)."""
     round_id = int(round_id)
+    if winning_numbers is None:
+        # Self-sufficient: read the published draw for the round so callers
+        # (page, future bot surfaces) get verdicts without passing it in.
+        row = get_round(round_id) or {}
+        winning_numbers = row.get('winning_numbers')
+    draw = [int(n) for n in winning_numbers] if winning_numbers else None
     try:
         total = get_round_participant_count(round_id)
 
@@ -682,16 +695,38 @@ def get_round_participants(round_id: int, wallet: str | None = None, limit: int 
             .execute()
         rows = res.data or []
 
+        # Amounts + grant status per winning wallet (winners only; a loser has
+        # no row). Read once for the round so the badge can show the prize.
+        win_by_wallet = {}
+        if draw:
+            try:
+                wins = sb.table("daily_lotto_winnings") \
+                    .select("wallet_address, amount_gd, status") \
+                    .eq("round_id", round_id) \
+                    .execute()
+                for w in (wins.data or []):
+                    win_by_wallet[(w.get("wallet_address") or '').lower()] = w
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("⚠️ participants winnings read failed: %s", exc)
+
         my_wallet = (wallet or '').strip().lower()
         sanitized = []
         for row in rows:
             full = row.get("wallet_address") or ''
-            is_me = bool(my_wallet) and full.lower() == my_wallet
+            key = full.lower()
+            is_me = bool(my_wallet) and key == my_wallet
+            verdict = classify_result(row.get("numbers"), draw)
+            win = win_by_wallet.get(key) or {}
             sanitized.append({
                 "wallet_short": _short_wallet(full),
                 "is_me": is_me,
                 "numbers": sorted(int(n) for n in (row.get("numbers") or [])),
                 "created_at": row.get("created_at"),
+                "result": verdict,
+                "is_winner": verdict == "won",
+                "matched": compute_matches(row.get("numbers") or [], draw) if draw else None,
+                "amount_gd": str(win.get("amount_gd")) if win.get("amount_gd") is not None else None,
+                "win_status": win.get("status"),
             })
 
         return {
@@ -700,6 +735,9 @@ def get_round_participants(round_id: int, wallet: str | None = None, limit: int 
             "participants": sanitized,
             "total_participants": total,
             "truncated": total > limit,
+            "drawn": bool(draw),
+            "winning_numbers": draw,
+            "winner_count": len(win_by_wallet),
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("⚠️ get_round_participants failed: %s", exc)
