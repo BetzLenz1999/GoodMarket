@@ -6,6 +6,14 @@ import uuid
 from datetime import datetime, date
 from supabase_client import get_supabase_client
 from .blockchain import minigames_blockchain
+from .weekly_limit import (
+    week_key,
+    week_reset_at,
+    week_reset_label,
+    week_start_date,
+    weekly_limit_message,
+    weekly_withdrawal_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +39,14 @@ class MinigamesManager:
         # Withdrawal configurations
         self.MIN_WITHDRAWAL = 500.0  # Minimum withdrawal 500 G$
         self.MAX_WITHDRAWAL = 10000.0  # Maximum withdrawal 10,000 G$
+
+        # Weekly withdrawal allowance: a wallet may withdraw at most this much
+        # per PHT calendar week. A larger balance is paid out 500 G$ at a time
+        # across weeks instead of being emptied in one request.
+        self.WEEKLY_WITHDRAWAL_LIMIT = weekly_withdrawal_limit()
+        # Latched when the weekly-allowance table is missing/unreadable so the
+        # withdraw path falls back to payout-log enforcement instead of failing.
+        self._weekly_table_unavailable = False
 
         # Game configurations
         self.game_configs = {
@@ -728,10 +744,157 @@ class MinigamesManager:
             logger.error(f"❌ Error updating user stats with tokens: {e}")
             return {'virtual_tokens': 0, 'tokens_earned': 0, 'previous_tokens': 0}
 
-    async def withdraw_winnings(self, wallet_address: str) -> dict:
-        """Withdraw available balance"""
+    def _week_withdrawn_amount(self, wallet_address: str, wk: str) -> float:
+        """Return how much this wallet already withdrew in ``wk``.
+
+        The weekly row is the source of truth once it exists. The first time a
+        wallet withdraws in a week the row is seeded from the payout log, so
+        payouts made before this cap existed (or by any path that bypassed the
+        counter) still count against the allowance.
+        """
+        result = self.supabase.table('minigame_weekly_withdrawals')\
+            .select('amount')\
+            .eq('wallet_address', wallet_address)\
+            .eq('week_key', wk)\
+            .execute()
+
+        if result.data:
+            return float(result.data[0].get('amount') or 0)
+
+        seeded = self._week_payouts_from_log(wallet_address)
         try:
-            # Get user's balance
+            self.supabase.table('minigame_weekly_withdrawals').insert({
+                'wallet_address': wallet_address,
+                'week_key': wk,
+                'amount': seeded,
+                'created_at': datetime.now().isoformat()
+            }).execute()
+        except Exception as seed_error:
+            if self._is_duplicate_week_row(seed_error):
+                # A concurrent request seeded the row first — read theirs back.
+                retry = self.supabase.table('minigame_weekly_withdrawals')\
+                    .select('amount')\
+                    .eq('wallet_address', wallet_address)\
+                    .eq('week_key', wk)\
+                    .execute()
+                if retry.data:
+                    return float(retry.data[0].get('amount') or 0)
+            raise
+
+        return seeded
+
+    @staticmethod
+    def _is_duplicate_week_row(error) -> bool:
+        """True when the insert lost the (wallet_address, week_key) unique race."""
+        text = str(error).lower()
+        return 'duplicate key' in text or 'unique constraint' in text
+
+    def _week_payouts_from_log(self, wallet_address: str) -> float:
+        """Sum this PHT week's completed payouts from the withdrawal log."""
+        week_start = week_start_date().isoformat()
+        try:
+            result = self.supabase.table('minigame_withdrawals_log')\
+                .select('amount, status, withdrawal_date')\
+                .eq('wallet_address', wallet_address)\
+                .gte('withdrawal_date', week_start)\
+                .execute()
+        except Exception as log_error:
+            logger.warning(f"⚠️ Could not seed weekly allowance from log: {log_error}")
+            return 0.0
+
+        total = 0.0
+        for row in result.data or []:
+            status = str(row.get('status') or 'completed').lower()
+            if status not in ('completed', 'success', 'successful'):
+                continue
+            total += float(row.get('amount') or 0)
+        return total
+
+    def _claim_week_allowance(self, wallet_address: str, wk: str, expected_used: float, amount: float):
+        """CAS-increment this week's withdrawn total.
+
+        Returns ``True`` when we won the claim, ``False`` when another request
+        moved the counter first (caller should re-read and retry), and ``None``
+        when the weekly table is unusable — e.g. the migration has not been
+        applied yet. The caller falls back to payout-log enforcement on None so
+        a missing table cannot lock users out of their money.
+        """
+        if self._weekly_table_unavailable:
+            return None
+        try:
+            result = self.supabase.table('minigame_weekly_withdrawals')\
+                .update({'amount': expected_used + amount, 'updated_at': datetime.now().isoformat()})\
+                .eq('wallet_address', wallet_address)\
+                .eq('week_key', wk)\
+                .eq('amount', expected_used)\
+                .execute()
+            return bool(result.data)
+        except Exception as claim_error:
+            self._weekly_table_unavailable = True
+            logger.error(
+                f"⚠️ Weekly allowance table unusable ({claim_error}). Falling back to "
+                f"payout-log enforcement — is sql/minigame_weekly_withdrawal_limit.sql applied?"
+            )
+            return None
+
+    def _release_week_allowance(self, wallet_address: str, wk: str, amount: float):
+        """Give back a claimed allowance after a failed payout."""
+        try:
+            current = self.supabase.table('minigame_weekly_withdrawals')\
+                .select('amount')\
+                .eq('wallet_address', wallet_address)\
+                .eq('week_key', wk)\
+                .execute()
+            if not current.data:
+                return
+            used = float(current.data[0].get('amount') or 0)
+            self.supabase.table('minigame_weekly_withdrawals')\
+                .update({'amount': max(0.0, used - amount), 'updated_at': datetime.now().isoformat()})\
+                .eq('wallet_address', wallet_address)\
+                .eq('week_key', wk)\
+                .execute()
+        except Exception as release_error:
+            logger.error(f"⚠️ Could not release weekly allowance: {release_error}")
+
+    def get_weekly_withdrawal_status(self, wallet_address: str) -> dict:
+        """Describe the wallet's remaining allowance for the current week.
+
+        Never raises: balance polling and page loads must keep working even if
+        the weekly-allowance table has not been migrated yet. In that case the
+        payout log is the best available source of truth.
+        """
+        limit = self.WEEKLY_WITHDRAWAL_LIMIT
+        wk = week_key()
+        if self._weekly_table_unavailable:
+            used = self._week_payouts_from_log(wallet_address)
+        else:
+            try:
+                used = self._week_withdrawn_amount(wallet_address, wk)
+            except Exception as usage_error:
+                logger.error(
+                    "⚠️ Could not read weekly withdrawal usage (%s). "
+                    "Is sql/minigame_weekly_withdrawal_limit.sql applied?", usage_error
+                )
+                used = self._week_payouts_from_log(wallet_address)
+
+        remaining = max(0.0, limit - used)
+        return {
+            'weekly_limit': limit,
+            'weekly_withdrawn': used,
+            'weekly_remaining': remaining,
+            'weekly_limit_reached': remaining <= 0,
+            'week_reset_label': week_reset_label(),
+            'week_reset_at': week_reset_at().isoformat(),
+        }
+
+    async def withdraw_winnings(self, wallet_address: str) -> dict:
+        """Withdraw available balance, capped by the weekly allowance.
+
+        A wallet may withdraw at most ``WEEKLY_WITHDRAWAL_LIMIT`` G$ per PHT
+        calendar week. A bigger balance is paid out in 500 G$ instalments —
+        one per week — and the rest stays in the Play & Earn balance.
+        """
+        try:
             balance_result = self.supabase.table('minigame_balances')\
                 .select('*')\
                 .eq('wallet_address', wallet_address)\
@@ -741,7 +904,7 @@ class MinigamesManager:
                 return {'success': False, 'error': 'No balance found'}
 
             balance_data = balance_result.data[0]
-            available_balance = balance_data.get('available_balance', 0)
+            available_balance = float(balance_data.get('available_balance', 0) or 0)
 
             if available_balance <= 0:
                 return {
@@ -749,34 +912,108 @@ class MinigamesManager:
                     'error': 'No balance available to withdraw'
                 }
 
-            # Check minimum withdrawal amount
             if available_balance < self.MIN_WITHDRAWAL:
                 return {
                     'success': False,
                     'error': f'Minimum withdrawal is {self.MIN_WITHDRAWAL} G$. You have {available_balance} G$. Keep playing to reach the minimum!'
                 }
 
-            # Check maximum withdrawal amount
-            if available_balance > self.MAX_WITHDRAWAL:
+            # Weekly allowance. The claim below is a compare-and-swap on the
+            # week's running total, so concurrent requests can never
+            # over-withdraw — the loser re-reads and retries.
+            wk = week_key()
+            weekly = self.get_weekly_withdrawal_status(wallet_address)
+            used, remaining = weekly['weekly_withdrawn'], weekly['weekly_remaining']
+
+            for _ in range(3):
+                if remaining <= 0:
+                    return {
+                        'success': False,
+                        'error': weekly_limit_message(self.WEEKLY_WITHDRAWAL_LIMIT),
+                        'status': 'weekly_limit_reached',
+                        'weekly_limit': self.WEEKLY_WITHDRAWAL_LIMIT,
+                        'weekly_withdrawn': used,
+                        'weekly_remaining': 0.0,
+                        'week_reset_label': weekly['week_reset_label'],
+                        'available_balance': available_balance,
+                        'balance_safe': True,
+                    }
+
+                amount_to_withdraw = min(available_balance, remaining, self.MAX_WITHDRAWAL)
+
+                if amount_to_withdraw < self.MIN_WITHDRAWAL:
+                    return {
+                        'success': False,
+                        'error': (
+                            f"Only {amount_to_withdraw:,.2f} G$ of this week's "
+                            f'{self.WEEKLY_WITHDRAWAL_LIMIT:,.0f} G$ withdrawal limit is left, '
+                            f'which is below the {self.MIN_WITHDRAWAL:,.0f} G$ minimum. '
+                            f'Please withdraw again next week — your allowance resets on '
+                            f"{weekly['week_reset_label']}."
+                        ),
+                        'status': 'weekly_limit_reached',
+                        'weekly_limit': self.WEEKLY_WITHDRAWAL_LIMIT,
+                        'weekly_withdrawn': used,
+                        'weekly_remaining': remaining,
+                        'week_reset_label': weekly['week_reset_label'],
+                        'available_balance': available_balance,
+                        'balance_safe': True,
+                    }
+
+                claim = self._claim_week_allowance(wallet_address, wk, used, amount_to_withdraw)
+                if claim is True:
+                    break
+                if claim is None:
+                    # Weekly table unavailable: enforce the cap from the payout
+                    # log instead. Weaker under concurrency, but it keeps the
+                    # 500 G$ rule and never blocks a legitimate payout.
+                    recent = self._week_payouts_from_log(wallet_address)
+                    if recent + amount_to_withdraw > self.WEEKLY_WITHDRAWAL_LIMIT:
+                        logger.error(
+                            f"⛔ Weekly withdrawal limit enforced from payout log for "
+                            f"{wallet_address[:8]}... (weekly table unavailable)"
+                        )
+                        return {
+                            'success': False,
+                            'error': weekly_limit_message(self.WEEKLY_WITHDRAWAL_LIMIT),
+                            'status': 'weekly_limit_reached',
+                            'weekly_limit': self.WEEKLY_WITHDRAWAL_LIMIT,
+                            'weekly_withdrawn': recent,
+                            'weekly_remaining': max(0.0, self.WEEKLY_WITHDRAWAL_LIMIT - recent),
+                            'week_reset_label': weekly['week_reset_label'],
+                            'available_balance': available_balance,
+                            'balance_safe': True,
+                        }
+                    break
+
+                logger.info(f"🔁 Weekly allowance race for {wallet_address[:8]}..., retrying")
+                weekly = self.get_weekly_withdrawal_status(wallet_address)
+                used, remaining = weekly['weekly_withdrawn'], weekly['weekly_remaining']
+            else:
                 return {
                     'success': False,
-                    'error': f'Maximum withdrawal is {self.MAX_WITHDRAWAL} G$. You have {available_balance} G$. Please contact support for large withdrawals.'
+                    'error': "Could not reserve this week's withdrawal allowance. Please try again.",
+                    'balance_safe': True,
+                    'available_balance': available_balance,
+                    'retry_available': True,
                 }
 
             # Disburse from GAMES_KEY via the GamesRewards contract)
             session_id = f"WITHDRAW-{uuid.uuid4().hex[:8].upper()}"
             disburse_result = await self.blockchain_service.disburse_from_games_key(
-                wallet_address, available_balance, session_id
+                wallet_address, amount_to_withdraw, session_id
             )
 
             # ONLY update balance if blockchain transaction was successful
             if disburse_result['success']:
-                # Update balance - set to 0 and add to total withdrawn
-                total_withdrawn = balance_data.get('total_withdrawn', 0) + available_balance
+                # Deduct just what was paid out; a balance above the weekly
+                # allowance stays withdrawable in the weeks that follow.
+                new_balance = max(0.0, available_balance - amount_to_withdraw)
+                total_withdrawn = float(balance_data.get('total_withdrawn', 0) or 0) + amount_to_withdraw
 
                 self.supabase.table('minigame_balances')\
                     .update({
-                        'available_balance': 0,
+                        'available_balance': new_balance,
                         'total_withdrawn': total_withdrawn,
                         'updated_at': datetime.now().isoformat()
                     })\
@@ -793,7 +1030,7 @@ class MinigamesManager:
                 # the legacy shape so a missing migration cannot block payouts.
                 withdrawal_log = {
                     'wallet_address': wallet_address,
-                    'amount': available_balance,
+                    'amount': amount_to_withdraw,
                     'tx_hash': normalize_tx_hash(disburse_result['tx_hash']),
                     'session_id': session_id,
                     'status': 'completed',
@@ -811,19 +1048,58 @@ class MinigamesManager:
                     withdrawal_log.pop('status', None)
                     self.supabase.table('minigame_withdrawals_log').insert(withdrawal_log).execute()
 
-                logger.info(f"✅ Balance withdrawn successfully: {available_balance} G$")
+                # Stamp the payout hash on the weekly row for support lookups.
+                try:
+                    self.supabase.table('minigame_weekly_withdrawals')\
+                        .update({
+                            'tx_hash': normalize_tx_hash(disburse_result['tx_hash']),
+                            'session_id': session_id,
+                        })\
+                        .eq('wallet_address', wallet_address)\
+                        .eq('week_key', wk)\
+                        .execute()
+                except Exception as stamp_error:
+                    logger.warning(f"⚠️ Could not stamp weekly withdrawal hash: {stamp_error}")
+
+                weekly_remaining_after = max(0.0, remaining - amount_to_withdraw)
+                logger.info(
+                    f"✅ Balance withdrawn successfully: {amount_to_withdraw} G$ "
+                    f"(remaining balance {new_balance} G$, weekly allowance left {weekly_remaining_after} G$)"
+                )
+
+                if new_balance > 0 and weekly_remaining_after <= 0:
+                    message = (
+                        f'Successfully withdrawn {amount_to_withdraw:,.2f} G$! '
+                        f'{new_balance:,.2f} G$ stays in your Play & Earn balance. '
+                        f'Please withdraw again next week — your allowance resets on '
+                        f"{weekly['week_reset_label']}."
+                    )
+                elif weekly_remaining_after > 0:
+                    message = (
+                        f'Successfully withdrawn {amount_to_withdraw:,.2f} G$! '
+                        f"{weekly_remaining_after:,.2f} G$ of this week's withdrawal limit is still available."
+                    )
+                else:
+                    message = f'Successfully withdrawn {amount_to_withdraw:,.2f} G$!'
 
                 return {
                     'success': True,
-                    'amount_withdrawn': available_balance,
+                    'amount_withdrawn': amount_to_withdraw,
+                    'remaining_balance': new_balance,
+                    'weekly_limit': self.WEEKLY_WITHDRAWAL_LIMIT,
+                    'weekly_withdrawn': used + amount_to_withdraw,
+                    'weekly_remaining': weekly_remaining_after,
+                    'week_reset_label': weekly['week_reset_label'],
                     'tx_hash': normalize_tx_hash(disburse_result['tx_hash']),
                     'explorer_url': disburse_result['explorer_url'],
-                    'message': f'Successfully withdrawn {available_balance} G$!'
+                    'message': message
                 }
             else:
-                # Withdrawal FAILED - balance NOT changed
+                # Withdrawal FAILED - give back the reserved allowance and
+                # leave the balance untouched so the user can retry.
+                self._release_week_allowance(wallet_address, wk, amount_to_withdraw)
                 logger.error(f"❌ Blockchain withdrawal failed: {disburse_result.get('error')}")
-                
+
                 # Check if it's a gas/system error
                 error_type = disburse_result.get('error_type')
                 if error_type == 'insufficient_gas':
