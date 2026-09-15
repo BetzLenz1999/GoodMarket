@@ -313,13 +313,21 @@ def get_balance():
 
         result = minigames_manager.get_deposit_balance(wallet)
         min_withdrawal = minigames_manager.MIN_WITHDRAWAL
-        available = result.get('available_balance', 0)
+        available = float(result.get('available_balance', 0) or 0)
+
+        # Weekly allowance: withdrawals are capped per PHT calendar week, so a
+        # balance above the cap is paid out across multiple weeks.
+        weekly = minigames_manager.get_weekly_withdrawal_status(wallet)
+        weekly_remaining = weekly['weekly_remaining']
+
         return jsonify({
             'success': True,
             'available_balance': available,
             'total_withdrawn': result.get('total_withdrawn', 0),
             'min_withdrawal': min_withdrawal,
-            'can_withdraw': available >= min_withdrawal
+            'can_withdraw': available >= min_withdrawal and weekly_remaining >= min_withdrawal,
+            'withdrawable_now': min(available, weekly_remaining),
+            **weekly
         })
     except Exception as e:
         logger.error(f"❌ Error getting balance: {e}")
