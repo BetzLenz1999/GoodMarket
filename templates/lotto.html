@@ -194,6 +194,14 @@
         .participant-nums .mini-ball { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
             font-size: 0.65rem; font-weight: 700; background: linear-gradient(135deg, #f97316, #ea580c); color: #fff; }
         .participants-empty { text-align: center; color: rgba(226,232,240,0.4); font-size: 0.85rem; padding: 1.1rem 0.5rem; }
+        .participant-item.is-winner { border-color: rgba(250,204,21,0.55); background: rgba(250,204,21,0.10); }
+        .participant-item.is-winner .participant-wallet { color: #facc15; font-weight: 700; }
+        .winner-badge { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.03em; padding: 0.18rem 0.42rem;
+            border-radius: 999px; background: rgba(250,204,21,0.18); color: #fde047; border: 1px solid rgba(250,204,21,0.45);
+            white-space: nowrap; }
+        .loser-badge { font-size: 0.6rem; font-weight: 700; padding: 0.18rem 0.42rem; border-radius: 999px;
+            background: rgba(148,163,184,0.12); color: rgba(226,232,240,0.45); border: 1px solid rgba(148,163,184,0.2);
+            white-space: nowrap; }
         .participants-note { text-align: center; font-size: 0.7rem; color: rgba(226,232,240,0.4); margin-top: 0.6rem; }
         .participants-refresh { text-align: center; margin-top: 0.75rem; }
         @media (max-width: 520px) {
@@ -295,7 +303,7 @@
             <span class="count-badge" id="participantsCount"><span class="spinner dark"></span> Loading…</span>
         </div>
         <div id="participantsList" style="margin-top:0.7rem;"><div class="participants-empty">Loading participants…</div></div>
-        <div class="participants-note">Wallets are shown partially masked — the numbers you pick are visible to everyone until the 8PM draw. Each row's numbers are that player's <b>pick</b>, not the draw; the one winning set is published for everyone at 8PM.</div>
+        <div class="participants-note">Wallets are shown partially masked — the numbers you pick are visible to everyone until the 8PM draw. Each row's numbers are that player's <b>pick</b>, not the draw; the one winning set is published for everyone at 8PM, and winners are flagged with 🏆.</div>
         <div class="participants-refresh">
             <button class="refresh-btn" id="participantsRefresh" onclick="loadParticipants(true)">↻ Refresh players</button>
         </div>
@@ -1034,20 +1042,41 @@
         list.innerHTML = '';
         rows.forEach(p => {
             const isMe = !!p.is_me;
+            const isWinner = !!p.is_winner;
             const walletLabel = isMe ? '👤 You' : esc(p.wallet_short || '???');
             const item = document.createElement('div');
-            item.className = 'participant-item' + (isMe ? ' is-me' : '');
+            item.className = 'participant-item' + (isMe ? ' is-me' : '') + (isWinner ? ' is-winner' : '');
             const nums = (p.numbers || []).slice(0, PICK_SIZE);
             const balls = nums.map(n => `<span class="mini-ball">${n}</span>`).join('');
+            let badge = '';
+            if (isWinner) {
+                const prize = p.amount_gd ? ` · ${fmt(p.amount_gd)} G$` : '';
+                const hits = (p.matched != null) ? ` (${p.matched}/6)` : '';
+                badge = `<span class="winner-badge">🏆 WINNER${hits}${prize}</span>`;
+            } else if (data.drawn) {
+                const hits = (p.matched != null) ? `${p.matched}/6` : '0/6';
+                badge = `<span class="loser-badge">${hits}</span>`;
+            }
             item.innerHTML = `
                 <span class="participant-wallet">${walletLabel}</span>
                 <span class="participant-nums"><span class="pick-label">Pick:</span>${balls}</span>
+                ${badge}
             `;
             list.appendChild(item);
         });
-        if (data.truncated) {
-            const note = $('participantsCard').querySelector('.participants-note');
-            if (note) note.textContent = `Showing the latest ${rows.length} players — ${total} joined today. Wallets are masked.`;
+        if (data.drawn) {
+            const countEl2 = $('participantsCount');
+            const winners = data.winner_count || 0;
+            countEl2.textContent = `${total} player${total === 1 ? '' : 's'} · ${winners} winner${winners === 1 ? '' : 's'}`;
+        }
+        const note = $('participantsCard').querySelector('.participants-note');
+        if (note) {
+            if (data.drawn) {
+                note.innerHTML = `Draw published — ${data.winner_count || 0} winner${(data.winner_count || 0) === 1 ? '' : 's'} in this round. ` +
+                    `Winners withdraw their own prize from <b>My Winnings</b>; wallets stay masked.`;
+            } else if (data.truncated) {
+                note.textContent = `Showing the latest ${rows.length} players — ${total} joined today. Wallets are masked.`;
+            }
         }
     }
 
