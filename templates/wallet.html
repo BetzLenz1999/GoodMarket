@@ -1317,6 +1317,24 @@
         }
         
         .claim-network-card.is-disabled { opacity: 0.62; }
+        .claim-network-card.is-selected { border-color: rgba(124,58,237,0.45); }
+        /* Cards may carry a full-width action button below the row, so allow wrap. */
+        .claim-network-card { flex-wrap: wrap; }
+        .claim-card-btn {
+            flex: 1 1 100%;
+            margin-top: 0.15rem;
+            border: none;
+            border-radius: 9px;
+            padding: 0.5rem 0.7rem;
+            font-size: 0.74rem;
+            font-weight: 800;
+            cursor: pointer;
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: #fff;
+        }
+        .claim-network-card.is-selected .claim-card-btn {
+            background: linear-gradient(135deg, #16a34a, #15803d);
+        }
         .claim-network-main { display: flex; align-items: center; gap: 0.58rem; min-width: 0; }
         .claim-network-icon {
             width: 34px; height: 34px;
@@ -2747,7 +2765,7 @@
                     <div class="claim-network-status">Loading</div>
                 </div>
             </div>
-            <div class="claim-wallet-note" id="claimWalletNote">GoodMarket recommends the first unclaimed network your wallet can safely claim. The in-app wallet supports Celo & XDC.</div>
+            <div class="claim-wallet-note" id="claimWalletNote">GoodMarket recommends Celo first, but you can claim on any network that is available to you.</div>
 
             <button id="ubiClaimBtn" onclick="doUbiClaim()" class="btn-primary">
                 <span id="ubiClaimIcon">⏳</span>
