@@ -1361,7 +1361,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // Defaults
         let state = 'unverified';  // unverified | verified | warning | expired | renewal | error
         let color = '#888';
-        let bg = 'rgba(67,56,43,0.06)';
+        let bg = 'rgba(255,255,255,0.06)';
         let pillText = 'Unverified';
         let ctaText  = 'Verify Now';
         let showCta  = true;
@@ -1421,7 +1421,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             remEl.style.color = '#f97316';
         } else if (d && d.seconds_remaining) {
             remEl.textContent = fmtRemaining(d.seconds_remaining);
-            remEl.style.color = state === 'warning' ? '#d97706' : 'var(--text)';
+            remEl.style.color = state === 'warning' ? '#fcd34d' : 'var(--text)';
         } else {
             remEl.textContent = '—';
             remEl.style.color = 'var(--text)';
@@ -1440,7 +1440,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 banner.style.display = '';
                 banner.style.background = 'rgba(239,68,68,0.10)';
                 banner.style.border = '1px solid rgba(239,68,68,0.35)';
-                banner.style.color = '#b91c1c';
+                banner.style.color = '#fca5a5';
                 bIcon.textContent = '⚠️';
                 bText.innerHTML = '<strong>Face Verification expired</strong>' +
                     (d && d.expires_at_iso ? ' on ' + fmtDateLocal(d.expires_at_iso) : '') +
@@ -1449,7 +1449,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 banner.style.display = '';
                 banner.style.background = 'rgba(249,115,22,0.10)';
                 banner.style.border = '1px solid rgba(249,115,22,0.35)';
-                banner.style.color = '#c2410c';
+                banner.style.color = '#c4b5fd';
                 bIcon.textContent = '🔗';
                 bText.innerHTML = '<strong>Wallet verification needs renewal.</strong> ' +
                     'This can happen during normal re-verification and does not necessarily mean you did anything wrong. ' +
@@ -1891,8 +1891,8 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     const statusLabels = {
                         pending_face_verification: { label: 'Awaiting face verification', color: '#f59e0b' },
                         pending_disbursed: { label: 'Reward pending (low funds)', color: '#f97316' },
-                        completed: { label: 'Reward sent', color: '#16a34a' },
-                        failed: { label: 'Failed', color: '#dc2626' }
+                        completed: { label: 'Reward sent', color: '#34d399' },
+                        failed: { label: 'Failed', color: '#f87171' }
                     };
                     listEl.innerHTML = referrals.map(function (ref) {
                         const s = statusLabels[ref.status] || { label: ref.status, color: '#7c3aed' };
@@ -1943,10 +1943,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         if (!statusData) { banner.style.display = 'none'; return; }
         let color, label, text;
         if (statusData.has_pending_submission) {
-            color = '#d97706'; label = '⏳ Under Review';
+            color = '#fcd34d'; label = '⏳ Under Review';
             text = statusData.status_message || 'Your ' + (statusData.pending_platform || '') + ' submission is under review. You can only submit to ONE platform per day.';
         } else if (!statusData.can_claim) {
-            color = '#dc2626'; label = '🔒 On Cooldown';
+            color = '#f87171'; label = '🔒 On Cooldown';
             if (statusData.next_claim_time) {
                 const nct = new Date(statusData.next_claim_time);
                 if (!isNaN(nct.getTime())) {
@@ -1958,7 +1958,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 text = 'Already claimed today — come back tomorrow.';
             }
         } else {
-            color = '#15803d'; label = '✅ Available';
+            color = '#34d399'; label = '✅ Available';
             text = 'Claim your 100 G$ daily reward now!';
         }
         banner.innerHTML = '<div style="display:flex;align-items:center;gap:0.5rem;background:var(--card-soft);border:1px solid ' + color + '55;border-radius:12px;padding:0.7rem 0.85rem;font-size:0.82rem;line-height:1.5;color:var(--text);">'
@@ -1980,22 +1980,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 return;
             }
             const statusColors = {
-                completed: { bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', text: '#16a34a' },
-                approved:  { bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', text: '#16a34a' },
-                pending:   { bg: 'rgba(217,119,6,0.12)', border: 'rgba(217,119,6,0.3)', text: '#d97706' },
-                rejected:  { bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.3)', text: '#dc2626' },
-                failed:    { bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.3)', text: '#dc2626' }
+                completed: { bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.3)', text: '#34d399' },
+                approved:  { bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.3)', text: '#34d399' },
+                pending:   { bg: 'rgba(251,191,36,0.12)', border: 'rgba(251,191,36,0.3)', text: '#fcd34d' },
+                rejected:  { bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.3)', text: '#f87171' },
+                failed:    { bg: 'rgba(248,113,113,0.1)', border: 'rgba(248,113,113,0.3)', text: '#f87171' }
             };
             listEl.innerHTML = data.transactions.map(function (tx) {
                 const platformIcon = tx.platform === 'twitter' ? '🐦' : (tx.platform === 'telegram' ? '📱' : '💬');
                 const platformName = tx.platform === 'twitter' ? 'Twitter' : (tx.platform === 'telegram' ? 'Telegram' : (tx.platform || 'Task'));
-                const sc = statusColors[tx.status] || { bg: 'rgba(67,56,43,0.06)', border: 'var(--card-border)', text: 'var(--text-dim)' };
+                const sc = statusColors[tx.status] || { bg: 'rgba(255,255,255,0.06)', border: 'var(--card-border)', text: 'var(--text-dim)' };
                 const labelMap = { completed: 'Approved', approved: 'Approved', pending: 'Pending', rejected: 'Rejected', failed: 'Failed' };
                 const badge = '<span style="font-size:0.62rem;padding:0.15rem 0.4rem;border-radius:10px;background:' + sc.bg + ';border:1px solid ' + sc.border + ';color:' + sc.text + ';font-weight:600;">' + (labelMap[tx.status] || tx.status) + '</span>';
                 const reason = tx.status === 'rejected' && tx.rejection_reason
-                    ? '<div style="font-size:0.68rem;color:#dc2626;margin-top:0.25rem;">Reason: ' + tx.rejection_reason + '</div>' : '';
+                    ? '<div style="font-size:0.68rem;color:#f87171;margin-top:0.25rem;">Reason: ' + tx.rejection_reason + '</div>' : '';
                 const link = tx.explorer_url
-                    ? '<a href="' + tx.explorer_url + '" target="_blank" rel="noopener" style="font-size:0.68rem;color:#2563eb;text-decoration:none;">View TX ↗</a>' : '';
+                    ? '<a href="' + tx.explorer_url + '" target="_blank" rel="noopener" style="font-size:0.68rem;color:#60a5fa;text-decoration:none;">View TX ↗</a>' : '';
                 const amt = parseFloat(tx.reward_amount) || 0;
                 return '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:0.55rem 0.25rem;border-bottom:1px solid var(--card-border);gap:0.5rem;">'
                     + '<div style="flex:1;min-width:0;">'
@@ -2003,12 +2003,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     + '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.15rem;">' + (tx.created_at ? new Date(tx.created_at).toLocaleString() : '') + '</div>'
                     + reason + link
                     + '</div>'
-                    + '<div style="flex-shrink:0;text-align:right;font-size:0.82rem;font-weight:700;color:' + (tx.status === 'completed' || tx.status === 'approved' ? '#16a34a' : 'var(--text-dim)') + ';">'
+                    + '<div style="flex-shrink:0;text-align:right;font-size:0.82rem;font-weight:700;color:' + (tx.status === 'completed' || tx.status === 'approved' ? '#34d399' : 'var(--text-dim)') + ';">'
                     + (tx.status === 'completed' || tx.status === 'approved' ? '+' : '') + amt + ' G$</div>'
                     + '</div>';
             }).join('');
         }).catch(function (err) {
-            listEl.innerHTML = '<div style="text-align:center;padding:1.25rem 0.5rem;color:#dc2626;font-size:0.82rem;">❌ Failed to load history: ' + (err && err.message ? err.message : 'network error') + '</div>';
+            listEl.innerHTML = '<div style="text-align:center;padding:1.25rem 0.5rem;color:#f87171;font-size:0.82rem;">❌ Failed to load history: ' + (err && err.message ? err.message : 'network error') + '</div>';
         });
     }
 
@@ -2062,10 +2062,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 window._wlDailyCustomMessage = result.custom_message;
                 messageDisplay.textContent = result.custom_message;
             } else {
-                messageDisplay.innerHTML = '<span style="color:#dc2626;">Error loading message. Please try again.</span>';
+                messageDisplay.innerHTML = '<span style="color:#f87171;">Error loading message. Please try again.</span>';
             }
         } catch (e) {
-            messageDisplay.innerHTML = '<span style="color:#dc2626;">Network error loading message. Please try again.</span>';
+            messageDisplay.innerHTML = '<span style="color:#f87171;">Network error loading message. Please try again.</span>';
         }
     }
 
@@ -2073,7 +2073,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         const msg = window._wlDailyCustomMessage;
         if (!msg) return;
         navigator.clipboard.writeText(msg).then(function () {
-            _wlDailyFlash('✅ Message copied to clipboard!', '#15803d');
+            _wlDailyFlash('✅ Message copied to clipboard!', '#34d399');
         }).catch(function () {
             const ta = document.createElement('textarea');
             ta.value = msg;
@@ -2081,8 +2081,8 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             ta.style.opacity = '0';
             document.body.appendChild(ta);
             ta.focus(); ta.select();
-            try { document.execCommand('copy'); _wlDailyFlash('✅ Message copied to clipboard!', '#15803d'); }
-            catch (e) { _wlDailyFlash('❌ Failed to copy message. Please copy it manually.', '#dc2626'); }
+            try { document.execCommand('copy'); _wlDailyFlash('✅ Message copied to clipboard!', '#34d399'); }
+            catch (e) { _wlDailyFlash('❌ Failed to copy message. Please copy it manually.', '#f87171'); }
             document.body.removeChild(ta);
         });
     }
@@ -2098,22 +2098,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     async function submitWalletDailyTask(event) {
         if (!_wlDailySelectedPlatform) {
-            _wlDailyFlash('⚠️ Please select a platform first.', '#d97706');
+            _wlDailyFlash('⚠️ Please select a platform first.', '#fcd34d');
             return;
         }
         const taskUrl = _wlDailyEl('wlTaskUrlInput').value.trim();
         if (!taskUrl) {
-            _wlDailyFlash('⚠️ Please enter your ' + (_wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram') + ' post URL.', '#d97706');
+            _wlDailyFlash('⚠️ Please enter your ' + (_wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram') + ' post URL.', '#fcd34d');
             return;
         }
         if (_wlDailySelectedPlatform === 'twitter') {
             if (!taskUrl.startsWith('https://twitter.com/') && !taskUrl.startsWith('https://x.com/')) {
-                _wlDailyFlash('⚠️ Please enter a valid Twitter post URL.', '#d97706');
+                _wlDailyFlash('⚠️ Please enter a valid Twitter post URL.', '#fcd34d');
                 return;
             }
         } else if (_wlDailySelectedPlatform === 'telegram') {
             if (!taskUrl.startsWith('https://t.me/')) {
-                _wlDailyFlash('⚠️ Please enter a valid Telegram post URL.', '#d97706');
+                _wlDailyFlash('⚠️ Please enter a valid Telegram post URL.', '#fcd34d');
                 return;
             }
         }
@@ -2132,14 +2132,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             if (result && result.success) {
                 if (result.pending) {
                     const displayName = _wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram';
-                    _wlDailyFlash('✅ Submission successful! Your ' + displayName + ' post is waiting for admin approval.', '#15803d');
+                    _wlDailyFlash('✅ Submission successful! Your ' + displayName + ' post is waiting for admin approval.', '#34d399');
                     _wlDailyEl('wlTaskSubmissionForm').style.display = 'none';
                     _wlDailyEl('wlPlatformSelection').style.display = 'none';
                     const statusData = { has_pending_submission: true, pending_platform: _wlDailySelectedPlatform, can_claim: false };
                     _wlDailyStatusBanner(statusData);
                     _wlDailyLoadHistory();
                 } else {
-                    _wlDailyFlash('🎉 Successfully earned 100 G$ from ' + (_wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram') + ' task!', '#15803d');
+                    _wlDailyFlash('🎉 Successfully earned 100 G$ from ' + (_wlDailySelectedPlatform === 'twitter' ? 'Twitter' : 'Telegram') + ' task!', '#34d399');
                     _wlDailySelectedPlatform = null;
                     _wlDailyEl('wlTaskSubmissionForm').style.display = 'none';
                     _wlDailyEl('wlPlatformSelection').style.display = 'block';
@@ -2151,10 +2151,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 }
             } else {
                 const errMsg = (result && (result.error || result.message)) || 'Failed to claim task';
-                _wlDailyFlash('❌ ' + errMsg, '#dc2626');
+                _wlDailyFlash('❌ ' + errMsg, '#f87171');
             }
         } catch (e) {
-            _wlDailyFlash('❌ Network error. Please check your connection and try again.', '#dc2626');
+            _wlDailyFlash('❌ Network error. Please check your connection and try again.', '#f87171');
         } finally {
             btn.disabled = false;
             btn.textContent = originalText;
@@ -2498,7 +2498,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         + (r.refund_tx_hash ? ' · <a href="https://celoscan.io/tx/' + r.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">Refund tx ↗</a>' : '')
                         + '</div>';
                 }
-                return '<div style="padding:0.5rem 0.6rem;border-bottom:1px solid rgba(67,56,43,0.08);font-size:0.8rem;">'
+                return '<div style="padding:0.5rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.08);font-size:0.8rem;">'
                     + '<div style="display:flex;justify-content:space-between;align-items:center;">'
                     + '<div><div style="font-weight:600">' + gd + ' G$ → ₱' + php + '</div>'
                     + '<div style="color:var(--text-dim);font-size:0.72rem">' + date + ' · ' + r.gcash_number + '</div></div>'
@@ -3563,7 +3563,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     amountInput.dispatchEvent(new Event('input', { bubbles: true }));
                 }
                 if (result) {
-                    result.innerHTML = '<div style="color:#16a34a;">✅ GoodMarket Agent prepared this G$ stream. Review the wallet prompt before signing.</div>';
+                    result.innerHTML = '<div style="color:#34d399;">✅ GoodMarket Agent prepared this G$ stream. Review the wallet prompt before signing.</div>';
                     result.style.display = 'block';
                 }
                 if (typeof calculateStreamBuffer === 'function') await calculateStreamBuffer();
@@ -4559,18 +4559,18 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     label.textContent = 'Use MetaMask / WalletConnect';
                     icon.textContent = '⚠️';
                     btn.disabled = true;
-                    setStatus('You still have a claim on another network, but this wallet cannot safely prompt it.', '#d97706');
+                    setStatus('You still have a claim on another network, but this wallet cannot safely prompt it.', '#fcd34d');
                 } else if (!claims.celo || !claims.celo.can_claim) {
                     if (claims.celo && claims.celo.reason === 'ubi_paused') {
                         label.textContent = 'UBI Claim Paused';
                         icon.textContent = '⏸️';
                         btn.disabled = true;
-                        setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now, but we will auto-checkand enable the button the moment it resumes.', '#d97706');
+                        setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now, but we will auto-checkand enable the button the moment it resumes.', '#fcd34d');
                     } else if (claims.celo && claims.celo.reason === 'ubi_not_started') {
                         label.textContent = 'Claim Not Started';
                         icon.textContent = '⏳';
                         btn.disabled = true;
-                        setStatus('The GoodDollar UBI claim period has not started yet.', '#d97706');
+                        setStatus('The GoodDollar UBI claim period has not started yet.', '#fcd34d');
                     } else {
                         label.textContent = 'Already Claimed Today';
                         icon.textContent = '✅';
@@ -4619,12 +4619,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     label.textContent = 'UBI Claim Paused';
                     icon.textContent = '⏸️';
                     btn.disabled = true;
-                    setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now, but we will auto-checkand enable the button the moment it resumes.', '#d97706');
+                    setStatus('The GoodDollar UBI pool is currently paused — no user can claim right now, but we will auto-checkand enable the button the moment it resumes.', '#fcd34d');
                 } else if (d.reason === 'ubi_not_started') {
                     label.textContent = 'Claim Not Started';
                     icon.textContent = '⏳';
                     btn.disabled = true;
-                    setStatus('The GoodDollar UBI claim period has not started yet.', '#d97706');
+                    setStatus('The GoodDollar UBI claim period has not started yet.', '#fcd34d');
                 } else {
                     label.textContent = 'Already Claimed Today';
                     icon.textContent = '✅';
@@ -4717,7 +4717,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         function pollReceipt(txHash, attempts) {
             if (attempts <= 0) {
                 btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
-                setStatus('Timed out. Check explorer for: ' + txHash.slice(0,12) + '…', '#d97706');
+                setStatus('Timed out. Check explorer for: ' + txHash.slice(0,12) + '…', '#fcd34d');
                 return;
             }
             setTimeout(function() {
@@ -4833,18 +4833,18 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             if (existing) existing.remove();
             const card = document.createElement('div');
             card.id = 'fvTrustWalletBlocker';
-            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#92400e;font-size:0.86rem;line-height:1.5;text-align:left;';
+            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#fcd34d;font-size:0.86rem;line-height:1.5;text-align:left;';
             card.innerHTML =
-                '<div style="font-weight:700;color:#b45309;margin-bottom:0.35rem;">⚠️ Trust Wallet detected</div>' +
+                '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.35rem;">⚠️ Trust Wallet detected</div>' +
                 '<div style="margin-bottom:0.65rem;">Trust Wallet\'s in-app browser does not reliably deliver Face ID signatures back to this page. To verify reliably, please log out and reconnect with <strong>WalletConnect</strong> — Trust will then handle the signature inside its main app instead of the dApp browser tab.</div>' +
                 '<div style="display:flex;flex-direction:column;gap:0.45rem;">' +
                   '<a href="/logout" style="display:block;text-align:center;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;text-decoration:none;font-weight:600;padding:0.55rem 1rem;border-radius:10px;font-size:0.9rem;">🔐 Log out & reconnect via WalletConnect</a>' +
-                  '<button type="button" id="fvTrustForceTryBtn" style="background:transparent;border:1px solid rgba(217,119,6,0.45);color:#92400e;font-size:0.8rem;font-weight:500;padding:0.45rem 0.9rem;border-radius:10px;cursor:pointer;">Try in-app sign anyway (may hang)</button>' +
+                  '<button type="button" id="fvTrustForceTryBtn" style="background:transparent;border:1px solid rgba(251,191,36,0.45);color:#fcd34d;font-size:0.8rem;font-weight:500;padding:0.45rem 0.9rem;border-radius:10px;cursor:pointer;">Try in-app sign anyway (may hang)</button>' +
                 '</div>';
             // Set the status text BEFORE appending the card. setStatus()
             // writes to status.innerHTML which would otherwise wipe the card
             // we just appended (status === wrap, both point at #ubiClaimStatus).
-            setStatus('Trust Wallet in-app signing is unreliable — please switch to WalletConnect.', '#d97706');
+            setStatus('Trust Wallet in-app signing is unreliable — please switch to WalletConnect.', '#fcd34d');
             wrap.appendChild(card);
             const forceBtn = card.querySelector('#fvTrustForceTryBtn');
             if (forceBtn) {
@@ -4876,7 +4876,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             if (existing) existing.remove();
             const card = document.createElement('div');
             card.id = 'fvMiniPayHandoff';
-            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#92400e;font-size:0.86rem;line-height:1.5;text-align:left;';
+            card.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#fcd34d;font-size:0.86rem;line-height:1.5;text-align:left;';
             // Truncate link for display so the card stays tidy on mobile.
             const shortLink = link.length > 64 ? link.slice(0, 48) + '…' + link.slice(-12) : link;
             // Note: we intentionally do NOT render an "Open in Chrome"
@@ -4888,15 +4888,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             // for the user to manually paste the link into their phone's
             // native browser, so the UI funnels everyone through Copy.
             card.innerHTML =
-                '<div style="font-weight:700;color:#b45309;margin-bottom:0.35rem;">⚠️ MiniPay detected</div>' +
+                '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.35rem;">⚠️ MiniPay detected</div>' +
                 '<div style="margin-bottom:0.65rem;">Face Verification often fails inside MiniPay\'s in-app browser (the face scan sometimes errors out on Opera\'s restricted WebView), so for the most reliable experience we recommend finishing it outside MiniPay. Tap <strong>Copy</strong> below, then <strong>open Chrome (or your preferred browser) outside MiniPay and paste the link there</strong> to complete verification. Your signature is already embedded in the link — you will <em>not</em> need to sign or reconnect. After verifying, return to MiniPay and reopen GoodMarket to claim your G$.</div>' +
                 '<div style="display:flex;flex-direction:column;gap:0.45rem;">' +
-                  '<div style="display:flex;gap:0.4rem;align-items:center;background:rgba(217,119,6,0.07);border:1px solid rgba(217,119,6,0.28);border-radius:10px;padding:0.45rem 0.6rem;font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.72rem;color:#92400e;overflow:hidden;">' +
+                  '<div style="display:flex;gap:0.4rem;align-items:center;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.28);border-radius:10px;padding:0.45rem 0.6rem;font-family:ui-monospace,SFMono-Regular,monospace;font-size:0.72rem;color:#fcd34d;overflow:hidden;">' +
                     '<span id="fvMiniPayLinkPreview" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + shortLink + '</span>' +
                     '<button type="button" id="fvMiniPayCopyBtn" style="background:linear-gradient(135deg,#7c3aed,#6d28d9);border:1px solid rgba(124,58,237,0.7);color:#fff;font-size:0.78rem;font-weight:700;padding:0.4rem 0.8rem;border-radius:8px;cursor:pointer;white-space:nowrap;">📋 Copy link</button>' +
                   '</div>' +
-                  '<div style="font-size:0.78rem;color:#92400e;line-height:1.45;background:rgba(217,119,6,0.06);border-radius:8px;padding:0.5rem 0.7rem;">' +
-                    '<div style="font-weight:700;color:#b45309;margin-bottom:0.25rem;">Next steps</div>' +
+                  '<div style="font-size:0.78rem;color:#fcd34d;line-height:1.45;background:rgba(251,191,36,0.06);border-radius:8px;padding:0.5rem 0.7rem;">' +
+                    '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.25rem;">Next steps</div>' +
                     '<ol style="margin:0;padding-left:1.1rem;">' +
                       '<li>Tap <strong>Copy link</strong> above.</li>' +
                       '<li>Leave MiniPay and open <strong>Chrome</strong> (or Safari / any browser outside MiniPay).</li>' +
@@ -4904,14 +4904,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                       '<li>Return to MiniPay, reopen GoodMarket, and claim your G$.</li>' +
                     '</ol>' +
                   '</div>' +
-                  '<button type="button" id="fvMiniPayForceTryBtn" style="background:transparent;border:1px solid rgba(217,119,6,0.45);color:#92400e;font-size:0.78rem;font-weight:500;padding:0.4rem 0.9rem;border-radius:10px;cursor:pointer;">Try inside MiniPay anyway</button>' +
+                  '<button type="button" id="fvMiniPayForceTryBtn" style="background:transparent;border:1px solid rgba(251,191,36,0.45);color:#fcd34d;font-size:0.78rem;font-weight:500;padding:0.4rem 0.9rem;border-radius:10px;cursor:pointer;">Try inside MiniPay anyway</button>' +
                 '</div>' +
-                '<div id="fvMiniPayFeedback" style="margin-top:0.55rem;font-size:0.8rem;color:#92400e;min-height:1em;" aria-live="polite"></div>';
+                '<div id="fvMiniPayFeedback" style="margin-top:0.55rem;font-size:0.8rem;color:#fcd34d;min-height:1em;" aria-live="polite"></div>';
             // Write the outer status BEFORE appending the card — setStatus()
             // replaces status.innerHTML, so any later call while the card is
             // a child of #ubiClaimStatus would destroy it. Per-copy feedback
             // goes into #fvMiniPayFeedback (inside the card) instead.
-            setStatus('Copy the link below and open it in Chrome (outside MiniPay) to finish Face Verification.', '#d97706');
+            setStatus('Copy the link below and open it in Chrome (outside MiniPay) to finish Face Verification.', '#fcd34d');
             wrap.appendChild(card);
 
             const copyBtn = card.querySelector('#fvMiniPayCopyBtn');
@@ -4921,7 +4921,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             function _setMiniPayFeedback(text, color) {
                 if (!feedback) return;
                 feedback.textContent = text || '';
-                feedback.style.color = color || '#92400e';
+                feedback.style.color = color || '#fcd34d';
             }
 
             function _fallbackCopy(text) {
@@ -4952,7 +4952,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         copyBtn.textContent = '✅ Copied';
                         // Feedback goes inside the card (setStatus would
                         // wipe the card's innerHTML — see note above).
-                        _setMiniPayFeedback('Link copied — now leave MiniPay, open Chrome (or your preferred browser), and paste the link there to finish Face Verification.', '#15803d');
+                        _setMiniPayFeedback('Link copied — now leave MiniPay, open Chrome (or your preferred browser), and paste the link there to finish Face Verification.', '#34d399');
                         setTimeout(() => { copyBtn.textContent = '📋 Copy link'; }, 2500);
                     } else {
                         // Last-resort: expose the raw link inline so the user
@@ -4962,7 +4962,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                             preview.style.wordBreak = 'break-all';
                             preview.textContent = link;
                         }
-                        _setMiniPayFeedback('Could not copy automatically — long-press the link above to copy it manually.', '#d97706');
+                        _setMiniPayFeedback('Could not copy automatically — long-press the link above to copy it manually.', '#fcd34d');
                     }
                 });
             }
@@ -4977,7 +4977,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
         function startFV() {
             if (!window._fvGenerateLink) {
-                setStatus('Wallet library loading — please wait a moment and try again.', '#d97706');
+                setStatus('Wallet library loading — please wait a moment and try again.', '#fcd34d');
                 return;
             }
 
@@ -5002,7 +5002,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 forcedFromTrust
                     ? 'Trying Trust Wallet in-app signing… if it hangs, log out and reconnect with WalletConnect.'
                     : 'Approve the Celo network switch (if prompted) and the signature request in your wallet.',
-                forcedFromTrust ? '#d97706' : '#7c3aed'
+                forcedFromTrust ? '#fcd34d' : '#7c3aed'
             );
 
             // Some mobile dApp browsers (notably Trust Wallet builds) can
@@ -5025,11 +5025,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (_fvSettled) return;
                 const wrap = document.getElementById('ubiClaimStatus');
                 if (_isTrustCtx) {
-                    setStatus('Trust Wallet is not recommended for Face Verification — please follow the guidance below.', '#d97706');
+                    setStatus('Trust Wallet is not recommended for Face Verification — please follow the guidance below.', '#fcd34d');
                     if (!wrap || document.getElementById('fvTrustStuckNotice')) return;
                     const notice = document.createElement('div');
                     notice.id = 'fvTrustStuckNotice';
-                    notice.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#92400e;font-size:0.86rem;line-height:1.5;text-align:left;';
+                    notice.style.cssText = 'margin-top:0.8rem;padding:0.95rem 1.1rem;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.45);border-radius:12px;color:#fcd34d;font-size:0.86rem;line-height:1.5;text-align:left;';
                     notice.innerHTML =
                         '<div style="font-weight:700;color:#fbbf24;margin-bottom:0.45rem;">⚠️ Trust Wallet is not recommended for Face Verification</div>' +
                         '<div style="margin-bottom:0.6rem;">Trust Wallet\'s in-app browser can sign you in and let you claim daily G$, but its Face Verification flow is unreliable — the wallet often signs the request but never delivers the signature back to this page, leaving you stuck on <em>"Preparing verification…"</em>.</div>' +
@@ -5039,13 +5039,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     wrap.appendChild(notice);
                     return;
                 }
-                setStatus('Still waiting on your wallet… If you already approved and nothing happened, your wallet may not be delivering the signature back to this page.', '#d97706');
+                setStatus('Still waiting on your wallet… If you already approved and nothing happened, your wallet may not be delivering the signature back to this page.', '#fcd34d');
                 if (!wrap || document.getElementById('fvHangEscapeHatch')) return;
                 const esc = document.createElement('div');
                 esc.id = 'fvHangEscapeHatch';
                 esc.style.cssText = 'margin-top:0.7rem;padding:0.75rem 1rem;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.4);border-radius:10px;text-align:center;';
                 esc.innerHTML =
-                    '<div style="font-size:0.82rem;color:#6d28d9;margin-bottom:0.45rem;">Stuck? Reconnect via WalletConnect for a more reliable signing flow.</div>' +
+                    '<div style="font-size:0.82rem;color:#a78bfa;margin-bottom:0.45rem;">Stuck? Reconnect via WalletConnect for a more reliable signing flow.</div>' +
                     '<a href="/logout" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;text-decoration:none;font-weight:600;padding:0.5rem 1rem;border-radius:8px;font-size:0.85rem;">🔐 Log out & switch to WalletConnect</a>';
                 wrap.appendChild(esc);
             }, _isTrustCtx ? 12000 : 25000);
@@ -5713,7 +5713,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 }
             }
             if (!provider) {
-                setStatus('⚠️ No wallet detected. Please open this page in MetaMask, Trust Wallet, MiniPay, or reconnect using WalletConnect to sign transactions.', '#d97706');
+                setStatus('⚠️ No wallet detected. Please open this page in MetaMask, Trust Wallet, MiniPay, or reconnect using WalletConnect to sign transactions.', '#fcd34d');
                 return;
             }
 
@@ -5961,7 +5961,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                         console.warn('[claim] MiniPay direct claim failed (insufficient gas). Running faucet + swap flow...');
 
                         // Step 1: Show message about insufficient gas and starting CELO faucet
-                        setStatus('⚠️ Insufficient stablecoin for gas. We\'re topping up your CELO from GoodDollar...', '#d97706');
+                        setStatus('⚠️ Insufficient stablecoin for gas. We\'re topping up your CELO from GoodDollar...', '#fcd34d');
 
                         if (window.MPGasTopUp && window.MPGasTopUp.ensureToppedUp) {
                             try {
@@ -6006,7 +6006,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                             throw sendErr;
                         }
                     } else {
-                        setStatus('Gas became insufficient at send time. Re-running faucet fallback once…', '#d97706');
+                        setStatus('Gas became insufficient at send time. Re-running faucet fallback once…', '#fcd34d');
                         await ensureGasReadyBeforeClaim();
                         txHash = await sendCeloClaim();
                     }
@@ -6166,15 +6166,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const caps = getClaimWalletCapabilities();
             const claims = (claimAvailability && claimAvailability.claims) || {};
             if (network === 'fuse' && claims.fuse && claims.fuse.is_available === false) {
-                setStatus(claims.fuse.error || 'Fuse claim is temporarily not available.', '#d97706');
+                setStatus(claims.fuse.error || 'Fuse claim is temporarily not available.', '#fcd34d');
                 return;
             }
             if (network === 'fuse' && !caps.supportsFuse) {
-                setStatus('Fuse claiming needs MetaMask or a compatible WalletConnect wallet.', '#d97706');
+                setStatus('Fuse claiming needs MetaMask or a compatible WalletConnect wallet.', '#fcd34d');
                 return;
             }
             if (network === 'xdc' && !caps.supportsXdc) {
-                setStatus('XDC claiming needs MetaMask or a compatible WalletConnect wallet.', '#d97706');
+                setStatus('XDC claiming needs MetaMask or a compatible WalletConnect wallet.', '#fcd34d');
                 return;
             }
 
@@ -6202,7 +6202,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 logGoodMarketClaim(txHash, network, 'submitted');
                 const explorer = network === 'fuse' ? 'https://explorer.fuse.io/tx/' : 'https://xdcscan.com/tx/';
                 setStatus(
-                    `✅ ${network.toUpperCase()} claim submitted: <a href="${explorer}${txHash}" target="_blank" rel="noopener" style="color:#15803d;">${txHash.slice(0, 10)}...${txHash.slice(-6)}</a>`,
+                    `✅ ${network.toUpperCase()} claim submitted: <a href="${explorer}${txHash}" target="_blank" rel="noopener" style="color:#34d399;">${txHash.slice(0, 10)}...${txHash.slice(-6)}</a>`,
                     'var(--green)'
                 );
                 try { window.showClaimCelebration && window.showClaimCelebration({ networks: [network] }); } catch (_) {}
@@ -6312,11 +6312,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const info = claims[network] || {};
             const supported = network === 'celo' || caps.supportsXdc;
             if (!supported) {
-                setStatus(`${network.toUpperCase()} claiming needs MetaMask or a compatible WalletConnect wallet.`, '#d97706');
+                setStatus(`${network.toUpperCase()} claiming needs MetaMask or a compatible WalletConnect wallet.`, '#fcd34d');
                 return;
             }
             if (!info.can_claim || info.is_available === false) {
-                setStatus(`${network.toUpperCase()} is not claimable right now${info.blocked_reason ? ' — ' + info.blocked_reason : '.'}`, '#d97706');
+                setStatus(`${network.toUpperCase()} is not claimable right now${info.blocked_reason ? ' — ' + info.blocked_reason : '.'}`, '#fcd34d');
                 return;
             }
             if (needsVerification) { startFV(); return; }
@@ -6369,7 +6369,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const p = new URLSearchParams(window.location.search);
             if (p.get('fv_pending') === '1') {
                 openModal('claimModal');
-                setStatus('✅ Face verification submitted! Re-checking your eligibility…', '#d97706');
+                setStatus('✅ Face verification submitted! Re-checking your eligibility…', '#fcd34d');
                 history.replaceState(null, '', window.location.pathname);
             } else if (p.get('fv_failed') === '1') {
                 openModal('claimModal');
