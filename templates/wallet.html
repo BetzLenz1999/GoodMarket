@@ -2284,20 +2284,27 @@
         .bn-item:active { background: rgba(var(--accent-rgb),0.14); }
         .bn-item:hover .bn-label { text-decoration: none; }
 
+        /* Per-destination color coding. The chip is a SOLID saturated gradient
+           carrying a white glyph, not a 16%-opacity wash: an alpha wash over the
+           near-black nav measured only ~1.2-1.4:1 against the bar, so the chips
+           were invisible and the bar read as four grey labels. Each gradient
+           stays dark enough for white to clear 4.5:1 (the glyph is a large
+           symbol, but the darker end must still pass) while sitting clearly
+           apart from the #0B0F2A nav. Labels keep a light tint of the same hue
+           so the color coding survives when the chip is small. */
+        .bn-send      { --nav-g1: #7c3aed; --nav-g2: #5b21b6; --nav-c: #c4b5fd; }
+        .bn-receive   { --nav-g1: #0e7490; --nav-g2: #155e75; --nav-c: #67e8f9; }
+        .bn-earn      { --nav-g1: #047857; --nav-g2: #065f46; --nav-c: #6ee7b7; }
+        .bn-more      { --nav-g1: #2563eb; --nav-g2: #1e40af; --nav-c: #93c5fd; }
+
         .bn-item .bn-icon {
-            box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.14), 0 2px 6px rgba(0,0,0,0.3);
+            color: #ffffff;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--nav-g1), var(--nav-g2));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 3px 10px rgba(0,0,0,0.4);
         }
-
-        /* Per-destination color coding: chips + labels each get a distinct
-           accent so the bar reads at a glance. Violet leads (it is the primary
-           action), the rest stay on the app's cool web3 ramp. */
-        .bn-send      { --nav-c: #a78bfa; --nav-bg: rgba(124,58,237,0.2); }
-        .bn-receive   { --nav-c: #22d3ee; --nav-bg: rgba(34,211,238,0.16); }
-        .bn-earn      { --nav-c: #34d399; --nav-bg: rgba(52,211,153,0.16); }
-        .bn-more      { --nav-c: #93c5fd; --nav-bg: rgba(96,165,250,0.16); }
-
-        .bn-item .bn-icon { color: var(--nav-c); background: var(--nav-bg) ; }
-        .bn-item .bn-label { color: var(--nav-c); }
+        .bn-item .bn-label { color: var(--nav-c); font-weight: 800; }
+        .bn-item:active .bn-icon { transform: scale(0.94); }
         .bn-sheet-overlay { background: rgba(4,6,18,0.68); }
         .bn-sheet { background: #141034; border-top-color: var(--card-border); box-shadow: 0 -12px 40px rgba(0,0,0,0.5); }
         .bn-sheet-handle { background: rgba(255,255,255,0.18); }
