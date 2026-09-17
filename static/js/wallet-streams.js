@@ -83,27 +83,27 @@
             
             // For active streams, show real-time streamed amount
             let streamedAmount = '';
-            let statusColor = '#dc2626'; // stopped color default
+            let statusColor = '#f87171'; // stopped color default
             let statusText = 'STOPPED';
             
             if (isActuallyActive && item.rate > 0) {
                 const streamed = calculateStreamedAmount(item.rate, item.startTime || item.timestamp, true);
-                streamedAmount = `<div style="font-size:0.75rem;color:#16a34a;margin-top:0.2rem;">⏱️ Streamed: ${streamed.toFixed(4)} G$</div>`;
-                statusColor = '#16a34a';
+                streamedAmount = `<div style="font-size:0.75rem;color:#34d399;margin-top:0.2rem;">⏱️ Streamed: ${streamed.toFixed(4)} G$</div>`;
+                statusColor = '#34d399';
                 statusText = 'ACTIVE';
             } else if (item.totalStreamed) {
                 streamedAmount = `<div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.2rem;">⏱️ Total: ${item.totalStreamed.toFixed(4)} G$</div>`;
-                statusColor = '#dc2626';
+                statusColor = '#f87171';
                 statusText = 'STOPPED';
             }
             
             const actionBtns = isActuallyActive ? `
-                <button onclick="loadFromHistory(${idx})" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(8,145,178,0.35);background:rgba(8,145,178,0.08);color:#0e7490;font-size:0.7rem;cursor:pointer;margin-right:0.25rem;">Load</button>
-                <button onclick="handleStopFromHistory('${item.receiver}')" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(220,38,38,0.3);background:rgba(220,38,38,0.06);color:#dc2626;font-size:0.7rem;cursor:pointer;">Stop</button>
+                <button onclick="loadFromHistory(${idx})" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(34,211,238,0.35);background:rgba(34,211,238,0.08);color:#67e8f9;font-size:0.7rem;cursor:pointer;margin-right:0.25rem;">Load</button>
+                <button onclick="handleStopFromHistory('${item.receiver}')" style="padding:0.25rem 0.5rem;border-radius:6px;border:1px solid rgba(248,113,113,0.3);background:rgba(248,113,113,0.06);color:#f87171;font-size:0.7rem;cursor:pointer;">Stop</button>
             ` : '';
             
             return `
-                <div style="background:rgba(67,56,43,0.03);border:1px solid ${isActuallyActive ? 'rgba(22,163,74,0.25)' : 'rgba(67,56,43,0.09)'};border-radius:8px;padding:0.6rem;margin-bottom:0.5rem;">
+                <div style="background:rgba(255,255,255,0.03);border:1px solid ${isActuallyActive ? 'rgba(52,211,153,0.25)' : 'rgba(255,255,255,0.09)'};border-radius:8px;padding:0.6rem;margin-bottom:0.5rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
                         <span style="font-size:0.75rem;color:${statusColor};font-weight:600;text-transform:uppercase;">● ${statusText}</span>
                         <span style="font-size:0.7rem;color:var(--text-muted);">${date}</span>
@@ -284,7 +284,7 @@
                 const remaining = userBalance - data.required_buffer;
                 if (remainingEl) {
                     remainingEl.textContent = `${remaining.toFixed(2)} G$`;
-                    remainingEl.style.color = remaining >= 0 ? '#16a34a' : '#dc2626';
+                    remainingEl.style.color = remaining >= 0 ? '#34d399' : '#f87171';
                 }
                 
                 // Check balance and show warning
@@ -326,15 +326,15 @@
                 const dailyRate = (data.net_flow_rate / 1e18 * 86400).toFixed(4);
                 if (badge) {
                     badge.textContent = 'Active';
-                    badge.style.background = 'rgba(22,163,74,0.12)';
-                    badge.style.color = '#15803d';
+                    badge.style.background = 'rgba(52,211,153,0.12)';
+                    badge.style.color = '#34d399';
                 }
                 if (rate) rate.textContent = `${dailyRate} G$/day`;
                 if (from) from.textContent = 'Someone';
             } else {
                 if (badge) {
                     badge.textContent = 'No incoming stream';
-                    badge.style.background = 'rgba(67,56,43,0.07)';
+                    badge.style.background = 'rgba(255,255,255,0.07)';
                     badge.style.color = 'var(--text-dim)';
                 }
                 if (rate) rate.textContent = '— G$/day';
@@ -452,20 +452,20 @@
         // Validate inputs
         if (!receiver || !/^0x[a-fA-F0-9]{40}$/.test(receiver)) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid wallet address</div>';
+            result.innerHTML = '<div style="color:#f87171;">❌ Please enter a valid wallet address</div>';
             result.style.display = 'block';
             return;
         }
         
         if (!amount || amount <= 0) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid stream amount</div>';
+            result.innerHTML = '<div style="color:#f87171;">❌ Please enter a valid stream amount</div>';
             result.style.display = 'block';
             return;
         }
         if (document.getElementById('streamBalanceWarning')?.style.display !== 'none' && !document.getElementById('streamRiskAck')?.checked) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#dc2626;">❌ Please confirm the stream risk warning first.</div>';
+            result.innerHTML = '<div style="color:#f87171;">❌ Please confirm the stream risk warning first.</div>';
             result.style.display = 'block';
             return;
         }
@@ -531,7 +531,7 @@
             }
             
             result.innerHTML = `
-                <div style="color:#16a34a;margin-bottom:0.5rem;">✅ Stream created!</div>
+                <div style="color:#34d399;margin-bottom:0.5rem;">✅ Stream created!</div>
                 <div style="color:var(--text-dim);font-size:0.75rem;">TX: ${txHash.slice(0, 10)}...</div>
             `;
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-success', {
@@ -550,7 +550,7 @@
             
         } catch (err) {
             const errorMsg = err.message || 'Transaction failed';
-            result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
+            result.innerHTML = `<div style="color:#f87171;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
             window.dispatchEvent(new CustomEvent('goodmarket:ai-tx-failed', {
                 detail: (typeof _gmAiEventDetail === 'function' ? _gmAiEventDetail : (x) => x)({
@@ -572,20 +572,20 @@
         // Validate inputs
         if (!receiver || !/^0x[a-fA-F0-9]{40}$/.test(receiver)) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid wallet address</div>';
+            result.innerHTML = '<div style="color:#f87171;">❌ Please enter a valid wallet address</div>';
             result.style.display = 'block';
             return;
         }
         
         if (amount < 0) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#dc2626;">❌ Please enter a valid amount</div>';
+            result.innerHTML = '<div style="color:#f87171;">❌ Please enter a valid amount</div>';
             result.style.display = 'block';
             return;
         }
         if (document.getElementById('streamBalanceWarning')?.style.display !== 'none' && !document.getElementById('streamRiskAck')?.checked) {
             const result = document.getElementById('streamResult');
-            result.innerHTML = '<div style="color:#dc2626;">❌ Please confirm the stream risk warning first.</div>';
+            result.innerHTML = '<div style="color:#f87171;">❌ Please confirm the stream risk warning first.</div>';
             result.style.display = 'block';
             return;
         }
@@ -631,7 +631,7 @@
             });
             
             result.innerHTML = `
-                <div style="color:#16a34a;margin-bottom:0.5rem;">✅ Stream updated!</div>
+                <div style="color:#34d399;margin-bottom:0.5rem;">✅ Stream updated!</div>
                 <div style="color:var(--text-dim);font-size:0.75rem;">TX: ${txHash.slice(0, 10)}...</div>
             `;
             result.style.display = 'block';
@@ -642,7 +642,7 @@
             
         } catch (err) {
             const errorMsg = err.message || 'Transaction failed';
-            result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
+            result.innerHTML = `<div style="color:#f87171;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
         } finally {
             loading.style.display = 'none';
@@ -731,7 +731,7 @@
             }
             
             result.innerHTML = `
-                <div style="color:#16a34a;margin-bottom:0.5rem;">✅ Stream stopped!</div>
+                <div style="color:#34d399;margin-bottom:0.5rem;">✅ Stream stopped!</div>
                 <div style="color:var(--text-dim);font-size:0.75rem;">Buffer returned. TX: ${txHash.slice(0, 10)}...</div>
             `;
             result.style.display = 'block';
@@ -742,7 +742,7 @@
             
         } catch (err) {
             const errorMsg = err.message || 'Transaction failed';
-            result.innerHTML = `<div style="color:#dc2626;">❌ ${errorMsg}</div>`;
+            result.innerHTML = `<div style="color:#f87171;">❌ ${errorMsg}</div>`;
             result.style.display = 'block';
         } finally {
             loading.style.display = 'none';
