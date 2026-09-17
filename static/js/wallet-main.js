@@ -3699,6 +3699,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         let needsVerification = false;
         let claimAvailability = null;
         let recommendedClaimNetwork = 'celo';
+        // Explicit user pick from a network card's Claim button. Overrides the
+        // Celo-first auto-recommendation while the picked network stays
+        // claimable, so a failing Celo route can never trap the user.
+        let selectedClaimNetwork = null;
         window._walletNeedsFV = false;
         let _countdownInterval = null;
         let _availabilityPollTimer = null;
@@ -4254,6 +4258,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             return { isMiniPay, isWalletConnect, isMetaMask, isTrustWallet, hasInjected, supportsFuse: false, supportsXdc };
         }
 
+        function _claimEsc(text) {
+            return String(text == null ? '' : text)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         function claimNetworkStatusHtml(network, info, caps) {
             const meta = {
                 celo: { icon: '🟢', name: 'Celo', hint: 'Works for MiniPay, MetaMask, WalletConnect and most injected wallets.' },
@@ -4278,6 +4288,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 statusText = 'Not Available';
                 statusClass = 'warning';
                 hint = info.error || `${meta.name} claiming is temporarily not available.`;
+            } else if (info && info.blocked_by === 'celo_identity_verification') {
+                // Backend anchors Face Verification on Celo Identity; without it
+                // no network can be claimed, so say so plainly instead of the
+                // generic "available" copy.
+                statusText = 'Verify Face ID first';
+                statusClass = 'warning';
+                hint = info.blocked_reason || 'Verify Face ID on Celo first — then you can claim on this network.';
             } else if (canClaim && supported) {
                 statusText = `${amount} G$`;
                 statusClass = 'available';
@@ -4300,16 +4317,27 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 hint = info.error || 'Could not check this network right now.';
             }
             const recommended = network === recommendedClaimNetwork && canClaim && supported;
+            const selected = network === selectedClaimNetwork && canClaim && supported;
+            // A card is actionable only when this wallet can actually sign that
+            // network. `executeNetworkClaim` re-checks the same conditions.
+            const actionable = canClaim && supported && !needsVerification;
+            const button = actionable
+                ? `<button type="button" class="claim-card-btn" data-claim-network="${network}"
+                           onclick="window.selectClaimNetwork && window.selectClaimNetwork('${network}')">
+                       ${selected ? '✓ Selected' : `Claim on ${meta.name}`}
+                   </button>`
+                : '';
             return `
-                <div class="claim-network-card ${recommended ? 'is-recommended' : ''} ${supported ? '' : 'is-disabled'}">
+                <div class="claim-network-card ${recommended ? 'is-recommended' : ''} ${selected ? 'is-selected' : ''} ${supported ? '' : 'is-disabled'}">
                     <div class="claim-network-main">
                         <div class="claim-network-icon">${meta.icon}</div>
                         <div>
                             <div class="claim-network-name">${meta.name}</div>
-                            <div class="claim-network-hint">${hint}</div>
+                            <div class="claim-network-hint">${_claimEsc(hint)}</div>
                         </div>
                     </div>
-                    <div class="claim-network-status ${statusClass}">${statusText}</div>
+                    <div class="claim-network-status ${statusClass}">${_claimEsc(statusText)}</div>
+                    ${button}
                 </div>`;
         }
 
@@ -4325,8 +4353,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     note.textContent = 'MiniPay is Celo-only. XDC claims require MetaMask or a compatible WalletConnect wallet.';
                 } else if (caps.isTrustWallet) {
                     note.textContent = 'Trust Wallet network prompts can be unreliable for XDC. Use MetaMask or compatible WalletConnect for XDC.';
+                } else if (selectedClaimNetwork) {
+                    note.textContent = `You chose ${selectedClaimNetwork.toUpperCase()}. Tap its button again to claim, or pick another network.`;
                 } else {
-                    note.textContent = 'GoodMarket recommends the first unclaimed network your wallet can safely claim.';
+                    note.textContent = 'GoodMarket recommends Celo first, but you can claim on any network that is available to you.';
                 }
             }
         }
@@ -4334,8 +4364,19 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         function pickRecommendedClaimNetwork() {
             const caps = getClaimWalletCapabilities();
             const claims = (claimAvailability && claimAvailability.claims) || {};
-            if (claims.celo && claims.celo.can_claim) return 'celo';
-            if (!caps.isMiniPay && caps.supportsXdc && claims.xdc && claims.xdc.can_claim) return 'xdc';
+            const claimable = (n, supported) => !!(supported && claims[n] && claims[n].can_claim && claims[n].is_available !== false);
+            // An explicit user pick wins for as long as that network is still
+            // claimable — otherwise a failing Celo route would keep re-selecting
+            // itself on every poll and the user could never reach XDC.
+            // The backend already zeroes `can_claim` on every network while
+            // Face Verification is outstanding (`blocked_by`), so no extra
+            // verification check is needed here — and using the outer
+            // `needsVerification` flag would be stale, since it is assigned
+            // after this function runs.
+            if (selectedClaimNetwork === 'celo' && claimable('celo', true)) return 'celo';
+            if (selectedClaimNetwork === 'xdc' && claimable('xdc', caps.supportsXdc)) return 'xdc';
+            if (claimable('celo', true)) return 'celo';
+            if (claimable('xdc', !caps.isMiniPay && caps.supportsXdc)) return 'xdc';
             return caps.isMiniPay ? 'celo' : null;
         }
 
@@ -6016,15 +6057,46 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     appendStatusLine('💡 WalletConnect: If this keeps failing, try reconnecting your wallet.', 'var(--text-dim)');
                 }
 
-                // Show the CELO failure reason without auto-prompting another network;
-                // the network cards above expose any remaining XDC claim manually.
+                // Show the CELO failure reason and, when the other network is
+                // still claimable, hand the user a one-tap path to it. Without
+                // this the Celo-first recommendation re-selects itself on every
+                // poll and a persistently failing Celo route strands the user.
                 appendStatusLine('❌ Celo claim failed: ' + msg, 'var(--red)');
 
                 btn.disabled = false;
                 label.textContent = 'Claim G$';
                 icon.textContent = '🪙';
-                appendStatusLine('ℹ️ Check the network cards above for any remaining XDC claim.', 'var(--text-dim)');
+                _offerAlternateClaimNetwork('celo');
             }
+        }
+
+        // Point the primary claim button at another claimable network after a
+        // failure. Returns true when an alternate was offered. Deliberately
+        // does NOT broadcast anything itself — the user taps once to confirm.
+        function _offerAlternateClaimNetwork(failedNetwork) {
+            const caps = getClaimWalletCapabilities();
+            const claims = (claimAvailability && claimAvailability.claims) || {};
+            if (needsVerification) return false;
+            const candidates = ['celo', 'xdc'].filter(n => n !== failedNetwork);
+            const alt = candidates.find(n => {
+                const info = claims[n];
+                const supported = n === 'celo' || caps.supportsXdc;
+                return !!(supported && info && info.can_claim && info.is_available !== false);
+            });
+            if (!alt) {
+                appendStatusLine('ℹ️ No other claimable network for this wallet right now.', 'var(--text-dim)');
+                return false;
+            }
+            selectedClaimNetwork = alt;
+            recommendedClaimNetwork = pickRecommendedClaimNetwork();
+            renderClaimNetworks();
+            updateClaimButtonBox(claimAvailability);
+            const amt = claims[alt] && claims[alt].claimable_formatted ? claims[alt].claimable_formatted : 'G$';
+            appendStatusLine(
+                `💠 You can claim ${amt} G$ on <strong>${alt.toUpperCase()}</strong> instead — tap the button to continue.`,
+                '#7c3aed'
+            );
+            return true;
         }
 
         // Show the CELO-balance advisory banner once per browser session.
@@ -6155,6 +6227,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 setStatus('❌ ' + msg, 'var(--red)');
                 btn.disabled = false;
                 label.textContent = network === 'fuse' ? 'Retry Fuse Claim' : 'Retry XDC Claim';
+                // Mirror the Celo failure path: offer whichever other network is
+                // still claimable, so a broken XDC route is not a dead end.
+                if (network !== 'fuse') _offerAlternateClaimNetwork(network);
             }
         }
 
@@ -6226,6 +6301,32 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // logins.
         window._lwIsNeeded = _lwIsNeeded;
         window._lwUnlockIfNeeded = _lwUnlockIfNeeded;
+
+        // Per-network card action. Selects the network AND starts its claim in
+        // one tap, so a user whose Celo route keeps failing can go straight to
+        // XDC without hunting for the /xdc-wallet detour.
+        window.selectClaimNetwork = async function(network) {
+            if (network !== 'celo' && network !== 'xdc') return;
+            const caps = getClaimWalletCapabilities();
+            const claims = (claimAvailability && claimAvailability.claims) || {};
+            const info = claims[network] || {};
+            const supported = network === 'celo' || caps.supportsXdc;
+            if (!supported) {
+                setStatus(`${network.toUpperCase()} claiming needs MetaMask or a compatible WalletConnect wallet.`, '#d97706');
+                return;
+            }
+            if (!info.can_claim || info.is_available === false) {
+                setStatus(`${network.toUpperCase()} is not claimable right now${info.blocked_reason ? ' — ' + info.blocked_reason : '.'}`, '#d97706');
+                return;
+            }
+            if (needsVerification) { startFV(); return; }
+
+            selectedClaimNetwork = network;
+            recommendedClaimNetwork = pickRecommendedClaimNetwork();
+            renderClaimNetworks();
+            updateClaimButtonBox(claimAvailability);
+            await window.doUbiClaim();
+        };
 
         window.doUbiClaim = async function() {
             if (btn.disabled) return;
