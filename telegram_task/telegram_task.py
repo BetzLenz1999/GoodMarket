@@ -1,5 +1,6 @@
 import os
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
@@ -8,6 +9,44 @@ from cache_utils import supabase_cache
 from referral_program.referral_service import current_origin_domain
 
 logger = logging.getLogger(__name__)
+
+
+def _coprime_stride(total: int, count: int) -> int:
+    """Smallest stride >= total/count that is coprime with total.
+
+    A stride coprime with `total` makes k -> (k * stride) % total injective, so
+    the first `count` indices are all distinct while sweeping the whole
+    opener x middle x closer space instead of clustering on a prefix (the old
+    `i % n`, `(i//10) % n`, `(i//100) % n` layout exposed only a tenth of the
+    closer pool, leaving the rest as dead code).
+    """
+    stride = max(1, total // count)
+    while math.gcd(stride, total) != 1:
+        stride += 1
+    return stride
+
+
+def _build_message_pool(openers, middles, closers, render, count: int = 1000):
+    """Combine three phrase pools into `count` distinct messages.
+
+    Each message is a unique (opener, middle, closer) triple. Pools must
+    multiply to at least `count` so every generated message is distinct.
+    """
+    n_openers, n_middles, n_closers = len(openers), len(middles), len(closers)
+    total = n_openers * n_middles * n_closers
+    if total < count:
+        raise ValueError(
+            f"message pools too small: {total} combinations < {count} requested"
+        )
+    stride = _coprime_stride(total, count)
+    pool = []
+    for i in range(count):
+        idx = (i * stride) % total
+        s1 = openers[idx % n_openers]
+        s2 = middles[(idx // n_openers) % n_middles]
+        s3 = closers[(idx // (n_openers * n_middles)) % n_closers]
+        pool.append(render(s1, s2, s3))
+    return pool
 
 
 def _wallet_filter(query, wallet_address: str):
@@ -25,175 +64,130 @@ def _wallet_filter(query, wallet_address: str):
 _TELEGRAM_MESSAGES: List[str] = []
 
 def _generate_telegram_messages() -> List[str]:
-    """Generate 1000 unique custom messages for Telegram (3 sentences each)"""
-    import random
-    messages = []
+    """Generate 1000 unique custom messages for Telegram (3 sentences each)
 
+    Copy rules — these are posted by real users from personal accounts, not
+    brand ads:
+      * First-person, plain English. Brand taglines published verbatim from a
+        personal account read as coordinated spam.
+      * No claim of official affiliation (GoodMarket is an independent
+        community project — see the impersonation-risk note in AGENTS.md).
+      * No "free"/"guaranteed"/"join thousands" style promises.
+      * Exactly one link per post (the referral link injected at serve time);
+        the opening and middle sentences stay link-free.
+      * Single closing punctuation only, no doubled "?." / ".!".
+    """
     opening_phrases = [
-        "GoodMarket is more than tasks — it’s your gateway to learning, earning, and contributing to the GoodDollar ecosystem.",
-        "Join the financial revolution with GoodMarket! It's your personal gateway to the GoodDollar ecosystem.",
-        "Unlock the potential of Web3 with GoodMarket, your bridge to the GoodDollar universal basic income.",
-        "Experience a new way to earn and learn! GoodMarket is the premier hub for the GoodDollar community.",
-        "Step into the future of finance! GoodMarket connects you directly to the GoodDollar ecosystem.",
-        "Empower yourself with GoodMarket! Start your journey of earning and contributing to GoodDollar today.",
-        "GoodMarket: Where education meets rewards in the thriving GoodDollar ecosystem.",
-        "Ready to earn? GoodMarket is your official gateway to the GoodDollar universal basic income mission.",
-        "Discover a world of opportunities! GoodMarket is the ultimate portal for GoodDollar enthusiasts.",
-        "Join thousands earning G$ daily! GoodMarket is your essential gateway to the GoodDollar ecosystem.",
-        "Why GoodDollar fits as Universal Basic Income? Explore G$ and start earning while learning. Join goodmarket.live for more opportunities in the GoodDollar ecosystem.",
-"Want to discover the potential of G$? GoodMarket shows you how GoodDollar empowers everyone in the UBI ecosystem. Explore more today!",
-"Learn & Earn at GoodMarket is better than other platforms — it teaches you about GoodDollar while rewarding your participation. Start your journey now!",
-"Curious about Achievement Cards from the GoodMarket Quiz? Each card shows your progress and could have NFT value in the future. Learn more here: https://goodmarket.live/news/article/20",
-"Excited for mini-games? In the future, GoodMarket will integrate fun ways to earn G$. Let’s explore GoodMarket and see what the future holds!",
-"Step into the GoodDollar ecosystem with GoodMarket. Learn, earn, and contribute to the universal basic income movement. Don’t miss out!",
-"Ready to earn while learning? GoodMarket’s Learn & Earn quizzes teach you about GoodDollar and give you rewards plus Achievement Cards!",
-"Why choose GoodMarket? It’s your gateway to understanding GoodDollar, exploring UBI, and earning rewards. Join the revolution today!",
-"Want to explore more about G$? GoodMarket connects you directly to the GoodDollar ecosystem and opens doors to new opportunities. Start now!",
-"Thank you to all GoodMarket participants! 113 users completed this week’s quiz and received rewards plus Achievement Cards — each with potential NFT value. Learn more here: https://goodmarket.live/news/article/20",
-"Discover why GoodDollar is a perfect fit for UBI. Learn how you can earn, contribute, and grow with GoodMarket. Start your journey today!",
-"Mini-games are coming soon! Explore GoodMarket today and get ready to play, earn, and learn more about the GoodDollar ecosystem.",
-"Achievement Cards reward your quiz progress and may become NFTs in the future. Collect them and grow your GoodMarket achievements!",
-"GoodMarket is more than just tasks — it’s your gateway to learning, earning, and contributing to GoodDollar. Explore more now!",
-"Join the financial revolution with GoodMarket! It’s your personal gateway to the GoodDollar ecosystem and future opportunities.",
-"Unlock the potential of Web3 with GoodMarket, your bridge to the GoodDollar universal basic income.",
-"Experience a new way to earn and learn! GoodMarket is the premier hub for the GoodDollar community.",
-"Step into the future of finance! GoodMarket connects you directly to the GoodDollar ecosystem.",
-"Empower yourself with GoodMarket! Start your journey of earning and contributing to GoodDollar today.",
-"GoodMarket: Where education meets rewards in the thriving GoodDollar ecosystem.",
-"Ready to earn? GoodMarket is your official gateway to the GoodDollar universal basic income mission.",
-"Discover a world of opportunities! GoodMarket is the ultimate portal for GoodDollar enthusiasts.",
-"Join thousands earning G$ daily! GoodMarket is your essential gateway to the GoodDollar ecosystem.",
-"Learn about GoodDollar while earning rewards — GoodMarket’s Learn & Earn quizzes make it simple and fun!",
-"Curious about the future of UBI? GoodMarket shows how G$ is changing the game for financial inclusion.",
-"Mini-games coming soon in GoodMarket! Prepare to explore, earn, and enjoy new ways to interact with the GoodDollar ecosystem.",
-"Your quiz achievements now have more meaning! Each Achievement Card could hold NFT value in the future.",
-"Why Learn & Earn is better than other platforms? GoodMarket teaches you about GoodDollar in the UBI ecosystem while rewarding your participation.",
-"Explore GoodMarket.live today to discover how G$ can empower you and your community.",
-"Achievement Cards mark your success! Participate in quizzes and collect valuable cards that may have long-term value.",
-"Join GoodMarket and start learning how GoodDollar fits into the universal basic income ecosystem.",
-"GoodMarket makes learning about G$ fun, engaging, and rewarding. Start your journey today!",
-"Mini-games integration is coming! Get ready to earn, learn, and enjoy GoodMarket like never before.",
-"Learn & Earn quizzes reward you instantly while helping you understand GoodDollar’s role in UBI.",
-"Explore, earn, and grow with GoodMarket — your gateway to the GoodDollar ecosystem.",
-"Ready to collect Achievement Cards? Participate in GoodMarket quizzes and unlock rewards and potential NFT value.",
-"GoodMarket helps you discover why GoodDollar is perfect for UBI and how you can benefit from it.",
-"Excited for upcoming mini-games? GoodMarket will soon offer fun ways to earn G$ while learning!",
-"Why GoodDollar is suitable as Universal Basic Income? Join GoodMarket and explore the possibilities!",
-"Achievement Cards track your quiz success and may hold future value — learn more at GoodMarket.live.",
-"Learn, earn, and explore GoodMarket — your bridge to the GoodDollar ecosystem and future financial opportunities.",
-"Participate in Learn & Earn quizzes and get rewards while understanding GoodDollar’s role in UBI.",
-"GoodMarket is your portal to explore G$, earn rewards, and participate in the growing GoodDollar ecosystem.",
-"Mini-games are coming soon! Let’s explore GoodMarket together and see the future of earning and learning.",
-"Collect Achievement Cards with each quiz and gain recognition for your progress in GoodMarket.",
-"Why Learn & Earn is better? GoodMarket teaches you about GoodDollar while offering real rewards for your effort.",
-"Discover G$ opportunities at GoodMarket.live and join the movement shaping the UBI ecosystem.",
-"Your GoodMarket journey starts now — learn, earn, and explore the GoodDollar ecosystem.",
-"Future mini-games will make GoodMarket more interactive! Get ready to earn, play, and learn more about G$."
-
+        # Genuine daily claim / streak framing
+        "Claimed my G$ for today and kept the streak alive.",
+        "Another day, another G$ claim on GoodMarket.",
+        "My daily G$ claim took me about a minute today.",
+        "Kept my G$ streak going and I am not planning to break it.",
+        "Claimed today's G$ before I forget again.",
+        "The daily G$ claim is the easiest part of my morning now.",
+        "Back again for the daily G$ claim.",
+        # Learning-focused
+        "Just finished the Learn & Earn quiz for today.",
+        "I finally understand how GoodDollar UBI actually works.",
+        "Spent ten minutes learning about UBI and got G$ for it.",
+        "The quiz today explained financial inclusion better than anything I read before.",
+        "Learning about UBI in short lessons beats reading long articles.",
+        "Today's lesson was about why universal basic income matters.",
+        "I did not know how G$ was funded until this quiz.",
+        "The lessons made the whole UBI idea click for me.",
+        "Every task explains something useful about how G$ works.",
+        "It helped me understand how UBI is actually funded and distributed.",
+        "It taught me more about financial inclusion than I expected to learn.",
+        # Community / personal
+        "Been earning G$ here for a while and the daily tasks are still simple.",
+        "Joined GoodMarket to learn about GoodDollar and stayed for the tasks.",
+        "My crypto wallet finally has a purpose beyond holding tokens.",
+        "Started with zero crypto knowledge and figured this out step by step.",
+        "This is the first crypto app my friends actually understood.",
+        "Doing my daily task now instead of scrolling.",
+        "Small consistent earnings are adding up more than I expected.",
+        "It has become part of my morning routine along with coffee.",
+        "My streak is the only reason I have stayed this consistent with anything.",
+        "It is one of the few crypto things I can explain to my family.",
+        # Invite framing (soft, personal)
+        "If you are curious about earning crypto for learning, try this.",
+        "Sharing in case anyone else wants to learn about UBI and get rewarded.",
+        "For anyone wondering how GoodDollar works, this is where I started.",
+        "Found a way to learn about UBI that does not feel like homework.",
+        "Told a friend about this and they claimed their first G$ the same day.",
+        "Not a get-rich thing, just steady small earnings for showing up.",
+        "Posting this for the friends who keep asking me about crypto basics.",
+        "I have recommended it to people who usually ignore crypto apps.",
+        # Plain, low-key
+        "My daily task for today is done.",
+        "Earning G$ for learning is a strange idea that actually works.",
+        "Another claim, another small win.",
+        "Kept it simple today and just did the daily task.",
+        "Checking in for today's G$.",
+        "Took a few minutes to learn something and got rewarded for it.",
+        "A short lesson and a small reward — that is my routine now.",
     ]
 
     middle_phrases = [
-        "Visit goodmarket.live today and discover daily tasks, learning opportunities, and ways to earn G$ 💙",
-        "Head over to goodmarket.live right now to explore exciting tasks and start your G$ earning journey.",
-        "Check out goodmarket.live and find a wealth of daily opportunities to support the GoodDollar mission.",
-        "Go to goodmarket.live and start completing simple tasks to earn real G$ rewards every single day.",
-        "Access goodmarket.live and dive into a variety of ways to contribute and earn within our community.",
-        "Your journey starts at goodmarket.live – discover interactive quizzes and tasks that reward you in G$.",
-        "Visit goodmarket.live to find out how easy it is to earn G$ while learning about financial inclusion.",
-        "Explore goodmarket.live today and join the movement for a more equitable global financial system.",
-        "Start your daily earning routine at goodmarket.live with our fun and educational task modules.",
-        "Navigate to goodmarket.live and unlock multiple pathways to earn G$ and support universal basic income.",
-        "Visit goodmarket.live and explore new ways to learn, earn, and grow within the GoodDollar ecosystem.",
-"Head over to goodmarket.live to complete daily tasks and discover exciting earning opportunities in G$.",
-"Check out goodmarket.live today and take part in interactive quizzes that reward your learning with G$.",
-"Go to goodmarket.live and start your journey of earning G$ while discovering the potential of financial inclusion.",
-"Access goodmarket.live to find fun and educational tasks that contribute to the GoodDollar community.",
-"Your adventure begins at goodmarket.live – unlock tasks, quizzes, and rewards that help you earn G$ daily.",
-"Visit goodmarket.live and see how easy it is to combine learning and earning in the GoodDollar ecosystem.",
-"Explore goodmarket.live today and join thousands earning G$ while learning about UBI and blockchain.",
-"Start your daily learning and earning routine at goodmarket.live with engaging and rewarding tasks.",
-"Navigate to goodmarket.live and uncover multiple ways to earn G$ while supporting the universal basic income mission.",
-"Visit goodmarket.live now and experience interactive challenges designed to teach and reward you in G$.",
-"Head to goodmarket.live and participate in quizzes and tasks that make earning G$ fun and educational.",
-"Check out goodmarket.live to explore simple daily tasks that contribute to your G$ balance.",
-"Go to goodmarket.live today and unlock learning modules that reward you directly with G$.",
-"Access goodmarket.live and discover a variety of opportunities to earn while exploring the GoodDollar ecosystem.",
-"Start at goodmarket.live and take part in activities that combine learning, contribution, and earning G$.",
-"Visit goodmarket.live and find out how daily engagement can increase your G$ rewards and knowledge.",
-"Explore goodmarket.live to participate in tasks that support financial inclusion and give you G$ rewards.",
-"Head over to goodmarket.live and discover the easiest ways to start earning G$ while learning new skills.",
-"Check out goodmarket.live to find your next rewarding learning activity and earn G$ along the way.",
-"Go to goodmarket.live and experience daily tasks that are designed to teach and reward you in G$.",
-"Access goodmarket.live and unlock a world of opportunities to contribute to the GoodDollar ecosystem while earning.",
-"Your journey to earning G$ begins at goodmarket.live – explore quizzes, challenges, and interactive tasks.",
-"Visit goodmarket.live and take part in engaging tasks that reward both your time and learning in G$.",
-"Explore goodmarket.live today and start completing activities that boost your G$ balance while educating you.",
-"Start at goodmarket.live and discover fun ways to earn G$ while learning about universal basic income.",
-"Navigate to goodmarket.live and engage in quizzes, tasks, and interactive challenges to earn G$ daily.",
-"Head to goodmarket.live to explore a variety of tasks that are both educational and rewarding in G$.",
-"Check out goodmarket.live today and learn how daily participation can grow your G$ and knowledge.",
-"Go to goodmarket.live and unlock opportunities to earn G$ while exploring the GoodDollar ecosystem.",
-"Access goodmarket.live and find tasks, quizzes, and interactive content that reward you in G$.",
-"Visit goodmarket.live and start your journey of daily learning and earning within the GoodDollar community.",
-"Explore goodmarket.live and engage in activities designed to teach, reward, and empower you with G$.",
-"Head over to goodmarket.live and discover daily challenges that increase both your knowledge and G$ rewards.",
-"Check out goodmarket.live today to participate in rewarding tasks and learn more about GoodDollar.",
-"Go to goodmarket.live and take advantage of fun ways to earn G$ while learning about UBI and blockchain.",
-"Access goodmarket.live and explore tasks that contribute to your G$ earnings and personal growth.",
-"Start your learning and earning journey at goodmarket.live with quizzes, challenges, and daily tasks.",
-"Visit goodmarket.live to discover how easy it is to earn G$ while engaging with educational content.",
-"Explore goodmarket.live today and take part in interactive activities that support GoodDollar and reward you.",
-"Head to goodmarket.live to unlock tasks that teach, engage, and reward you with G$ daily.",
-"Check out goodmarket.live and participate in activities that expand your knowledge while earning G$.",
-"Go to goodmarket.live and engage with fun and educational challenges that increase your G$ balance.",
-"Access goodmarket.live and discover daily opportunities to earn G$ while contributing to the GoodDollar mission.",
-"Your path to earning G$ starts at goodmarket.live – complete tasks, participate in quizzes, and learn new skills.",
-"Visit goodmarket.live and explore a variety of ways to earn G$ while learning about financial inclusion.",
-"Explore goodmarket.live and participate in challenges that reward your knowledge and contributions in G$.",
-"Head over to goodmarket.live and take part in activities that make learning and earning G$ fun and easy.",
-"Check out goodmarket.live today to unlock tasks that reward your engagement and teach you about G$.",
-"Go to goodmarket.live and find daily opportunities to learn, contribute, and earn G$ with the GoodDollar ecosystem.",
-"Access goodmarket.live and explore educational activities that reward you directly in G$.",
-"Start your G$ earning adventure at goodmarket.live – quizzes, tasks, and challenges await!"
-
+        # Link-free by design: the only URL in the final post is the referral
+        # link injected at serve time.
+        "It is a short lesson, then you can claim, and it takes a few minutes.",
+        "The tasks change often enough that it never feels like the same day again.",
+        "You can learn at your own pace and the reward is immediate.",
+        "The UBI part is what surprised me most when I started reading about it.",
+        "There is nothing to pay and you can stop whenever you want.",
+        "I like that it teaches the why and not just the how.",
+        "The quizzes are short and there is always a daily task to come back to.",
+        "It works on my phone without any complicated setup.",
+        "Small rewards every day are easier to stick with than one big payout.",
+        "It is a good starting point if you have never used crypto before.",
+        "The daily task is what keeps me consistent.",
+        "You do not need to spend anything to take part.",
+        "I treat it as a daily five-minute routine.",
+        "It balances learning and earning in a way that does not feel forced.",
+        "The learning is the part I did not expect to enjoy.",
+        "It has been a simple way to stay involved every day.",
+        "There is no pressure to do more than you want.",
+        "The community aspect is what made it stick for me.",
+        "Claiming daily keeps the whole thing feeling active.",
+        "The quizzes are genuinely short, which is why I keep doing them.",
+        "It is a routine now rather than something I have to remember.",
+        "The reward arrives quickly after you finish.",
+        "Learning something new each day is a nice side effect of the reward.",
+        "It works fine on a slow connection, which matters where I live.",
+        "Nothing about it requires you to already understand crypto.",
+        "The daily task is small enough that I never skip it.",
+        "The simplicity is what made me stay.",
+        "I like that the lessons are written plainly.",
+        "Doing one task a day makes it easy to keep going.",
+        "You can see your progress add up over weeks.",
+        "The UBI lessons connect to something bigger than just earning.",
+        "It rewards showing up rather than spending money.",
+        "The whole thing is friendlier than I expected from crypto.",
+        "Short lessons suit my attention span better than long courses.",
+        "It is straightforward once you claim your first G$.",
+        "The daily consistency is what makes the small rewards meaningful.",
     ]
 
     closing_phrases = [
-        "Start earning G$ today at goodmarket.live",
-        "Join the GoodMarket community at goodmarket.live",
-        "Earn G$ through tasks and quizzes at goodmarket.live",
-        "Complete daily tasks and earn G$ at goodmarket.live",
-        "Explore GoodMarket and start earning at goodmarket.live",
-        "Discover ways to earn G$ at goodmarket.live",
-        "Take on challenges and earn G$ at goodmarket.live",
-        "Visit GoodMarket and start your journey at goodmarket.live",
-        "Earn more G$ every day at goodmarket.live",
-        "Join thousands earning G$ at goodmarket.live",
-        "Level up your G$ earnings at goodmarket.live",
-        "Complete missions and earn G$ at goodmarket.live",
-        "Start your G$ earning journey at goodmarket.live",
-        "Participate and earn G$ at goodmarket.live",
-        "More G$ earning opportunities await at goodmarket.live",
-        "Earn G$ with every task at goodmarket.live",
-        "Begin earning G$ right now at goodmarket.live",
-        "Your G$ rewards are waiting at goodmarket.live",
-        "Earn G$ daily with GoodMarket at goodmarket.live",
-        "Connect and earn G$ at goodmarket.live",
+        "If you want to start, this is the link I used: https://goodmarket.live",
+        "My link, in case it helps: https://goodmarket.live",
+        "I started here: https://goodmarket.live",
+        "This is where I claim mine: https://goodmarket.live",
+        "Same place I use every day: https://goodmarket.live",
+        "Here is where I started learning: https://goodmarket.live",
+        "Start with the daily task here: https://goodmarket.live",
+        "The site I use for this: https://goodmarket.live",
+        "You can try it here: https://goodmarket.live",
+        "Link for anyone curious: https://goodmarket.live",
     ]
 
-    for i in range(1000):
-        # Pick sentences based on index to ensure variety
-        s1 = opening_phrases[i % len(opening_phrases)]
-        s2 = middle_phrases[(i // 10) % len(middle_phrases)]
-        s3 = closing_phrases[(i // 100) % len(closing_phrases)]
-        
-        # Combine into 3 sentences
-        msg = f"✨ {s1}\n\n{s2}\n\n👉 {s3}"
-        messages.append(msg)
+    def render(s1, s2, s3):
+        return f"{s1}\n\n{s2}\n\n{s3}"
 
-    return messages
-
-# OLD CODE REMOVED - keeping only the compact opening section above
+    return _build_message_pool(
+        opening_phrases, middle_phrases, closing_phrases, render, count=1000
+    )
 
 
 
@@ -217,7 +211,7 @@ class TelegramTaskService:
         # logger.info(f"💰 Reward: {self.task_reward} G$") # REMOVED - dynamic reward
         logger.info(f"📢 Channel: t.me/{self.telegram_channel}")
         logger.info(f"⏰ Cooldown: {self.cooldown_hours} hours")
-        logger.info(f"💬 Custom Messages: {len(self.custom_messages)} unique variations (20 sentences each, wallet-based rotation ensures unique messages per user)")
+        logger.info(f"💬 Custom Messages: {len(self.custom_messages)} unique variations (wallet + day based rotation ensures unique messages per user)")
 
 
 
@@ -255,9 +249,12 @@ class TelegramTaskService:
 
         Each user gets a different message every day based on:
           1. Their wallet address (for uniqueness per user)
-          2. Current UTC timestamp (hour + day for better rotation)
+          2. The current UTC day (daily rotation)
 
-        This ensures variety and prevents repetitive posts
+        The hour is deliberately NOT part of the index: a message shown at
+        7:59 used to differ from the one the user actually posted at 8:01, so
+        the admin reviewing the submission saw text that did not match the
+        post. Keying on (wallet, day) keeps the message stable all day.
         """
         import hashlib
         from datetime import datetime, timezone
@@ -271,24 +268,21 @@ class TelegramTaskService:
         # Get current UTC time for rotation
         now_utc = datetime.now(timezone.utc)
         day_of_year = now_utc.timetuple().tm_yday
-        hour_of_day = now_utc.hour
 
         # Use multiple factors for better distribution:
         # 1. Wallet hash (unique per user)
         # 2. Day of year (daily rotation)
-        # 3. Hour of day (hourly variation)
-        # 4. Last 4 chars of wallet (additional entropy)
+        # 3. Last 4 chars of wallet (additional entropy)
         last_4_chars = int(wallet_normalized[-4:], 16) if len(wallet_normalized) >= 4 else 0
 
         # Combine all factors for unique message index
         message_index = (
             wallet_hash +
             (day_of_year * 37) +  # Prime number multiplier
-            (hour_of_day * 17) +   # Prime number multiplier
             (last_4_chars * 7)     # Prime number multiplier
         ) % len(self.custom_messages)
 
-        logger.info(f"📅 Message index {message_index} for user: {wallet_address[:8]}... (Day: {day_of_year}, Hour: {hour_of_day}, 1000 unique messages available)")
+        logger.info(f"📅 Message index {message_index} for user: {wallet_address[:8]}... (Day: {day_of_year}, {len(self.custom_messages)} unique messages available)")
 
         message = self.custom_messages[message_index]
 
