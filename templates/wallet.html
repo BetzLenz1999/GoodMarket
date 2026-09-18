@@ -574,256 +574,6 @@
             .pc-field-value { font-size: 0.82rem; }
             .pc-balance { font-size: 0.88rem; }
         }
-
-        /* ── Action Buttons ── */
-        .action-row {
-            display: flex;
-            flex-direction: column;
-            gap: 0.55rem;
-            padding: 0;
-            margin-bottom: 0;
-            overflow: visible;
-        }
-        .action-item {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-            justify-content: flex-start;
-            gap: 0.72rem;
-            width: 100%;
-            padding: 0.5rem 0.65rem;
-            border-radius: 14px;
-            border: 1px solid rgba(255,255,255,0.08);
-            
-            cursor: pointer;
-            transition: border-color 0.2s ease, background 0.2s ease;
-        }
-        
-        .action-circle {
-            width: 42px; height: 42px;
-            border-radius: 50%;
-            
-            border: 1px solid rgba(255,255,255,0.12);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1rem;
-            flex-shrink: 0;
-            transition: all 0.2s;
-        }
-        
-        .action-circle.claim-circle {
-            position: relative;
-            
-            
-            box-shadow: 0 0 0 1px rgba(var(--accent-rgb),0.24), 0 0 16px rgba(var(--accent-rgb),0.35);
-            overflow: visible;
-            /* No box-shadow keyframe animation here — it forces a full repaint
-               every frame. The ::before halo below (transform/opacity only)
-               provides the pulse cue on the compositor thread instead. */
-        }
-        .action-circle.claim-circle::before {
-            content: "";
-            position: absolute;
-            inset: -8px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(var(--accent-rgb),0.18) 0%, rgba(var(--accent-rgb),0.08) 42%, transparent 72%);
-            z-index: -1;
-            animation: claimHalo 2.6s ease-out infinite;
-        }
-        .claim-glyph {
-            font-size: 1.1rem;
-            font-weight: 900;
-            letter-spacing: -0.2px;
-            
-            
-            transform: translateY(-1px);
-        }
-        .claim-badge {
-            position: absolute;
-            top: -4px;
-            right: -4px;
-            min-width: 18px;
-            height: 18px;
-            padding: 0 0.25rem;
-            border-radius: 999px;
-            
-            
-            font-size: 0.53rem;
-            font-weight: 800;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            
-            animation: claimBadgeFloat 1.7s ease-in-out infinite;
-        }
-        .action-item:hover .action-circle.claim-circle {
-            transform: translateY(-2px) scale(1.04);
-            box-shadow: 0 0 0 1px rgba(var(--accent-rgb),0.4), 0 0 20px rgba(var(--accent-rgb),0.55);
-        }
-        
-        @keyframes claimHalo {
-            0% { transform: scale(0.92); opacity: 0.45; }
-            70% { transform: scale(1.12); opacity: 0.18; }
-            100% { transform: scale(1.14); opacity: 0.04; }
-        }
-        @keyframes claimBadgeFloat {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-1.5px); }
-        }
-
-        /* ── Claim Button Box (Full-width) ── */
-        .claim-button-box {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            width: 100%;
-            padding: 0.7rem 0.85rem;
-            border-radius: 16px;
-            border: 1px solid rgba(var(--gold-rgb), 0.58);
-            
-            cursor: pointer;
-            transition: all 0.25s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        .claim-button-box::before {
-            content: "";
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(var(--gold-rgb), 0.18) 0%, transparent 60%);
-            animation: claimBoxGlow 3s ease-in-out infinite;
-            pointer-events: none;
-        }
-        @keyframes claimBoxGlow {
-            0%, 100% { opacity: 0.5; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.1); }
-        }
-        .claim-button-box:hover {
-            border-color: rgba(var(--gold-rgb), 0.82);
-            
-            transform: translateY(-1px);
-            
-        }
-        .claim-button-box:active {
-            transform: translateY(0);
-        }
-        .claim-button-box.is-disabled {
-            opacity: 0.6;
-            cursor: default;
-            
-            
-        }
-        .claim-button-box.is-disabled:hover {
-            transform: none;
-            box-shadow: none;
-        }
-        
-        
-        .claim-box-left {
-            display: flex;
-            align-items: center;
-            gap: 0.65rem;
-            position: relative;
-            z-index: 1;
-        }
-        .claim-box-icon {
-            width: 38px;
-            height: 38px;
-            border-radius: 50%;
-            
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.95rem;
-            font-weight: 900;
-            
-            
-            position: relative;
-            overflow: hidden;
-        }
-        /* Opacity-only glow pulse — animating box-shadow forces a repaint every
-           frame, so the glow lives on a pseudo-element the compositor can
-           animate cheaply. */
-        .claim-box-icon::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            border-radius: 50%;
-            background: radial-gradient(circle at 50% 35%, rgba(255,255,255,0.45), transparent 70%);
-            pointer-events: none;
-            animation: claimIconGlow 2.5s ease-in-out infinite;
-        }
-        
-        .claim-box-icon.claimed-icon::after { animation: none; content: none; }
-        @keyframes claimIconGlow {
-            0%, 100% { opacity: 0.25; }
-            50% { opacity: 0.9; }
-        }
-        .claim-box-content {
-            display: flex;
-            flex-direction: column;
-            gap: 0.15rem;
-        }
-        .claim-box-title {
-            font-size: 0.88rem;
-            font-weight: 700;
-            
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-        }
-        .claim-box-title .sparkle {
-            font-size: 0.7rem;
-            animation: sparkleAnim 1.5s ease-in-out infinite;
-        }
-        @keyframes sparkleAnim {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.6; transform: scale(0.85); }
-        }
-        .claim-box-amount {
-            font-size: 0.75rem;
-            font-weight: 600;
-            
-        }
-        .claim-box-amount .amount-value {
-            
-            font-weight: 700;
-        }
-        .claim-box-right {
-            position: relative;
-            z-index: 1;
-        }
-        .claim-box-arrow {
-            font-size: 1.1rem;
-            
-            transition: transform 0.2s ease, color 0.2s ease;
-        }
-        .claim-button-box:hover .claim-box-arrow {
-            transform: translateX(3px);
-            
-        }
-        .claim-button-box.is-disabled .claim-box-arrow,
-        .claim-button-box.is-claimed .claim-box-arrow {
-            display: none;
-        }
-        .claim-box-timer {
-            font-size: 0.72rem;
-            
-            text-align: right;
-        }
-        .action-label {
-            font-size: 0.86rem;
-            font-weight: 600;
-            
-            white-space: nowrap;
-        }
-        .action-label--earn {
-            font-size: 0.72rem;
-            line-height: 1.2;
-            white-space: normal;
-        }
         .wallet-layout {
             display: block;
             padding: 0 1.25rem;
@@ -1171,33 +921,38 @@
         .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
 
         /* ─────────────────────────────────────────────────────────────
-           Plasma Ember — "hot" state for #ubiClaimBtn only.
-           Activates via .is-hot class which a small MutationObserver
-           toggles when the button is enabled AND showing a Claim label.
-           Falls back to the original .btn-primary styling on disabled.
+           Claimable "hot" state for #ubiClaimBtn.
+           Activates via .is-hot, which a small MutationObserver toggles when
+           the button is enabled AND showing a Claim label. Falls back to the
+           original .btn-primary styling on disabled.
+
+           Palette is G$ gold (brand), NOT the old orange/pink "Plasma Ember":
+           white text on that gradient measured 1.86:1 at the #ffae00 stop, so
+           the most eye-catching element on the page was the least readable.
+           Dark-on-gold keeps every stop at AA (8.5:1 - 14.6:1).
            ───────────────────────────────────────────────────────────── */
         #ubiClaimBtn.is-hot {
             position: relative;
             background: linear-gradient(
                 110deg,
-                #ff6a00 0%,
-                #ff2e63 32%,
-                #ffae00 64%,
-                #ff6a00 100%
+                #fbbf24 0%,
+                #fde68a 34%,
+                #f59e0b 68%,
+                #fbbf24 100%
             );
             background-size: 220% 100%;
-            border: 1px solid rgba(255, 180, 80, 0.55);
-            color: #fff;
-            text-shadow: 0 1px 2px rgba(120, 20, 0, 0.5);
+            border: 1px solid rgba(255, 240, 190, 0.7);
+            color: var(--primary-button-text);
+            text-shadow: none;
             box-shadow:
-                inset 0 1px 0 rgba(255, 230, 180, 0.35),
-                0 0 0 1px rgba(255, 138, 0, 0.25),
-                0 6px 22px rgba(255, 46, 99, 0.38),
-                0 14px 44px rgba(255, 138, 0, 0.28);
-            /* The ember pulse used to animate box-shadow (full repaint every
+                inset 0 1px 0 rgba(255, 255, 255, 0.55),
+                0 0 0 1px rgba(251, 191, 36, 0.35),
+                0 6px 22px rgba(251, 191, 36, 0.42),
+                0 14px 44px rgba(245, 158, 11, 0.28);
+            /* The shine sweep used to animate box-shadow (full repaint every
                frame); the glow now lives on a ::before overlay animated via
-               opacity only (see ubiClaimEmberGlow below). */
-            animation: ubiClaimHeatShift 3.2s linear infinite;
+               opacity only (see ubiClaimGlow below). */
+            animation: ubiClaimSheen 3.6s linear infinite;
             overflow: visible;
         }
         #ubiClaimBtn.is-hot::before {
@@ -1205,31 +960,31 @@
             position: absolute;
             inset: 0;
             border-radius: inherit;
-            background: radial-gradient(85% 130% at 50% 0%, rgba(255,214,150,0.45), transparent 65%);
+            background: radial-gradient(85% 130% at 50% 0%, rgba(255,255,255,0.65), transparent 65%);
             pointer-events: none;
-            animation: ubiClaimEmberGlow 2.4s ease-in-out infinite;
+            animation: ubiClaimGlow 2.4s ease-in-out infinite;
         }
-        /* Small flame badge — kept on top-right via pseudo so we never
-           touch the existing #ubiClaimIcon JS that swaps coin/check/etc. */
+        /* Small spark badge — kept on top-right via pseudo so we never touch
+           the existing #ubiClaimIcon JS that swaps coin/check/etc. */
         #ubiClaimBtn.is-hot::after {
-            content: "🔥";
+            content: "✨";
             position: absolute;
             top: -10px;
             right: -6px;
             font-size: 1.05rem;
             line-height: 1;
-            filter: drop-shadow(0 2px 4px rgba(255, 100, 0, 0.75));
-            animation: ubiClaimFlameWiggle 1.4s ease-in-out infinite;
+            filter: drop-shadow(0 2px 4px rgba(180, 120, 0, 0.75));
+            animation: ubiClaimSparkTwinkle 1.6s ease-in-out infinite;
             pointer-events: none;
             transform-origin: 50% 100%;
         }
         #ubiClaimBtn.is-hot:hover {
             transform: translateY(-1px) scale(1.01);
             box-shadow:
-                inset 0 1px 0 rgba(255, 230, 180, 0.45),
-                0 0 0 1px rgba(255, 200, 110, 0.5),
-                0 10px 30px rgba(255, 46, 99, 0.55),
-                0 22px 56px rgba(255, 138, 0, 0.42);
+                inset 0 1px 0 rgba(255, 255, 255, 0.65),
+                0 0 0 1px rgba(253, 230, 138, 0.6),
+                0 10px 30px rgba(251, 191, 36, 0.55),
+                0 22px 56px rgba(245, 158, 11, 0.42);
         }
         /* When the button is busy/disabled the .is-hot class is removed by
            the observer, but this is a defensive safety net in case any
@@ -1244,17 +999,17 @@
         #ubiClaimBtn.is-hot:disabled::after,
         #ubiClaimBtn.is-hot:disabled::before { display: none; }
 
-        @keyframes ubiClaimHeatShift {
+        @keyframes ubiClaimSheen {
             0%   { background-position:   0% 50%; }
             100% { background-position: 220% 50%; }
         }
-        @keyframes ubiClaimEmberGlow {
+        @keyframes ubiClaimGlow {
             0%, 100% { opacity: 0.25; }
             50%      { opacity: 0.9; }
         }
-        @keyframes ubiClaimFlameWiggle {
-            0%, 100% { transform: translateY(0)    rotate(-4deg) scale(1); }
-            50%      { transform: translateY(-1px) rotate(4deg)  scale(1.06); }
+        @keyframes ubiClaimSparkTwinkle {
+            0%, 100% { transform: scale(1)    rotate(0deg);   opacity: 1; }
+            50%      { transform: scale(1.18) rotate(12deg);  opacity: 0.75; }
         }
         @media (prefers-reduced-motion: reduce) {
             #ubiClaimBtn.is-hot,
@@ -1661,32 +1416,6 @@
                 padding-left: 0.9rem;
                 padding-right: 0.9rem;
             }
-            .action-item {
-                gap: 0.58rem;
-                padding: 0.45rem 0.52rem;
-            }
-            .action-circle {
-                width: 40px;
-                height: 40px;
-                font-size: 0.95rem;
-            }
-            .action-label {
-                font-size: 0.8rem;
-            }
-            .claim-button-box {
-                padding: 0.6rem 0.7rem;
-            }
-            .claim-box-icon {
-                width: 34px;
-                height: 34px;
-                font-size: 0.85rem;
-            }
-            .claim-box-title {
-                font-size: 0.82rem;
-            }
-            .claim-box-amount {
-                font-size: 0.7rem;
-            }
             .raffle-stats {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -1743,15 +1472,11 @@
             box-shadow: 0 0 0 1px rgba(var(--accent-rgb),0.35), 0 0 55px rgba(var(--accent-rgb),0.55), inset 0 0 46px rgba(var(--accent-rgb),0.24);
         }
         .ubi-hero-orb:active { transform: scale(0.98); }
-        .ubi-hero-orb.is-claimed {
-            
-            
-            
-            animation: none;
-        }
-        .ubi-hero-orb.is-disabled {
-            
-            
+        /* heroOrbHalo lives on ::before, so the reset must target the pseudo — a bare
+           `.ubi-hero-orb { animation: none }` did nothing and the halo kept
+           pulsing on already-claimed / not-ready orbs. */
+        .ubi-hero-orb.is-claimed::before,
+        .ubi-hero-orb.is-disabled::before {
             animation: none;
         }
         @keyframes heroOrbHalo {
@@ -1807,6 +1532,28 @@
             box-shadow: 0 10px 30px rgba(var(--gold-rgb),0.45);
         }
         .ubi-hero-cta:active { transform: scale(0.97); }
+        .ubi-hero-cta:focus-visible {
+            outline: 2px solid var(--accent-secondary);
+            outline-offset: 3px;
+        }
+        /* updateClaimButtonBox() toggles is-disabled / is-claimed on the hero,
+           but neither had a rule — so "View claim details" and "Verify Face ID"
+           rendered as the same loud gold call-to-action as an actual claim.
+           These stay clickable (they open the claim modal, which is the only
+           route to Face Verification), so they are muted, not hidden. */
+        .ubi-hero-cta.is-disabled,
+        .ubi-hero-cta.is-claimed {
+            background: var(--card-soft);
+            border-color: var(--card-border);
+            color: var(--text-dim);
+            box-shadow: none;
+        }
+        .ubi-hero-cta.is-disabled:hover,
+        .ubi-hero-cta.is-claimed:hover {
+            background: rgba(var(--accent-rgb),0.2);
+            border-color: rgba(var(--accent-rgb),0.5);
+            color: var(--text);
+        }
         .ubi-hero-timer {
             margin-top: 0.6rem;
             font-size: 0.74rem;
@@ -2060,54 +1807,6 @@
         .pc-brand-marks .mc-c1 { background: rgba(255,255,255,0.92); }
         .pc-brand-marks .mc-c2 { background: rgba(233,213,255,0.75); mix-blend-mode: normal; }
 
-        /* ── Action rows ── */
-        .action-item {
-            background: var(--card);
-            border-color: var(--card-border);
-            box-shadow: var(--card-shadow);
-        }
-        .action-item:hover { border-color: rgba(var(--accent-rgb),0.5); background: rgba(var(--accent-rgb),0.14); }
-        .action-circle { background: rgba(var(--accent-rgb),0.14); border-color: rgba(var(--accent-rgb),0.26); }
-        .action-item:hover .action-circle { background: rgba(var(--accent-rgb),0.24); border-color: rgba(var(--accent-rgb),0.5); }
-        .action-circle.claim-circle {
-            background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.16) 0%, rgba(124,58,237,0.55) 42%, rgba(76,29,149,0.85) 100%);
-            border-color: rgba(var(--accent-secondary-rgb),0.55);
-        }
-        .claim-glyph { color: #ddd6fe; text-shadow: none; }
-        .action-item:hover .claim-glyph { color: #ffffff; }
-        .claim-badge { background: linear-gradient(135deg, #a78bfa, #7c3aed); color: #fff; box-shadow: 0 3px 10px rgba(124,58,237,0.45); }
-        .action-label { color: var(--text-dim); }
-
-        /* ── Claim button box ── */
-        .claim-button-box {
-            background: linear-gradient(135deg, rgba(124,58,237,0.26) 0%, rgba(var(--accent-rgb),0.16) 100%), var(--card);
-            border-color: rgba(var(--accent-rgb),0.48);
-            box-shadow: var(--card-shadow);
-        }
-        .claim-button-box:hover {
-            background: linear-gradient(135deg, rgba(167,139,250,0.3) 0%, rgba(var(--accent-rgb),0.22) 100%);
-            box-shadow: 0 4px 20px rgba(var(--accent-rgb),0.34);
-        }
-        .claim-button-box.is-disabled { background: var(--card-soft); border-color: var(--card-border); }
-        .claim-button-box.is-claimed { background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.36); }
-        .claim-button-box.is-claimed:hover { background: rgba(52,211,153,0.16); border-color: rgba(52,211,153,0.48); box-shadow: 0 4px 16px rgba(52,211,153,0.22); }
-        .claim-box-icon {
-            background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.2), rgba(124,58,237,0.6) 55%, rgba(76,29,149,0.9) 100%);
-            color: #ede9fe;
-            box-shadow: 0 0 12px rgba(var(--accent-rgb),0.4);
-        }
-        .claim-box-icon.claimed-icon {
-            background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.18), rgba(52,211,153,0.5) 60%, rgba(6,95,70,0.9) 100%);
-            color: #d1fae5;
-            box-shadow: 0 0 12px rgba(52,211,153,0.32);
-        }
-        .claim-box-title { color: var(--text); }
-        .claim-box-amount { color: var(--text-dim); }
-        .claim-box-amount .amount-value { color: var(--green); }
-        .claim-box-arrow { color: var(--text-muted); }
-        .claim-button-box:hover .claim-box-arrow { color: var(--accent-secondary); }
-        .claim-box-timer { color: var(--text-muted); }
-
         /* ── Section labels ── */
         .section-label {
             color: var(--accent-secondary);
@@ -2249,9 +1948,9 @@
            The dark theme glow pulse is cheap (opacity-only) but the collapsed
            wallet keeps the orb static so the hero reads as a defined disc. */
         .ubi-hero-orb {
-            background: radial-gradient(circle at 50% 40%, rgba(var(--accent-rgb),0.5) 0%, rgba(var(--accent-rgb),0.28) 45%, rgba(var(--accent-rgb),0.08) 72%, transparent 80%);
-            border: 2px solid rgba(var(--accent-secondary-rgb),0.55);
-            box-shadow: 0 10px 34px rgba(var(--accent-rgb),0.36), inset 0 0 34px rgba(var(--accent-secondary-rgb),0.22);
+            background: radial-gradient(circle at 50% 40%, rgba(var(--gold-rgb),0.5) 0%, rgba(var(--gold-rgb),0.28) 45%, rgba(var(--gold-rgb),0.08) 72%, transparent 80%);
+            border: 2px solid rgba(251,191,36,0.55);
+            box-shadow: 0 10px 34px rgba(var(--gold-rgb),0.36), inset 0 0 34px rgba(253,230,138,0.22);
             animation: none;
         }
         .ubi-hero-orb.is-claimed {
@@ -2259,10 +1958,25 @@
             border-color: rgba(52,211,153,0.5);
             box-shadow: 0 10px 30px rgba(52,211,153,0.28), inset 0 0 34px rgba(52,211,153,0.2);
         }
+        /* Not claimable right now (face verification needed, pool paused, period
+           not started). Gold is the brand's "do this now" colour, so it belongs
+           to the claimable orb — not this one, which was gold while the
+           claimable orb was purple and read as the more urgent of the two. */
         .ubi-hero-orb.is-disabled {
-            background: radial-gradient(circle at 50% 40%, rgba(251,191,36,0.34) 0%, rgba(251,191,36,0.16) 55%, rgba(251,191,36,0.05) 75%, transparent 82%);
-            border-color: rgba(251,191,36,0.5);
-            box-shadow: 0 10px 30px rgba(251,191,36,0.22), inset 0 0 34px rgba(251,191,36,0.16);
+            background: radial-gradient(circle at 50% 40%, rgba(148,163,184,0.24) 0%, rgba(148,163,184,0.12) 55%, rgba(148,163,184,0.04) 75%, transparent 82%);
+            border-color: rgba(148,163,184,0.4);
+            box-shadow: 0 10px 30px rgba(15,23,42,0.3), inset 0 0 34px rgba(148,163,184,0.12);
+        }
+        .ubi-hero-orb:hover {
+            box-shadow: 0 0 0 1px rgba(251,191,36,0.35), 0 0 55px rgba(251,191,36,0.5), inset 0 0 46px rgba(253,230,138,0.22);
+        }
+        /* The orb stays clickable in every state, so the hover glow follows the
+           state hue instead of always glowing gold. */
+        .ubi-hero-orb.is-claimed:hover {
+            box-shadow: 0 0 0 1px rgba(52,211,153,0.35), 0 0 55px rgba(52,211,153,0.45), inset 0 0 46px rgba(52,211,153,0.2);
+        }
+        .ubi-hero-orb.is-disabled:hover {
+            box-shadow: 0 0 0 1px rgba(148,163,184,0.3), 0 0 45px rgba(148,163,184,0.32), inset 0 0 40px rgba(148,163,184,0.14);
         }
         .ubi-hero-cta { border-color: rgba(var(--accent-secondary-rgb),0.4); }
         .ubi-hero-eyebrow { color: var(--text-dim); }
@@ -2327,13 +2041,10 @@
            (spinners tied to in-flight work keep spinning so users still get
            progress feedback). */
         @media (prefers-reduced-motion: reduce) {
-            .action-circle.claim-circle::before,
-            .claim-badge,
-            .claim-box-icon::after,
-            .claim-box-title .sparkle,
-            .claim-button-box::before,
             .gm-voucher-banner::after,
             .gm-voucher-shine,
+            .ubi-hero-orb::before,
+            .ubi-hero-cta,
             #ubiClaimBtn.is-hot,
             #ubiClaimBtn.is-hot::before,
             #ubiClaimBtn.is-hot::after {
