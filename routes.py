@@ -11305,6 +11305,67 @@ def gas_faucet_compat():
     return faucet_gas()
 
 
+@routes.route("/api/xdc/faucet/status", methods=["POST"])
+@auth_required
+def xdc_faucet_status():
+    """Read-only XDC gas readiness check (mirror of /api/faucet/status).
+
+    Split out from /api/xdc/faucet/gas so the frontend can check whether the
+    wallet already has enough XDC gas WITHOUT spending a faucet entitlement.
+    /api/xdc/faucet/gas performs the top-up, so calling it as a "status check"
+    (as the claim flow used to) requested gas from the GoodDollar faucet even
+    when the wallet was already funded.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        correlation_id = _get_faucet_correlation_id(data)
+        checksum_wallet, err_resp, status_code = _validate_and_authorize_wallet(data)
+        if err_resp:
+            return err_resp, status_code
+
+        from blockchain import get_xdc_rpc
+        w3 = Web3(Web3.HTTPProvider(get_xdc_rpc(), request_kwargs={"timeout": 15}))
+
+        gas_status = _get_xdc_gas_status(w3, checksum_wallet)
+        recent_refill, seconds_remaining = _has_recent_refill(checksum_wallet)
+
+        if gas_status.get("gas_ready"):
+            status = "gas_ready"
+        elif recent_refill:
+            status = "recent_refill"
+        else:
+            status = "needs_topup"
+
+        logger.info(
+            f"⛽ XDC faucet status wallet={checksum_wallet.lower()} status={status} "
+            f"balance_wei={gas_status.get('balance_wei')} "
+            f"required_wei={gas_status.get('required_gas_wei')} correlation_id={correlation_id}"
+        )
+
+        return jsonify({
+            "success": True,
+            "status": status,
+            "gas_ready": bool(gas_status.get("gas_ready")),
+            "topped_up": False,
+            "topup_source": None,
+            "terminal_status": status,
+            "is_recent_refill": recent_refill,
+            "recent_refill_cooldown_seconds": seconds_remaining,
+            "correlation_id": correlation_id,
+            "wallet": checksum_wallet.lower(),
+            "debug": {
+                "required_gas_wei": gas_status.get("required_gas_wei"),
+                "required_gas_xdc": gas_status.get("required_gas_xdc"),
+                "current_balance_wei": gas_status.get("balance_wei"),
+                "current_balance_xdc": gas_status.get("balance_xdc"),
+            },
+            **gas_status,
+        })
+    except Exception as e:
+        logger.error(f"xdc_faucet_status error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @routes.route("/api/xdc/faucet/gas", methods=["POST"])
 @auth_required
 def xdc_faucet_gas():
