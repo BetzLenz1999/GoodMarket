@@ -1337,7 +1337,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             window._triggerReVerify();
         }
         // Scroll to the Claim area so the re-verify button is visible.
-        const claimEl = document.getElementById('ubiEntitlementBox') || document.querySelector('.action-item');
+        const claimEl = document.getElementById('ubiEntitlementBox') || document.getElementById('ubiClaimHero');
         if (claimEl && claimEl.scrollIntoView) {
             claimEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
@@ -3714,7 +3714,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         const status = document.getElementById('ubiClaimStatus');
 
         // ─────────────────────────────────────────────────────────────
-        // Plasma Ember "is-hot" toggle.
+        // Claimable "is-hot" toggle (G$ gold state).
         // The claim button's state is mutated from ~30 different sites
         // (label.textContent / btn.disabled flips). Instead of editing
         // every site, we *derive* the hot state from observable button
@@ -4465,6 +4465,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (countdown && countdown.textContent && countdown.textContent !== '--:--:--') {
                     heroTimer.textContent = 'Next claim in ' + countdown.textContent;
                 }
+            }
+
+            if (heroCta) {
+                // Mirror the orb's semantic state onto the CTA so the pill is
+                // muted whenever it is not an actual claim.
+                heroCta.classList.toggle('is-disabled', hero.classList.contains('is-disabled'));
+                heroCta.classList.toggle('is-claimed', hero.classList.contains('is-claimed'));
+                heroCta.setAttribute('aria-disabled', hasClaimable ? 'false' : 'true');
             }
         }
 
