@@ -2411,10 +2411,13 @@
                 let gasRequestedFromFaucet = false;
 
                 btnText.textContent = '⏳ Checking XDC gas...';
-                const preGasRes = await fetch('/api/xdc/faucet/gas', {
+                // Read-only readiness check first — never request a faucet
+                // top-up for a wallet that already has enough XDC gas. Only
+                // /api/xdc/faucet/gas performs the actual top-up.
+                const preGasRes = await fetch('/api/xdc/faucet/status', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ wallet: WALLET, force_onchain: false })
+                    body: JSON.stringify({ wallet: WALLET })
                 });
                 const preGasData = await preGasRes.json();
                 requiredBal = Number(preGasData.required_gas_xdc || 0);
@@ -2426,19 +2429,23 @@
                     // the same click: the faucet tx needs time to be mined first.
                     // The user will click Claim again once gas arrives.
                     gasRequestedFromFaucet = true;
-                    let topupData = preGasData;
-                    const preTerminalStatus = preGasData.terminal_status || preGasData.status || 'unknown';
+                    btnText.textContent = '⏳ Requesting XDC faucet top-up...';
+                    const topupRes = await fetch('/api/xdc/faucet/gas', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ wallet: WALLET, force_onchain: false })
+                    });
+                    let topupData = await topupRes.json();
+                    const preTerminalStatus = topupData.terminal_status || topupData.status || 'unknown';
                     if (preTerminalStatus === 'recent_refill') {
-                        // /api/xdc/faucet/gas with force_onchain:false already attempts top-up
-                        // in most cases. Only retry with force_onchain:true when the first call
-                        // was blocked by a recent-refill cooldown.
-                        btnText.textContent = '⏳ Requesting XDC faucet top-up...';
-                        const topupRes = await fetch('/api/xdc/faucet/gas', {
+                        // The first call was blocked by a recent-refill cooldown;
+                        // retry once through the explicit force_onchain path.
+                        const forceRes = await fetch('/api/xdc/faucet/gas', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ wallet: WALLET, force_onchain: true })
                         });
-                        topupData = await topupRes.json();
+                        topupData = await forceRes.json();
                     }
 
                     const terminalStatus = topupData.terminal_status || topupData.status || 'unknown';
