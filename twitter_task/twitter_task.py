@@ -1,11 +1,48 @@
 import os
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
+
+
+def _coprime_stride(total: int, count: int) -> int:
+    """Smallest stride >= total/count that is coprime with total.
+
+    A stride coprime with `total` makes k -> (k * stride) % total injective,
+    so the first `count` indices are all distinct while sweeping the whole
+    opener x middle x closer space instead of clustering on a prefix.
+    """
+    stride = max(1, total // count)
+    while math.gcd(stride, total) != 1:
+        stride += 1
+    return stride
+
+
+def _build_message_pool(openers, middles, closers, render, count: int = 1000):
+    """Combine three phrase pools into `count` distinct messages.
+
+    Each message is a unique (opener, middle, closer) triple. Pools must
+    multiply to at least `count` so every generated message is distinct.
+    """
+    n_openers, n_middles, n_closers = len(openers), len(middles), len(closers)
+    total = n_openers * n_middles * n_closers
+    if total < count:
+        raise ValueError(
+            f"message pools too small: {total} combinations < {count} requested"
+        )
+    stride = _coprime_stride(total, count)
+    pool = []
+    for i in range(count):
+        idx = (i * stride) % total
+        s1 = openers[idx % n_openers]
+        s2 = middles[(idx // n_openers) % n_middles]
+        s3 = closers[(idx // (n_openers * n_middles)) % n_closers]
+        pool.append(render(s1, s2, s3))
+    return pool
 
 
 def _wallet_filter(query, wallet_address: str):
@@ -30,7 +67,7 @@ class TwitterTaskService:
 
         logger.info("🐦 Twitter Task Service initialized")
         logger.info(f"⏰ Cooldown: {self.cooldown_hours} hours")
-        logger.info(f"💬 Custom Messages: {len(self.custom_messages)} unique variations (covers daily tasks, CELO check-in rewards, daily G$ claims — wallet-based rotation ensures unique messages per user)")
+        logger.info(f"💬 Custom Messages: {len(self.custom_messages)} unique variations (wallet + day based rotation ensures unique messages per user)")
         logger.info(f"💰 Rewards: Dynamic (loaded from admin configuration)")
     
     def get_task_reward(self) -> float:
@@ -39,83 +76,135 @@ class TwitterTaskService:
         return reward_config_service.get_reward_amount('twitter_task')
 
     def _generate_custom_messages(self):
-        """Generate 1000 unique custom messages for Twitter (respecting character limits)"""
-        import random
-        
+        """Generate 1000 unique custom messages for Twitter (respecting character limits)
+
+        Copy rules — these posts are signed by real users from personal
+        accounts, not brand ads:
+          * First-person, plain English. Brand taglines published verbatim from
+            a personal account read as coordinated spam to X and to other
+            users.
+          * No claim of official affiliation (GoodMarket is an independent
+            community project — see the impersonation-risk note in AGENTS.md).
+          * No "free"/"guaranteed"/"join thousands" style promises.
+          * Exactly one link per post (the referral link injected at serve
+            time); the middle sentence stays link-free so a post never carries
+            three URLs.
+          * Single closing punctuation only, no doubled "?." / ".!".
+        """
         opening_phrases = [
-            "GoodMarket is more than tasks in the GoodDollar ecosystem.",
-            "Join the financial revolution with GoodMarket.",
-            "Unlock Web3 potential with GoodMarket.",
-            "Earn & learn.",
-            "Step into the future of finance with GoodMarket.",
-            "Start your journey in GoodDollar on GoodMarket today.",
-            "Where education meets rewards in the thriving GoodDollar ecosystem.!",
-            "Ready to earn G$?.",
-            "Discover new opportunities.",
-            "Join thousands earning G$ daily.",
-            # Claim daily G$
-            "Claim your daily G$ and keep your streak alive on GoodMarket.",
-            "Your daily G$ is waiting — claim it now on GoodMarket.",
-            "Don't miss your daily G$ claim on GoodMarket.",
-            "Every day you claim G$ on GoodMarket you help grow the GoodDollar ecosystem.",
-            "Claim daily G$ on GoodMarket and build real crypto savings over time.",
+            # Genuine daily claim / streak framing
+            "Claimed my G$ for today and kept the streak alive.",
+            "Another day, another G$ claim on GoodMarket.",
+            "My daily G$ claim took me about a minute today.",
+            "Kept my G$ streak going and I am not planning to break it.",
+            "Claimed today's G$ before I forget again.",
+            "The daily G$ claim is the easiest part of my morning now.",
+            # Learning-focused
+            "Just finished the Learn & Earn quiz for today.",
+            "I finally understand how GoodDollar UBI actually works.",
+            "Spent ten minutes learning about UBI and got G$ for it.",
+            "The quiz today explained financial inclusion better than anything I read before.",
+            "Learning about UBI in short lessons beats reading long articles.",
+            "Today's lesson was about why universal basic income matters.",
+            "I did not know how G$ was funded until this quiz.",
+            # Community / personal
+            "Been earning G$ here for a while and the daily tasks are still simple.",
+            "Joined GoodMarket to learn about GoodDollar and stayed for the tasks.",
+            "My crypto wallet finally has a purpose beyond holding tokens.",
+            "Started with zero crypto knowledge and figured this out step by step.",
+            "This is the first crypto app my friends actually understood.",
+            "Doing my daily task now instead of scrolling.",
+            "Small consistent earnings are adding up more than I expected.",
+            # Invite framing (soft, personal)
+            "If you are curious about earning crypto for learning, try this.",
+            "Sharing in case anyone else wants to learn about UBI and get rewarded.",
+            "For anyone wondering how GoodDollar works, this is where I started.",
+            "Found a way to learn about UBI that does not feel like homework.",
+            "Told a friend about this and they claimed their first G$ the same day.",
+            "Not a get-rich thing, just steady small earnings for showing up.",
+            "Posting this for the friends who keep asking me about crypto basics.",
+            # Plain, low-key
+            "My daily task for today is done.",
+            "Earning G$ for learning is a strange idea that actually works.",
+            "Another claim, another small win.",
+            "Kept it simple today and just did the daily task.",
+            "Checking in for today's G$.",
+            "Took a few minutes to learn something and got rewarded for it.",
+            "A short lesson and a small reward — that is my routine now.",
+            "Back again for the daily G$ claim.",
         ]
 
         middle_phrases = [
-            "Visit goodmarket.live today to discover daily tasks & ways to earn G$ 💙",
-            "Go to goodmarket.live now to explore exciting tasks and start earning G$.",
-            "Check out goodmarket.live for daily opportunities to support the GoodDollar mission.",
-            "Go to goodmarket.live & complete simple tasks to earn real G$ rewards daily.",
-            "Access goodmarket.live to find ways to contribute & earn within our community.",
-            "Your journey starts at goodmarket.live – discover quizzes that reward you in G$.",
-            "Visit goodmarket.live & find out how easy it is to earn G$ while learning.",
-            "Explore goodmarket.live today and join the movement for a more equitable future.",
-            "Start your earning routine at goodmarket.live with fun educational tasks.",
-            "Navigate to goodmarket.live & unlock multiple pathways to earn G$ rewards.",
-            # Claim daily G$
-            "Claim your free daily G$ at goodmarket.live — a small action that compounds into real crypto income.",
-            "Your daily G$ claim at goodmarket.live takes under a minute and grows your GoodDollar balance.",
-            "Visit goodmarket.live to claim your daily G$ and stay active in the GoodDollar community.",
-            "Claim daily G$ at goodmarket.live and combine it with tasks, quizzes, and community rewards.",
-            "Go to goodmarket.live now, claim your daily G$, and see how fast your balance grows.",
+            # Link-free by design: the only URL in the final post is the
+            # referral link injected at serve time.
+            "It is a short lesson, then you can claim, and it takes a few minutes.",
+            "The tasks change often enough that it never feels like the same day again.",
+            "You can learn at your own pace and the reward is immediate.",
+            "The UBI part is what surprised me most when I started reading about it.",
+            "There is nothing to pay and you can stop whenever you want.",
+            "I like that it teaches the why and not just the how.",
+            "The quizzes are short and there is always a daily task to come back to.",
+            "It works on my phone without any complicated setup.",
+            "Small rewards every day are easier to stick with than one big payout.",
+            "It is a good starting point if you have never used crypto before.",
+            "The lessons made the whole UBI idea click for me.",
+            "The daily task is what keeps me consistent.",
+            "You do not need to spend anything to take part.",
+            "I treat it as a daily five-minute routine.",
+            "It balances learning and earning in a way that does not feel forced.",
+            "The learning is the part I did not expect to enjoy.",
+            "It has been a simple way to stay involved every day.",
+            "There is no pressure to do more than you want.",
+            "Every task explains something useful about how G$ works.",
+            "The community aspect is what made it stick for me.",
+            "Claiming daily keeps the whole thing feeling active.",
+            "It helped me understand how UBI is actually funded and distributed.",
+            "The quizzes are genuinely short, which is why I keep doing them.",
+            "It is a routine now rather than something I have to remember.",
+            "My streak is the only reason I have stayed this consistent with anything.",
+            "The reward arrives quickly after you finish.",
+            "Learning something new each day is a nice side effect of the reward.",
+            "It works fine on a slow connection, which matters where I live.",
+            "Nothing about it requires you to already understand crypto.",
+            "I have recommended it to people who usually ignore crypto apps.",
+            "The daily task is small enough that I never skip it.",
+            "It is one of the few crypto things I can explain to my family.",
+            "The simplicity is what made me stay.",
+            "I like that the lessons are written plainly.",
+            "Doing one task a day makes it easy to keep going.",
+            "It has become part of my morning routine along with coffee.",
+            "You can see your progress add up over weeks.",
+            "The UBI lessons connect to something bigger than just earning.",
+            "It rewards showing up rather than spending money.",
+            "The whole thing is friendlier than I expected from crypto.",
+            "Short lessons suit my attention span better than long courses.",
+            "It is straightforward once you claim your first G$.",
+            "The daily consistency is what makes the small rewards meaningful.",
+            "It taught me more about financial inclusion than I expected to learn.",
         ]
 
         closing_phrases = [
-            "New to GoodDollar? Start today: https://goodmarket.live",
-            "Join the movement! Get started: https://goodmarket.live",
-            "Begin your crypto journey! Info: https://goodmarket.live",
-            "Don't wait to earn! Visit: https://goodmarket.live",
-            "Take the first step! Site: https://goodmarket.live",
-            "Your crypto future starts here: https://goodmarket.live",
-            "Start receiving UBI now: https://goodmarket.live",
-            "Empower your future! Visit: https://goodmarket.live",
-            "Joining is fast & simple: https://goodmarket.live",
-            "Be part of our community: https://goodmarket.live",
-            # Daily check-in & CELO rewards
-            "Check in daily & earn CELO: https://goodmarket.live",
-            "Your CELO check-in reward awaits: https://goodmarket.live",
-            "Earn CELO every day — start here: https://goodmarket.live",
-            "Daily CELO rewards on GoodMarket: https://goodmarket.live",
-            "Check in now, earn CELO today: https://goodmarket.live",
-            # Claim daily G$
-            "Claim your daily G$ here: https://goodmarket.live",
-            "Your daily G$ is waiting for you: https://goodmarket.live",
-            "Claim G$ every day — visit: https://goodmarket.live",
-            "Don't miss today's G$ claim: https://goodmarket.live",
-            "Free daily G$ — claim yours now: https://goodmarket.live",
+            "If you want to start, this is the link I used: https://goodmarket.live",
+            "My link, in case it helps: https://goodmarket.live",
+            "I started here: https://goodmarket.live",
+            "This is where I claim mine: https://goodmarket.live",
+            "Same place I use every day: https://goodmarket.live",
+            "Here is where I started learning: https://goodmarket.live",
+            "Start with the daily task here: https://goodmarket.live",
+            "The site I use for this: https://goodmarket.live",
+            "You can try it here: https://goodmarket.live",
+            "Link for anyone curious: https://goodmarket.live",
         ]
 
-        templates = []
-        for i in range(1000):
-            s1 = opening_phrases[i % len(opening_phrases)]
-            s2 = middle_phrases[(i // 10) % len(middle_phrases)]
-            s3 = closing_phrases[(i // 100) % len(closing_phrases)]
-            
-            # Twitter messages are shorter to fit limits
-            message = f"🐦 {s1} {s2}\n\n{s3} @gooddollarorg @GoodDollarTeam"
-            templates.append(message)
-        
-        return templates
+        def render(s1, s2, s3):
+            # @gooddollarorg is a factual reference to the project, not a claim
+            # of affiliation. The second "@GoodDollarTeam" mention was dropped:
+            # two mentions plus three URLs read as a coordinated campaign.
+            return f"{s1} {s2}\n\n{s3} @gooddollarorg"
+
+        return _build_message_pool(
+            opening_phrases, middle_phrases, closing_phrases, render, count=1000
+        )
 
     def _mask_wallet(self, wallet_address: str) -> str:
         """Mask wallet address for display"""
@@ -125,6 +214,11 @@ class TwitterTaskService:
 
     def get_custom_message_for_user(self, wallet_address: str) -> str:
         """Get custom message for the user - wallet-based rotation ensures unique messages with personal referral link.
+
+        Rotation is keyed on (wallet, UTC day) only. The previous version also
+        mixed in the current hour, which meant the message shown to a user at
+        7:59 was different from the one they actually posted at 8:01 — the
+        admin reviewing the submission saw text that did not match the post.
 
         Domain re-anchoring: the static pool text says 'goodmarket.live', but
         the referral link and bare-domain text are re-anchored to the origin
@@ -145,7 +239,6 @@ class TwitterTaskService:
         # Get current UTC time for rotation
         now_utc = datetime.now(timezone.utc)
         day_of_year = now_utc.timetuple().tm_yday
-        hour_of_day = now_utc.hour
         
         # Use multiple factors for better distribution
         last_4_chars = int(wallet_normalized[-4:], 16) if len(wallet_normalized) >= 4 else 0
@@ -154,7 +247,6 @@ class TwitterTaskService:
         message_index = (
             wallet_hash + 
             (day_of_year * 37) +  # Prime number multiplier
-            (hour_of_day * 17) +   # Prime number multiplier
             (last_4_chars * 7)     # Prime number multiplier
         ) % len(self.custom_messages)
         
@@ -182,7 +274,7 @@ class TwitterTaskService:
         except Exception as anchor_err:
             logger.warning(f"⚠️ Could not re-anchor message domain: {anchor_err}")
         
-        logger.info(f"📅 Message index {message_index} for user: {wallet_address[:8]}... (Day: {day_of_year}, Hour: {hour_of_day}, 1000 unique messages available)")
+        logger.info(f"📅 Message index {message_index} for user: {wallet_address[:8]}... (Day: {day_of_year}, {len(self.custom_messages)} unique messages available)")
         return message
 
     def _validate_twitter_url(self, twitter_url: str) -> Dict[str, Any]:
