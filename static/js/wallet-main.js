@@ -5372,9 +5372,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // status panel (appendStatusLine), and HTML-error sniffers
         // (_isXdcRpcHtmlError) to keep UX consistent with the Celo path.
         //
-        // Note: there is no /api/xdc/faucet/status endpoint, so we re-poll
-        // /api/xdc/faucet/gas with force_onchain:false instead — the backend
-        // short-circuits when gas is already credited so this is cheap.
+        // Gas arrival is polled via the READ-ONLY /api/xdc/faucet/status
+        // endpoint (mirror of Celo's /api/faucet/status). Polling the top-up
+        // endpoint here used to re-request XDC gas from the GoodDollar faucet
+        // on every tick, even after the first top-up had already been sent.
         // ---------------------------------------------------------------
         async function pollForXdcGasArrival(maxDurationMs = 150000) {
             const correlationId = window.__claimXdcFaucetCorrelationId || `xdcclaim-${Date.now().toString(36)}`;
@@ -5389,10 +5390,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
                 let statusData;
                 try {
-                    statusData = await _safeFetchJson('/api/xdc/faucet/gas', {
+                    statusData = await _safeFetchJson('/api/xdc/faucet/status', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId },
-                        body: JSON.stringify({ wallet: WALLET, correlation_id: correlationId, force_onchain: false })
+                        body: JSON.stringify({ wallet: WALLET, correlation_id: correlationId })
                     });
                 } catch (fetchErr) {
                     if (_isXdcRpcHtmlError(fetchErr)) {
@@ -5427,9 +5428,23 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             window.__claimXdcFaucetCorrelationId = correlationId;
             setClaimGasUiState('checking_balance');
 
-            // /api/xdc/faucet/gas is a single endpoint that performs both
-            // check + top-up (it short-circuits when gas is already ready),
-            // so we don't need a separate /status pre-flight like Celo.
+            // Step A: read-only readiness check — mirrors the Celo flow
+            // (/api/faucet/status before /api/faucet/gas). A wallet that already
+            // holds enough XDC gas never touches the faucet.
+            const statusData = await _safeFetchJson('/api/xdc/faucet/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': correlationId },
+                body: JSON.stringify({ wallet: WALLET, correlation_id: correlationId })
+            });
+            if (!statusData.success) {
+                throw new Error(statusData.error || 'Unable to check XDC wallet gas.');
+            }
+            if (statusData.gas_ready) {
+                setClaimGasUiState('gas_ready');
+                return { gasReady: true, toppedUp: false, source: 'wallet_balance' };
+            }
+
+            // Step B: only now request the faucet top-up.
             const requestXdcFaucetGas = async (forceFlag) => {
                 const gasData = await _safeFetchJson('/api/xdc/faucet/gas', {
                     method: 'POST',
