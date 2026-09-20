@@ -83,6 +83,56 @@
         .wallet-reminder-banner.hidden {
             display: none;
         }
+        /* ── Join GoodMarket Community (one-time invite) ──
+           Full-width card directly under the top bar. Kept outside the Dark
+           Purple override block because it is a surface the user sees ONCE —
+           the override is for re-skins, and duplicated rules are dead weight.
+           The note describes the COMMUNITY (GoodMarket), not the wallet, so it
+           does not read as a GoodDollar-impersonation surface. */
+        .join-community-banner {
+            display: none;
+            margin: 0.4rem 1.25rem 0.8rem;
+            padding: 1rem 1.15rem;
+            border-radius: 14px;
+            background: linear-gradient(135deg, rgba(var(--accent-rgb),0.16), rgba(var(--accent-secondary-rgb),0.1));
+            border: 1px solid rgba(var(--accent-secondary-rgb),0.36);
+            text-align: center;
+        }
+        .join-community-banner.show { display: block; }
+        .join-community-banner .jcb-title {
+            font-size: 1rem;
+            font-weight: 800;
+            color: #c4b5fd;
+            margin-bottom: 0.35rem;
+        }
+        .join-community-banner .jcb-copy {
+            font-size: 0.8rem;
+            line-height: 1.5;
+            color: var(--text-dim);
+            margin-bottom: 0.8rem;
+        }
+        .join-community-banner .jcb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+            color: var(--primary-button-text);
+            border: none;
+            border-radius: 40px;
+            padding: 0.7rem 1.5rem;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: transform 0.25s ease, box-shadow 0.25s ease;
+            box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.32);
+        }
+        .join-community-banner .jcb-btn:hover { transform: translateY(-2px); }
+        .join-community-banner .jcb-btn:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+        @media (max-width: 560px) {
+            .join-community-banner { margin-left: 0.9rem; margin-right: 0.9rem; }
+        }
+
         .top-bar-title {
             font-size: 1.1rem;
             font-weight: 700;
@@ -2084,6 +2134,17 @@
     <div id="fvExpiryBanner" style="display:none;margin:0.9rem 1rem 0;padding:0.8rem 0.95rem;border-radius:12px;font-size:0.88rem;line-height:1.5;">
         <span id="fvExpiryBannerIcon" style="margin-right:0.4rem;">⏳</span><span id="fvExpiryBannerText"></span>
         <button type="button" id="fvExpiryBannerCta" onclick="handleFvReverifyClick()" style="margin-left:0.6rem;padding:0.35rem 0.8rem;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;font-size:0.8rem;font-weight:600;cursor:pointer;">Re-verify</button>
+    </div>
+
+    <!-- ── Join GoodMarket Community (one-time invite) ──
+         Full-width so every user sees it; revealed once per browser by
+         wallet-bottomnav.js and never again (localStorage flag written the
+         first time it paints). Starts display:none so it cannot flash before
+         the flag is checked. -->
+    <div id="joinCommunityBanner" class="join-community-banner" role="region" aria-label="Join the GoodMarket community">
+        <div class="jcb-title">🤝 Join the GoodMarket Community</div>
+        <div class="jcb-copy">Connect with fellow G$ earners in our Telegram discussion group — community updates, tips, and support.</div>
+        <button type="button" id="joinCommunityJoinBtn" class="jcb-btn" onclick="joinGoodMarketCommunity()">✈️ Join GoodMarket Community</button>
     </div>
 
     <!-- Daily Voucher Banner -->
