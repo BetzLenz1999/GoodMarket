@@ -2,7 +2,7 @@
 
 Background thread (same pattern as ``ubi_reminder.py`` / ``reloadly/refund_retry.py``):
 - When the PH clock reaches 20:00 (DAILY_LOTTO_DRAW_HOUR_PHT) it runs today's
-  draw (CAS: pending -> drawing) and persists winning numbers + winner rows.
+  draw (CAS: pending -> drawing) and persists the drawn digits + winner rows.
 - It then grants the winners on-chain through GoodMarketLotto.grantWinners,
   and keeps retrying only the rows that were NOT granted — never double-pays.
 - It re-arms a "vault ready" state for winners once the vault balance is
