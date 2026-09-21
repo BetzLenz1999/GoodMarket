@@ -1,6 +1,15 @@
-"""Daily Lotto (6/100) — business logic.
+"""Daily Lotto (3 digits) — business logic.
 
 Handles round/ticket/win/prize-tier/vault-alert logic on top of Supabase.
+
+PCSO-style rules: the player picks THREE digits (each 0-9, in order) once per
+Philippines game date. The 8PM draw publishes three digits in order.
+- STRAIGHT: the pick matches the draw digit-for-digit, in the same order.
+- RUMBLE:   the same three digits in any other order.
+
+Straight and rumble are represented with the existing ``match_count`` column to
+avoid a destructive migration: match_count 6 = straight, match_count 3 =
+rumble. Both maps onto the ``daily_lotto_prize_tiers`` CHECK (3..6) range.
 
 Design invariants (mirroring the rest of this codebase):
 - The draw scheduler is the ONLY writer of winning numbers.
@@ -31,9 +40,17 @@ logger = logging.getLogger(__name__)
 MANILA_TZ = ZoneInfo("Asia/Manila")
 DRAW_HOUR_PHT = int(os.getenv("DAILY_LOTTO_DRAW_HOUR_PHT", "20"))
 
-MIN_NUMBER = 1
-MAX_NUMBER = 100
-PICK_SIZE = 6
+MIN_NUMBER = 0
+MAX_NUMBER = 9
+PICK_SIZE = 3
+
+# Straight (exact order) vs rumble (same digits, any order). Stored in the
+# match_count slot: the tiers table only allows 3..6.
+STRAIGHT_MATCH = 6
+RUMBLE_MATCH = 3
+
+WIN_STRAIGHT = "straight"
+WIN_RUMBLE = "rumble"
 
 ALERT_THROTTLE_SEC = float(os.getenv("DAILY_LOTTO_ALERT_THROTTLE_SEC", "3600"))
 
@@ -87,24 +104,23 @@ def date_to_round_id(d: date) -> int:
 # ── Pick validation ───────────────────────────────────────────────────────────
 
 def validate_pick(numbers) -> tuple:
-    """Return (ok, error, normalized_list). Accepts list/tuple of 6 unique
-    ints each between 1..100."""
+    """Return (ok, error, normalized_list). Accepts list/tuple of 3 digits,
+    each 0..9. ORDER MATTERS (straight vs rumble) and repeated digits are allowed
+    ("112" is a valid PCSO-style pick)."""
     try:
         vals = [int(x) for x in numbers]
     except (TypeError, ValueError):
-        return False, "Invalid numbers.", None
+        return False, "Invalid digits.", None
     if len(vals) != PICK_SIZE:
-        return False, "Pick exactly 6 numbers.", None
+        return False, f"Pick exactly {PICK_SIZE} digits.", None
     if any(v < MIN_NUMBER or v > MAX_NUMBER for v in vals):
-        return False, f"Each number must be between {MIN_NUMBER} and {MAX_NUMBER}.", None
-    if len(set(vals)) != PICK_SIZE:
-        return False, "Numbers must be unique.", None
-    return True, None, sorted(vals)
+        return False, f"Each digit must be between {MIN_NUMBER} and {MAX_NUMBER}.", None
+    return True, None, vals
 
 
 def _seed_hash(numbers, round_id, salt: str = "goodmarket-lotto") -> str:
-    """Deterministic opaque hash of the winning numbers (for the DB badge)."""
-    payload = f"{round_id}:{','.join(str(n) for n in sorted(numbers))}:{salt}"
+    """Deterministic opaque hash of the drawn digits (for the DB badge)."""
+    payload = f"{round_id}:{','.join(str(n) for n in numbers)}:{salt}"
     return "0x" + hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -112,9 +128,12 @@ def _seed_hash(numbers, round_id, salt: str = "goodmarket-lotto") -> str:
 
 def build_pick_message(address: str, round_id, numbers: list) -> str:
     """The exact text a user signs (personal_sign / EIP-191) to prove they own
-    the wallet before their pick is recorded. Binds the wallet + round + numbers
-    so a captured signature can't be replayed on another pick/day."""
-    nums = ",".join(str(n) for n in sorted(int(x) for x in numbers))
+    the wallet before their pick is recorded. Binds the wallet + round + digits
+    so a captured signature can't be replayed on another pick/day.
+
+    Digits keep their PICKED ORDER (straight vs rumble depends on it), unlike
+    the old 6/100 version which sorted."""
+    nums = ",".join(str(int(x)) for x in numbers)
     return (
         "GoodMarket Daily Lotto — submit my pick\n"
         f"Wallet: {address}\n"
@@ -208,7 +227,7 @@ def verify_pick_signature(
 
 # ── Prize tiers ──────────────────────────────────────────────────────────────
 
-_DEFAULT_TIERS = {3: Decimal("10000"), 4: Decimal("20000"), 5: Decimal("30000"), 6: Decimal("50000")}
+_DEFAULT_TIERS = {RUMBLE_MATCH: Decimal("1000"), STRAIGHT_MATCH: Decimal("50000")}
 _tier_cache: dict = {}
 _tier_cache_at: float = 0.0
 _TIER_CACHE_TTL = 30.0
@@ -243,13 +262,14 @@ def get_prize_tiers(use_cache=True) -> dict:
 
 
 def update_prize_tiers(updates: dict, admin_wallet: str) -> dict:
-    """Admin upsert of one or more tier amounts. ``updates`` = {match_count: amount}."""
+    """Admin upsert of one or more tier amounts. ``updates`` = {match_count: amount}.
+    Only the two live tiers are accepted: 6 = straight, 3 = rumble."""
     try:
         sb = _get_supabase_admin()
         for match_count, amount in updates.items():
             match_count = int(match_count)
-            if match_count not in (3, 4, 5, 6):
-                return {"success": False, "error": "match_count must be 3, 4, 5 or 6"}
+            if match_count not in (RUMBLE_MATCH, STRAIGHT_MATCH):
+                return {"success": False, "error": "match_count must be 6 (straight) or 3 (rumble)"}
             amount = Decimal(str(amount))
             if amount < 0:
                 return {"success": False, "error": "Amount cannot be negative"}
@@ -337,7 +357,7 @@ def upsert_entry(
     an entry for this round (the UNIQUE constraint is the atomic guard)."""
     wallet = wallet.lower()
     if not numbers or len(numbers) != PICK_SIZE:
-        return {"success": False, "error": "Pick exactly 6 numbers."}
+        return {"success": False, "error": f"Pick exactly {PICK_SIZE} digits."}
     try:
         sb = _get_supabase_admin()
         existing = sb.table("daily_lotto_entries") \
@@ -385,7 +405,8 @@ def get_entry(round_id: int, wallet: str):
             .execute()
         if res.data:
             row = res.data[0]
-            return {"numbers": sorted(row["numbers"]), "created_at": row.get("created_at")}
+            # Order is the pick (straight vs rumble) — never sort it.
+            return {"numbers": [int(n) for n in row["numbers"]], "created_at": row.get("created_at")}
         return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("⚠️ get_entry failed: %s", exc)
@@ -425,15 +446,16 @@ def get_my_last_round_result(wallet: str) -> dict:
         e = entries.data[0]
         linked = e.get("daily_lotto_rounds") or {}
         draw = linked.get("winning_numbers") if isinstance(linked, dict) else None
-        match = compute_matches(e["numbers"], draw) if draw else None
+        win_type = classify_win(e["numbers"], draw) if draw else None
         result = classify_result(e["numbers"], draw)
         info = {
             "picked": True,
             "round_id": e["round_id"],
             "game_date": linked.get("game_date") if isinstance(linked, dict) else None,
-            "pick": e["numbers"],
+            "pick": [int(n) for n in (e["numbers"] or [])],
             "winning_numbers": draw,
-            "match_count": match,
+            "match_count": count_positions_matched(e["numbers"], draw) if draw else None,
+            "win_type": win_type,
             "result": result,
         }
         if result == "won":
@@ -452,34 +474,68 @@ def get_my_last_round_result(wallet: str) -> dict:
         return {"picked": False}
 
 
-def compute_matches(pick: list, draw: list) -> int:
-    """Match count between a 6-pick and the 6 drawn numbers."""
-    if not draw:
+def digit_triplet(numbers) -> str:
+    """Canonical 3-char string for a pick/draw ("057" keeps its leading zero)."""
+    return "".join(str(int(n)) for n in numbers)
+
+
+def count_positions_matched(pick: list, draw: list) -> int:
+    """How many of the three positions match exactly (0-3)."""
+    if not pick or not draw or len(pick) != PICK_SIZE or len(draw) != PICK_SIZE:
         return 0
-    return len(set(pick) & set(draw))
+    return sum(1 for p, d in zip(pick, draw) if int(p) == int(d))
+
+
+def classify_win(pick: list | None, draw: list | None) -> str | None:
+    """PCSO-style verdict for one pick against the drawn digits.
+
+    Returns ``"straight"`` when every digit matches in the same order,
+    ``"rumble"`` when the same three digits appear in any other order, and
+    ``None`` when it loses. Repeated digits work: rumble compares multisets, so
+    a pick of 1-1-2 rumbles a draw of 1-2-1, while 1-1-3 does not."""
+    if not pick or not draw:
+        return None
+    if len(pick) != PICK_SIZE or len(draw) != PICK_SIZE:
+        return None
+    pick_digits = [int(x) for x in pick]
+    draw_digits = [int(x) for x in draw]
+    if pick_digits == draw_digits:
+        return WIN_STRAIGHT
+    if sorted(pick_digits) == sorted(draw_digits):
+        return WIN_RUMBLE
+    return None
+
+
+def tier_match_count(win_type: str | None) -> int:
+    """Map a win type onto the prize-tier key (the match_count slot)."""
+    if win_type == WIN_STRAIGHT:
+        return STRAIGHT_MATCH
+    if win_type == WIN_RUMBLE:
+        return RUMBLE_MATCH
+    return 0
 
 
 def classify_result(pick: list | None, winning_numbers: list | None) -> str:
-    """Explicit per-pick verdict for the user: ``won`` (matched 3+), ``lost``
-    (matched <3) or ``pending`` (round hasn't drawn / no winning numbers yet).
+    """Explicit per-pick verdict for the user: ``won`` (straight or rumble),
+    ``lost`` or ``pending`` (round hasn't drawn / no drawn digits yet).
 
-    This is the answer to "natuloy ba 'yung panalo o talo ko?": every pick has
-    exactly one verdict once the winning numbers are published. Losers are NOT
-    stored in daily_lotto_winnings (only winners get rows), so the verdict is
+    Every pick has exactly one verdict once the digits are published. Losers are
+    NOT stored in daily_lotto_winnings (only winners get rows), so the verdict is
     derived from the draw — never read from the winnings table."""
     if not pick or not winning_numbers:
         return "pending"
-    match_count = compute_matches(pick, winning_numbers)
-    return "won" if match_count >= 3 else "lost"
+    return "won" if classify_win(pick, winning_numbers) else "lost"
 
 
 def _compute_round_winners(round_id: int, winning_numbers: list) -> dict:
     """Compute winner rows for a round (used by the draw routine and the stuck
     recovery). Returns {winners: [{round_id, wallet_address, match_count,
-    amount_gd}], tiers: {...}}."""
-    winning = [int(x) for x in winning_numbers]
-    if len(winning) != PICK_SIZE:
-        return {"error": "Winning numbers are invalid.", "winners": [], "tiers": {}}
+    win_type, amount_gd}], tiers: {...}}."""
+    draw = [int(x) for x in winning_numbers]
+    if len(draw) != PICK_SIZE:
+        return {"error": "Drawn digits are invalid.", "winners": [], "tiers": {}}
+    if any(d < MIN_NUMBER or d > MAX_NUMBER for d in draw):
+        return {"error": "Drawn digits must be 0-9.", "winners": [], "tiers": {}}
 
     tiers = get_prize_tiers(use_cache=False)
 
@@ -496,17 +552,20 @@ def _compute_round_winners(round_id: int, winning_numbers: list) -> dict:
         numbers = entry.get("numbers")
         if not numbers:
             continue
-        match_count = compute_matches(numbers, winning)
-        if 3 <= match_count <= 6:
-            amount = Decimal(str(tiers.get(match_count, "0")))
-            if amount <= 0:
-                continue
-            winners.append({
-                "round_id": round_id,
-                "wallet_address": wallet,
-                "match_count": match_count,
-                "amount_gd": amount,
-            })
+        win_type = classify_win(numbers, draw)
+        if not win_type:
+            continue
+        match_count = tier_match_count(win_type)
+        amount = Decimal(str(tiers.get(match_count, "0")))
+        if amount <= 0:
+            continue
+        winners.append({
+            "round_id": round_id,
+            "wallet_address": wallet,
+            "match_count": match_count,
+            "win_type": win_type,
+            "amount_gd": amount,
+        })
 
     # Optional daily prize-pool cap (prorated to protect the vault).
     cap = get_daily_prize_pool_cap()
@@ -589,12 +648,13 @@ def run_draw_for_round(round_id: int) -> dict:
                 return {"success": True, "already_drawn": True, "round_id": round_id}
             return {"success": False, "error": "Round is not pending.", "already_drawn": True}
 
-        # Generate the winning numbers with the CSPRNG-backed SystemRandom.
-        # Plain random.sample is predictable (Mersenne Twister) — anyone
-        # correlating the server clock could compute the draw.
+        # Generate the drawn digits with the CSPRNG-backed SystemRandom.
+        # Plain random.choices is predictable (Mersenne Twister) — anyone
+        # correlating the server clock could compute the draw. Each position is
+        # drawn independently (digits may repeat, e.g. 7-7-7) and ORDER IS THE
+        # RESULT: straight needs the same order, rumble any order.
         csprng = secrets.SystemRandom()
-        numbers = csprng.sample(range(MIN_NUMBER, MAX_NUMBER + 1), PICK_SIZE)
-        numbers.sort()
+        numbers = [csprng.randrange(MIN_NUMBER, MAX_NUMBER + 1) for _ in range(PICK_SIZE)]
         seed = _seed_hash(numbers, round_id)
 
         # Compute winners + amounts (uses the admin-editable prize tiers).
@@ -720,11 +780,12 @@ def get_round_participants(round_id: int, wallet: str | None = None, limit: int 
             sanitized.append({
                 "wallet_short": _short_wallet(full),
                 "is_me": is_me,
-                "numbers": sorted(int(n) for n in (row.get("numbers") or [])),
+                "numbers": [int(n) for n in (row.get("numbers") or [])],
                 "created_at": row.get("created_at"),
                 "result": verdict,
                 "is_winner": verdict == "won",
-                "matched": compute_matches(row.get("numbers") or [], draw) if draw else None,
+                "win_type": classify_win(row.get("numbers"), draw) if draw else None,
+                "matched": count_positions_matched(row.get("numbers") or [], draw) if draw else None,
                 "amount_gd": str(win.get("amount_gd")) if win.get("amount_gd") is not None else None,
                 "win_status": win.get("status"),
             })
@@ -776,13 +837,13 @@ def get_my_history(wallet: str, limit: int = 20) -> list:
         for e in (entries.data or []):
             linked = e.get("daily_lotto_rounds") or {}
             draw = linked.get("winning_numbers") if isinstance(linked, dict) else None
-            match = compute_matches(e["numbers"], draw) if draw else None
             rows.append({
                 "round_id": e["round_id"],
                 "game_date": linked.get("game_date") if isinstance(linked, dict) else None,
-                "pick": e["numbers"],
+                "pick": [int(n) for n in (e["numbers"] or [])],
                 "winning_numbers": draw,
-                "match_count": match,
+                "match_count": count_positions_matched(e["numbers"], draw) if draw else None,
+                "win_type": classify_win(e["numbers"], draw) if draw else None,
                 "result": classify_result(e["numbers"], draw),
                 "created_at": e.get("created_at"),
             })
