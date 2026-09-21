@@ -1,9 +1,12 @@
-"""Daily Lotto (6/100) — HTTP routes.
+"""Daily Lotto (3 digits) — HTTP routes.
 
 Blueprint ``lotto`` at ``/lotto``. Follows the Flywheel feature-module
 conventions (jumble/price_prediction): session + face-verification gated page,
 JSON API for picks/draw/history/withdraws, and an admin sub-namespace for the
 editable prize tiers / settings / manual draw / fund-vault quick action.
+
+Game: pick 3 digits (0-9, in order) once per day. Straight (exact order) pays
+the top tier; rumble (same digits, any order) pays the lower tier.
 """
 
 from __future__ import annotations
@@ -271,6 +274,7 @@ def withdraw():
                 'round_id': w['round_id'],
                 'amount_gd': str(w['amount_gd']),
                 'match_count': w['match_count'],
+                'win_type': w.get('win_type'),
             } for w in pending],
         })
     except Exception as exc:  # noqa: BLE001
