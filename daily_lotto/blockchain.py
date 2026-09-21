@@ -1,4 +1,4 @@
-"""Daily Lotto (6/100) — blockchain (Celo) interop.
+"""Daily Lotto (3 digits) — blockchain (Celo) interop.
 
 The contract is a pull-vault: the server key (GOODMARKET_LOTTO_KEY) grants
 winners after a draw and the winners claim their own prize (paying their own
@@ -49,7 +49,7 @@ LOTTO_ABI = [
     {
         "inputs": [
             {"name": "roundId", "type": "uint256"},
-            {"name": "numbers", "type": "uint256[6]"},
+            {"name": "numbers", "type": "uint256[3]"},
         ],
         "name": "finalizeRound",
         "outputs": [],
@@ -195,8 +195,14 @@ class LottoBlockchainService:
         re-finalizing an already-finalized round reverts with ``stale_round`` —
         treated as success here. Returns the same balance-safe shape as
         ``grant_winners``."""
-        if not numbers or len(numbers) != 6:
-            return {"success": False, "error": "Winning numbers must be exactly 6.", "error_type": "invalid_numbers"}
+        if not numbers or len(numbers) != 3:
+            return {"success": False, "error": "Winning digits must be exactly 3.", "error_type": "invalid_numbers"}
+        try:
+            digits = [int(n) for n in numbers]
+        except (TypeError, ValueError):
+            return {"success": False, "error": "Winning digits must be integers.", "error_type": "invalid_numbers"}
+        if any(d < 0 or d > 9 for d in digits):
+            return {"success": False, "error": "Each digit must be 0-9.", "error_type": "invalid_numbers"}
         key = _get_key()
         if not key:
             return {"success": False, "error": "GOODMARKET_LOTTO_KEY is not configured", "error_type": "no_key"}
@@ -237,7 +243,7 @@ class LottoBlockchainService:
                 tx_hash = None
                 for attempt in range(2):
                     try:
-                        tx = lotto.functions.finalizeRound(round_id, [int(n) for n in numbers]) \
+                        tx = lotto.functions.finalizeRound(round_id, digits) \
                             .build_transaction({
                                 "chainId": CHAIN_ID,
                                 "gas": gas_limit,
