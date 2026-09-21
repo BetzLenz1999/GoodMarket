@@ -2974,14 +2974,16 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
             <!-- Daily Lotto Section -->
             <section id="daily-lotto-section" class="section">
                 <div class="page-header">
-                    <h1 class="page-title">🎰 Daily Lotto (6/100)</h1>
+                    <h1 class="page-title">🎰 Daily Lotto (3 Digits)</h1>
                     <p style="color: rgba(241,245,249,0.7);">Manage prizes, the daily draw, and the prize vault.</p>
                 </div>
 
                 <div class="admin-card" style="margin-bottom:1rem;">
                     <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">🏆 Editable Prize Tiers</h3>
                     <p style="color:rgba(241,245,249,0.6);font-size:0.85rem;margin-bottom:0.8rem;">
-                        Amounts below go live immediately — the next draw uses them. Match counts 3–6.
+                        Amounts below go live immediately — the next draw uses them. Straight = the
+                        pick matches all three digits in the exact order; Rumble = the same three
+                        digits in any other order.
                     </p>
                     <div id="lottoTierGrid" style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-bottom:0.8rem;"></div>
                     <button class="btn" onclick="saveLottoTiers()" style="background:#ea580c;color:#fff;padding:0.5rem 1.2rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
@@ -3058,11 +3060,12 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 <div class="admin-card">
                     <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">🧮 Draw math</h3>
                     <p style="color:rgba(241,245,249,0.6);font-size:0.85rem;line-height:1.5;">
-                        Every Philippines game date (00:00–23:59 PHT) is one round. Users pick 1–100 once/day.
-                        Draw runs at 8PM PHT via CSPRNG (<code>secrets</code> → Python <code>random</code>).
-                        Match 3→10k, 4→20k, 5→30k, 6→50k G$ (editable above). Winners pull their own prize
-                        on-chain and pay their own CELO gas. If the vault has no G$ we park the claim, tell the
-                        user to wait a few days, and show this alert.
+                        Every Philippines game date (00:00–23:59 PHT) is one round. Users pick 3 digits (0–9, in order) once/day.
+                        Draw runs at 8PM PHT via CSPRNG (<code>secrets</code> → Python <code>random</code>, one
+                        independent digit per position).
+                        Straight (exact order)→50,000 and Rumble (same digits, any order)→1,000 G$ (editable above).
+                        Winners pull their own prize on-chain and pay their own CELO gas. If the vault has no G$ we park
+                        the claim, tell the user to wait a few days, and show this alert.
                     </p>
                 </div>
             </section>
@@ -8677,20 +8680,24 @@ async function loadMinigamesMaintenance() {
         function renderLottoTierGrid(tiers) {
             const grid = document.getElementById('lottoTierGrid');
             if (!grid) return;
-            const defs = [3, 4, 5, 6];
-            grid.innerHTML = defs.map(function(m) {
-                const v = tiers[String(m)] !== undefined ? tiers[String(m)] : '0';
+            // Only two tiers exist now: 6 = straight (exact order), 3 = rumble (any order).
+            const defs = [
+                {m: 6, label: 'Straight (exact order)'},
+                {m: 3, label: 'Rumble (any order)'},
+            ];
+            grid.innerHTML = defs.map(function(d) {
+                const v = tiers[String(d.m)] !== undefined ? tiers[String(d.m)] : '0';
                 return `<div style="background:#1e293b;border:1px solid #334155;border-radius:10px;padding:0.6rem 0.8rem;text-align:center;">
-                    <div style="font-size:0.72rem;color:rgba(241,245,249,0.6);margin-bottom:0.3rem;">${m} matches</div>
-                    <input id="lottoTierInput_${m}" type="number" min="0" step="any" value="${v}"
+                    <div style="font-size:0.72rem;color:rgba(241,245,249,0.6);margin-bottom:0.3rem;">${d.label}</div>
+                    <input id="lottoTierInput_${d.m}" type="number" min="0" step="any" value="${v}"
                            style="width:96px;background:#0f172a;border:1px solid #334155;color:#f1f5f9;padding:0.4rem;border-radius:6px;text-align:center;" />
                 </div>`;
             }).join('');
         }
 
         async function saveLottoTiers() {
-            const tiers = {3: 0, 4: 0, 5: 0, 6: 0};
-            for (const m of [3, 4, 5, 6]) {
+            const tiers = {};
+            for (const m of [6, 3]) {
                 const el = document.getElementById('lottoTierInput_' + m);
                 tiers[m] = parseFloat(el.value);
             }
