@@ -833,7 +833,7 @@ try:
 except Exception as e:
     logger.error(f"❌ GoodMarket attribution backfill initialization failed: {e}")
 
-# Daily Lotto (6/100) — user-facing page + admin API + background draw
+# Daily Lotto (3 digits) — user-facing page + admin API + background draw
 # scheduler. Env-gated draw automation (DAILY_LOTTO_AUTOMATION_ENABLED,
 # default ON once the SQL migration + contract env vars are set).
 logger.info("🎰 Initializing Daily Lotto system...")
