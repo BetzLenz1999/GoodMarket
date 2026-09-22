@@ -1305,7 +1305,16 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
     }
     document.querySelectorAll('.modal-overlay').forEach(el => {
-        el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
+        el.addEventListener('click', e => {
+            if (e.target !== el) return;
+            // Route pkModal through closePkModal so the revealed key is wiped
+            // from the DOM on an outside-tap dismiss, like the Close button.
+            if (el.id === 'pkModal' && typeof window.closePkModal === 'function') {
+                window.closePkModal();
+                return;
+            }
+            closeModal(el.id);
+        });
     });
     // ── Face Verification status + expiry tracking ───────────
     // Reads live from the GoodDollar Identity contract via /api/fv-status.
@@ -6324,6 +6333,96 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // logins.
         window._lwIsNeeded = _lwIsNeeded;
         window._lwUnlockIfNeeded = _lwUnlockIfNeeded;
+
+        // ── Private-key reveal (in-app wallet only) ──────────────────────
+        // The key lives only in the decrypted browser session, so this flow
+        // re-prompts for the PIN every time — a merely-unlocked session is not
+        // enough to display long-lived key material. Nothing is sent to the
+        // server; the reveal resets and clears its DOM node on close.
+        function _pkReset() {
+            const warn = document.getElementById('pkStepWarn');
+            const key = document.getElementById('pkStepKey');
+            const ack = document.getElementById('pkAck');
+            const val = document.getElementById('pkValue');
+            const status = document.getElementById('pkStatus');
+            if (warn) warn.style.display = '';
+            if (key) key.style.display = 'none';
+            if (ack) ack.checked = false;
+            if (val) val.textContent = '';
+            if (status) { status.style.display = 'none'; status.textContent = ''; }
+            const cont = document.getElementById('pkContinueBtn');
+            if (cont) cont.disabled = true;
+        }
+
+        window.openPkModal = function () {
+            if ((LOGIN_METHOD || '').toLowerCase() !== 'local') return;
+            if (typeof GMLocalWallet === 'undefined') return;
+            _pkReset();
+            // Bypasses openModal on purpose: pkModal is the later DOM sibling,
+            // so stacking over settingsModal is correct, and openModal would
+            // close settings mid-flow.
+            const modal = document.getElementById('pkModal');
+            if (modal) modal.classList.add('open');
+        };
+
+        window.closePkModal = function () {
+            const modal = document.getElementById('pkModal');
+            if (modal) modal.classList.remove('open');
+            _pkReset();
+            if (!document.querySelector('.modal-overlay.open')) {
+                document.body.classList.remove('gm-modal-open');
+            }
+        };
+
+        window.pkContinue = async function () {
+            const ack = document.getElementById('pkAck');
+            if (!ack || !ack.checked) return;
+            // Always re-auth with the PIN — staying unlocked is not enough to
+            // display long-lived key material (same rule exportMnemonic uses).
+            try {
+                if (typeof window._lwOpenUnlockModal === 'function') {
+                    await window._lwOpenUnlockModal({
+                        title: 'Confirm your PIN',
+                        subtitle: 'Enter your PIN to view your private key',
+                        submitLabel: 'Confirm'
+                    });
+                } else {
+                    await _lwUnlockIfNeeded();
+                }
+            } catch (_) {
+                return; // cancelled PIN prompt
+            }
+            var key;
+            try {
+                key = GMLocalWallet.getPrivateKey();
+            } catch (_) {
+                return;
+            }
+            const val = document.getElementById('pkValue');
+            if (val) val.textContent = key;
+            document.getElementById('pkStepWarn').style.display = 'none';
+            document.getElementById('pkStepKey').style.display = '';
+        };
+
+        window.copyPrivateKey = function () {
+            const val = document.getElementById('pkValue');
+            const status = document.getElementById('pkStatus');
+            const key = val ? val.textContent : '';
+            if (!key) return;
+            var done = function (msg, color) {
+                if (!status) return;
+                status.textContent = msg;
+                status.style.color = color;
+                status.style.display = 'block';
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(key)
+                    .then(function () { done('✅ Copied — paste it only into your own offline backup.', 'var(--green)'); })
+                    .catch(function () { done('Copy failed. Select the key manually.', 'var(--red)'); });
+            } else {
+                done('Copy not available. Select the key manually.', 'var(--red)');
+            }
+        };
 
         // Per-network card action. Selects the network AND starts its claim in
         // one tap, so a user whose Celo route keeps failing can go straight to
