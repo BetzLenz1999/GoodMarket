@@ -75,7 +75,17 @@ compress.init_app(app)
 
 # Configure session for better persistence
 from datetime import timedelta
-app.permanent_session_lifetime = timedelta(hours=24)  # 24 hour session lifetime
+from env_utils import get_env_int
+
+# Users on unreliable power/connectivity can't always get back to the app
+# within a day, so the default window is 48h. Flask refreshes the cookie on
+# every request (SESSION_REFRESH_EACH_REQUEST defaults True), so any activity
+# inside the window keeps the session alive indefinitely. Raise it via the
+# SESSION_LIFETIME_HOURS env var without a code change.
+SESSION_LIFETIME_HOURS = get_env_int('SESSION_LIFETIME_HOURS', 48)
+if SESSION_LIFETIME_HOURS <= 0:  # a 0/negative value would expire every login instantly
+    SESSION_LIFETIME_HOURS = 48
+app.permanent_session_lifetime = timedelta(hours=SESSION_LIFETIME_HOURS)
 app.config['SESSION_COOKIE_SECURE'] = True  # Use HTTPS for cookies
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
