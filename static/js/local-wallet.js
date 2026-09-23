@@ -14,7 +14,6 @@
  *   loginSignature(message)           -> personal_sign with active wallet
  *   getActiveAddress()                -> checksummed address or null
  *   exportMnemonic(pin)               -> 12 words after PIN re-auth
- *   getPrivateKey()                   -> hex private key (unlocked session only)
  *   lock()                            -> zero out decrypted key material
  *   getProvider()                     -> EIP-1193-style provider covering the
  *                                        signer chains the app supports
@@ -235,13 +234,6 @@
         return _requireUnlocked().mnemonic && _requireUnlocked().mnemonic.phrase;
     }
 
-    // Key material is only reachable from an unlocked session: callers must
-    // PIN-unlock first, and the settings reveal flow re-prompts every time
-    // (the same rule exportMnemonic applies to the recovery phrase).
-    function getPrivateKey() {
-        return _requireUnlocked().privateKey;
-    }
-
     function lock() {
         clearTimeout(_unlockTimer);
         _unlockTimer = null;
@@ -444,66 +436,122 @@
         `;
         document.body.appendChild(overlay);
 
-        const pinInput = overlay.querySelector('#lwModalPin');
-        const errorEl = overlay.querySelector('#lwModalError');
-        const submitBtn = overlay.querySelector('#lwModalSubmit');
-        const cancelBtn = overlay.querySelector('#lwModalCancel');
-
-        let resolveFn, rejectFn;
-
-        function close() {
-            overlay.style.display = 'none';
-            pinInput.value = '';
-            errorEl.style.display = 'none';
-        }
-
-        function showError(msg) {
-            errorEl.textContent = msg;
-            errorEl.style.display = 'block';
-        }
-
-        submitBtn.onclick = async function () {
-            const pin = pinInput.value.trim();
-            if (!/^(?:\d{6}|\d{8})$/.test(pin)) { showError('PIN must be 6 or 8 digits.'); return; }
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Signing…';
-            try {
-                const saved = getLocalKeystore();
-                if (!saved || !saved.keystore) throw new Error('No saved wallet on this device.');
-                await unlockWithKeystore(saved.keystore, pin);
-                close();
-                if (resolveFn) resolveFn();
-            } catch (err) {
-                showError(/password|decrypt|mac/i.test(err && err.message) ? 'Wrong PIN.' : 'Unlock failed.');
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Sign & Continue';
-            }
-        };
-
-        cancelBtn.onclick = function () {
-            close();
-            if (rejectFn) rejectFn(new Error('Unlock cancelled.'));
-        };
-
-        pinInput.onkeydown = function (e) {
-            if (e.key === 'Enter') submitBtn.click();
-        };
-
-        window._lwModalShow = function () {
-            return new Promise(function (resolve, reject) {
-                resolveFn = resolve;
-                rejectFn = reject;
-                overlay.style.display = 'flex';
-                setTimeout(() => pinInput.focus(), 100);
-            });
-        };
+        // Handlers are wired by _lwOpenUnlockModal (the only caller), which
+        // attaches full error context: wrong PIN vs missing keystore vs
+        // server-side recovery.
     }
 
-    // Optional copy overrides, e.g. _lwOpenUnlockModal({title, subtitle,
-    // submitLabel, busyLabel}) for message-signing (non-transaction) prompts.
-    // Defaults are transaction-signing oriented.
+    // ── Unlock recovery helpers ──────────────────────────────────────────
+    // Shared by the injected modal below AND wallet.html's richer modal
+    // (via the GMLocalWallet exports), so "no local keystore on this device"
+    // recovers identically on every page.
+
+    // Show the specific cause of failure instead of a blanket "Unlock failed."
+    // — a correct PIN can still fail when the cached keystore belongs to a
+    // different wallet or when this device has no local copy.
+    function describeUnlockError(err, saved) {
+        var msg = (err && err.message) || '';
+        if (/no saved wallet/i.test(msg)) {
+            return 'Could not load your wallet on this device. Check your connection and try again, or log in again with your email + PIN.';
+        }
+        var expected = _expectedWalletAddress();
+        if (saved && saved.address && expected &&
+            saved.address.toLowerCase() !== expected.toLowerCase()) {
+            return 'Cached wallet on this device belongs to a different address. Please log in with the account\'s email to reload the correct wallet.';
+        }
+        if (/incorrect pin|corrupted wallet backup/i.test(msg)) {
+            return 'Wrong PIN.';
+        }
+        return 'Unlock failed. ' + msg;
+    }
+
+    // The session wallet the cached keystore must match. Pages render it under
+    // different names (window.WALLET_ADDRESS, GM_WALLET_BOOT.wallet,
+    // sessionStorage['wallet']) — reading all three makes the mismatch guard
+    // work on every page instead of silently never firing.
+    function _expectedWalletAddress() {
+        try {
+            if (window.WALLET_ADDRESS) return String(window.WALLET_ADDRESS);
+            if (window.GM_WALLET_BOOT && window.GM_WALLET_BOOT.wallet) {
+                return String(window.GM_WALLET_BOOT.wallet);
+            }
+            return sessionStorage.getItem('wallet') || null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    // Fetch the server-side copy when the local keystore is unusable, so users
+    // on a new browser/device can still unlock without a manual re-login.
+    async function tryServerKeystore(savedEmail, address) {
+        var want = address || _expectedWalletAddress();
+        // Session-first: works on every page and needs no email. The email is
+        // only set on the tab that logged in (and only on the homepage), so it
+        // is absent exactly when it is needed most.
+        try {
+            var sRes = await fetch('/api/local-wallet/session-keystore', { cache: 'no-store' });
+            if (sRes.ok) {
+                var sData = await sRes.json();
+                if (sData && sData.success && sData.keystore &&
+                    (!want || String(sData.address).toLowerCase() === want.toLowerCase())) {
+                    return sData;
+                }
+            }
+        } catch (_) {}
+        var email = (savedEmail || '').trim();
+        if (!email) return null;
+        try {
+            var res = await fetch('/api/local-wallet/keystore?email=' + encodeURIComponent(email));
+            var data = await res.json();
+            if (data && data.success && data.keystore && (!want || String(data.address).toLowerCase() === want.toLowerCase())) {
+                return data;
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    // Unlock with the local copy, falling back to the server copy. Never
+    // throws — callers inspect { ok, recoveredFrom | err }.
+    async function handleUnlock(pin, saved) {
+        // Refuse a cached keystore that belongs to a different account: the
+        // decrypt would SUCCEED and the caller would then sign with the wrong
+        // wallet. This is the guard that keeps "wrong wallet connected" from
+        // ever reaching a signature.
+        var expected = _expectedWalletAddress();
+        if (saved && saved.address && expected &&
+            saved.address.toLowerCase() !== expected.toLowerCase()) {
+            return { ok: false, err: new Error('address mismatch') };
+        }
+        if (!saved || !saved.keystore) {
+            var serverData = await tryServerKeystore(_getSessionEmail(), null);
+            if (serverData && serverData.keystore) {
+                try {
+                    await unlockWithKeystore(serverData.keystore, pin);
+                    // Re-cache so the next unlock on this device is offline-fast.
+                    saveLocalKeystore(
+                        _getSessionEmail() || '',
+                        serverData.address,
+                        serverData.keystore
+                    );
+                    return { ok: true, recoveredFrom: 'server' };
+                } catch (e) {
+                    return { ok: false, err: e };
+                }
+            }
+            return { ok: false, err: new Error('No saved wallet on this device.') };
+        }
+        try {
+            await unlockWithKeystore(saved.keystore, pin);
+            return { ok: true, recoveredFrom: 'local' };
+        } catch (e) {
+            return { ok: false, err: e };
+        }
+    }
+
     window._lwOpenUnlockModal = function (opts) {
+        // Optional copy overrides, e.g. {title, subtitle, submitLabel, busyLabel}
+        // for message-signing (non-transaction) prompts. Defaults are
+        // transaction-signing oriented.
         opts = opts || {};
         _lwInjectModal();
         var _ov = document.getElementById('lwUnlockModalOverlay');
@@ -517,63 +565,6 @@
         }
         var _busyLabel = opts.busyLabel || 'Signing…';
         var _submitLabel = opts.submitLabel || 'Sign & Continue';
-
-        // Show the specific cause of failure instead of a blanket
-        // "Unlock failed." — a correct PIN can still fail when the cached
-        // keystore belongs to a different wallet (different email) or when
-        // this device has no local copy (server copy must be fetched).
-        function describeUnlockError(err, saved) {
-            var msg = (err && err.message) || '';
-            if (/no saved wallet/i.test(msg)) {
-                return 'No wallet found on this device. Log in again with your email to fetch the server copy, then retry unlock.';
-            }
-            if (saved && saved.address && window.WALLET_ADDRESS &&
-                saved.address.toLowerCase() !== window.WALLET_ADDRESS.toLowerCase()) {
-                return 'Cached wallet on this device belongs to a different address. Please log in with the account\'s email to reload the correct wallet.';
-            }
-            if (/incorrect pin|corrupted wallet backup/i.test(msg)) {
-                return 'Wrong PIN.';
-            }
-            return 'Unlock failed. ' + msg;
-        }
-
-        // Attempt server-fetch if the local keystore is unusable, so users on
-        // a new browser/device can still unlock without a manual re-login.
-        async function tryServerKeystore(savedEmail, address) {
-            var email = (savedEmail || '').trim();
-            if (!email) return null;
-            try {
-                var res = await fetch('/api/local-wallet/keystore?email=' + encodeURIComponent(email));
-                var data = await res.json();
-                if (data && data.success && data.keystore && (!address || String(data.address).toLowerCase() === address.toLowerCase())) {
-                    return data;
-                }
-            } catch (_) {}
-            return null;
-        }
-
-        async function handleUnlock(pin, saved) {
-            // If no local copy, try the server copy first (wrong-device
-            // unlock) — often fixes "No saved wallet on this device."
-            if (!saved || !saved.keystore) {
-                var serverData = await tryServerKeystore(_getSessionEmail(), null);
-                if (serverData && serverData.keystore) {
-                    try {
-                        await unlockWithKeystore(serverData.keystore, pin);
-                        return { ok: true, recoveredFrom: 'server' };
-                    } catch (e) {
-                        return { ok: false, err: e };
-                    }
-                }
-                return { ok: false, err: new Error('No saved wallet on this device.') };
-            }
-            try {
-                await unlockWithKeystore(saved.keystore, pin);
-                return { ok: true, recoveredFrom: 'local' };
-            } catch (e) {
-                return { ok: false, err: e };
-            }
-        }
 
         // Rebuild the modal with full error context.
         return new Promise(function (resolve, reject) {
@@ -612,15 +603,14 @@
                         return;
                     }
 
-                    // If the cached wallet is for a different address, clear it
-                    // so the next login can re-cache the correct keystore.
-                    if (saved && saved.address && window.WALLET_ADDRESS &&
-                        saved.address.toLowerCase() !== window.WALLET_ADDRESS.toLowerCase()) {
+                    // A stale keystore from another account would keep failing
+                    // every unlock — clear it so the next login re-caches the
+                    // correct one.
+                    if (saved && saved.address &&
+                        /address mismatch/i.test((result.err && result.err.message) || '')) {
                         try { clearLocalKeystore(); } catch (_) {}
-                        showError(describeUnlockError(new Error('address mismatch'), saved));
-                    } else {
-                        showError(describeUnlockError(result.err, saved));
                     }
+                    showError(describeUnlockError(result.err, saved));
                 } catch (err) {
                     showError(describeUnlockError(err, saved));
                 } finally {
@@ -665,7 +655,6 @@
         unlockWithKeystore: unlockWithKeystore,
         loginSignature: loginSignature,
         getActiveAddress: getActiveAddress,
-        getPrivateKey: getPrivateKey,
         exportMnemonic: exportMnemonic,
         lock: lock,
         getProvider: getProvider,
@@ -673,6 +662,12 @@
         getLocalKeystore: getLocalKeystore,
         clearLocalKeystore: clearLocalKeystore,
         canonicalizeKeystore: _canonicalizeKeystore,
+        // Shared unlock recovery — wallet.html's richer modal calls these so a
+        // missing local keystore recovers from the server copy identically.
+        describeUnlockError: describeUnlockError,
+        handleUnlock: handleUnlock,
+        tryServerKeystore: tryServerKeystore,
+        expectedWalletAddress: _expectedWalletAddress,
         isUnlocked: function () { return !!_activeWallet; },
         normalizeEmail: _normalizeEmail,
         normalizePin: _normalizePin,
