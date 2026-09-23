@@ -338,6 +338,10 @@
     const LOGIN_METHOD = "{{ login_method }}";
     const WC_PROJECT_ID = "{{ walletconnect_project_id }}";
     const LOTTO_CONTRACT = "{{ lotto_contract_address }}";
+    // The shared unlock modal (local-wallet.js) matches the cached keystore
+    // against the session wallet via window.WALLET_ADDRESS; without this it
+    // cannot tell "wrong wallet cached" from "wrong PIN".
+    window.WALLET_ADDRESS = WALLET;
     const CELO_CHAIN_ID = 42220;
     const CELO_HEX = "0xa4ec";
     const CELO_RPC = "https://forno.celo.org";
@@ -394,39 +398,119 @@
     }
 
     // ── providers / signer (mirrors swap.html + send-link.html) ──────────
-    function _getInjectedProvider() {
-        // WC / local logins must NEVER use an injected wallet (different
-        // account). Same rule as every signer in this app.
-        if (prefersWc()) return null;
-        if (isLocal()) return null;
-        if (!window.ethereum) return null;
-        if (window.ethereum.providers && window.ethereum.providers.length) {
-            const mm = window.ethereum.providers.find(p => p && p.isMetaMask && !p.isBraveWallet);
-            if (mm) return mm;
-            const trust = window.ethereum.providers.find(p => p && (p.isTrust || p.isTrustWallet));
-            if (trust) return trust;
-            const miniPay = window.ethereum.providers.find(p => p && p.isMiniPay);
-            if (miniPay) return miniPay;
-            return window.ethereum.providers[0];
-        }
-        return window.ethereum;
+    // EIP-6963 discovery: several wallets (Trust, MiniPay) only announce
+    // themselves this way, so collecting announcements is what makes the
+    // connect prompt reachable on mobile dApp browsers.
+    window.__lottoEip6963Providers = window.__lottoEip6963Providers || [];
+    (function _initLottoEip6963() {
+        try {
+            window.addEventListener('eip6963:announceProvider', (event) => {
+                const detail = event && event.detail;
+                if (!detail || !detail.provider) return;
+                const uuid = detail.info && detail.info.uuid;
+                const already = window.__lottoEip6963Providers.find(d =>
+                    (d.info && d.info.uuid && uuid && d.info.uuid === uuid) ||
+                    d.provider === detail.provider
+                );
+                if (!already) window.__lottoEip6963Providers.push(detail);
+            });
+            window.dispatchEvent(new Event('eip6963:requestProvider'));
+        } catch (_) {}
+    })();
+
+    function _lottoEip6963Providers() {
+        return Array.isArray(window.__lottoEip6963Providers)
+            ? window.__lottoEip6963Providers.slice()
+            : [];
     }
 
-    async function _awaitProvider(timeoutMs) {
-        const budget = typeof timeoutMs === 'number' ? timeoutMs : 800;
+    function _coerceProvider(candidate) {
+        if (!candidate) return null;
+        if (typeof candidate.request === 'function') return candidate;
+        if (candidate.ethereum && typeof candidate.ethereum.request === 'function') return candidate.ethereum;
+        if (candidate.provider && typeof candidate.provider.request === 'function') return candidate.provider;
+        const sendAsync = typeof candidate.sendAsync === 'function'
+            ? candidate.sendAsync.bind(candidate)
+            : (typeof candidate.send === 'function' ? candidate.send.bind(candidate) : null);
+        if (!sendAsync) return null;
+        candidate.request = ({ method, params }) => new Promise((resolve, reject) => {
+            sendAsync({ jsonrpc: '2.0', id: Date.now(), method, params: Array.isArray(params) ? params : [] },
+                (err, res) => {
+                    if (err) return reject(err);
+                    if (res && res.error) return reject(res.error);
+                    resolve(res && Object.prototype.hasOwnProperty.call(res, 'result') ? res.result : res);
+                });
+        });
+        return candidate;
+    }
+
+    function _isTrustMobile() {
+        const ua = (navigator.userAgent || '').toLowerCase();
+        const trust = ua.includes('trust') || ua.includes('trustwallet');
+        const mobile = /android|iphone|ipad|ipod/i.test(ua);
+        const injected = !!(window.trustwallet || window.trustWallet ||
+            (window.ethereum && (window.ethereum.isTrust || window.ethereum.isTrustWallet)));
+        return (trust || injected) && mobile;
+    }
+
+    function _isLikelyMobile() {
+        return /android|iphone|ipad|ipod|minipay|metamask|trust|trustwallet/i
+            .test((navigator.userAgent || '').toLowerCase());
+    }
+
+    function _collectProviders() {
+        const out = [];
+        const push = (p) => {
+            const provider = _coerceProvider(p);
+            if (provider && !out.includes(provider)) out.push(provider);
+        };
+        if (window.ethereum) {
+            if (Array.isArray(window.ethereum.providers)) window.ethereum.providers.forEach(push);
+            push(window.ethereum);
+        }
+        if (window.trustwallet) push(window.trustwallet);
+        if (window.trustWallet) push(window.trustWallet);
+        _lottoEip6963Providers().forEach(d => push(d.provider));
+        return out;
+    }
+
+    // All usable injected providers, best-first. WC / local logins must NEVER
+    // use an injected wallet (different account) — same rule as every signer
+    // in this app.
+    function _getInjectedProviders() {
+        if (prefersWc() || isLocal()) return [];
+        try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+        const providers = _collectProviders();
+        if (!providers.length) return [];
+        const rank = (p) => {
+            if (_isTrustMobile() && (p.isTrust || p.isTrustWallet)) return 0;
+            if (p.isMiniPay) return 1;
+            if (p.isTrust || p.isTrustWallet) return 2;
+            if (p.isMetaMask && !p.isBraveWallet) return 3;
+            return 4;
+        };
+        return providers.slice().sort((a, b) => rank(a) - rank(b));
+    }
+
+    async function _awaitProviders(timeoutMs) {
+        // WalletConnect sessions never use an injected provider, so don't burn
+        // the discovery budget waiting for one.
+        if (prefersWc()) return [];
+        // Mobile dApp browsers inject late (the page often loads before the
+        // wallet's script), so give them a much bigger discovery budget.
+        const budget = typeof timeoutMs === 'number'
+            ? timeoutMs
+            : (_isTrustMobile() ? 4200 : (_isLikelyMobile() ? 2200 : 800));
         const start = Date.now();
-        let ep = _getInjectedProvider();
-        if (ep) return ep;
+        let providers = _getInjectedProviders();
+        if (providers.length) return providers;
         while (Date.now() - start < budget) {
             try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
-            await new Promise(r => setTimeout(r, 100));
-            ep = _getInjectedProvider();
-            if (ep) return ep;
+            await new Promise(r => setTimeout(r, 120));
+            providers = _getInjectedProviders();
+            if (providers.length) return providers;
         }
-        if (prefersWc()) {
-            try { return await GMWalletConnect.getProvider(); } catch (_) { /* fall through */ }
-        }
-        return null;
+        return [];
     }
 
     async function _localProvider() {
@@ -437,6 +521,12 @@
             } else {
                 throw new Error('Please unlock your wallet and try again.');
             }
+        }
+        if (!GMLocalWallet.isUnlocked()) {
+            // The modal resolved without unlocking (dismissed, or a recovery
+            // failure) — fail with an explanation instead of letting a null
+            // provider surface as an opaque error mid-signature.
+            throw new Error('Your wallet is still locked. Please enter your PIN to sign your pick.');
         }
         return GMLocalWallet.getProvider();
     }
@@ -452,18 +542,71 @@
             }
             return { signer, provider };
         }
-        const provider = await _awaitProvider();
-        if (!provider) throw new Error('No wallet detected. Connect MetaMask/Trust/WalletConnect to withdraw.');
-        const ethersProvider = new ethers.BrowserProvider(provider);
-        let signer;
-        try { signer = await ethersProvider.getSigner(); } catch (_) {
-            signer = await ethersProvider.getSigner(0);
+
+        const providers = await _awaitProviders();
+        if (!providers.length) {
+            if (prefersWc()) {
+                const wcProvider = await GMWalletConnect.getProvider();
+                const ethersProvider = new ethers.BrowserProvider(wcProvider);
+                const signer = await ethersProvider.getSigner();
+                if ((signer.address || '').toLowerCase() !== WALLET.toLowerCase()) {
+                    throw new Error('Wrong WalletConnect wallet connected. Please switch to your GoodMarket wallet.');
+                }
+                return { signer, provider: wcProvider };
+            }
+            throw new Error('No wallet detected. Please open this page in MetaMask, Trust Wallet or another Celo wallet.');
         }
-        const addr = signer.address ? signer.address.toLowerCase() : null;
-        if ((addr || '').toLowerCase() !== WALLET.toLowerCase()) {
-            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet (' + WALLET.slice(0, 6) + '…) before withdrawing.');
+
+        // Two real-world failure modes made injected signing intermittent:
+        //  1. A locked / not-yet-authorized wallet returns no accounts, so
+        //     getSigner() throws "no such account" (ethers only falls back to
+        //     eth_requestAccounts when hasSigner() says no, which a rejected or
+        //     empty response still fails).
+        //  2. Multi-account wallets: getSigner() binds accounts[0], which is
+        //     whatever the wallet has selected — often NOT the GoodMarket
+        //     account — so signing died with "Wrong wallet connected" until the
+        //     user happened to switch accounts, then "worked".
+        // So: request the connection, then bind the signer to the account that
+        // actually matches this session, trying each discovered provider.
+        let lastErr = null;
+        for (const provider of providers) {
+            try {
+                let accounts = [];
+                try {
+                    accounts = await provider.request({ method: 'eth_requestAccounts' }) || [];
+                } catch (reqErr) {
+                    if (_isUserRejectedSigning(reqErr)) throw reqErr;
+                    lastErr = reqErr;
+                }
+                if (!accounts.length) {
+                    try { accounts = await provider.request({ method: 'eth_accounts' }) || []; } catch (_) {}
+                }
+                const wanted = WALLET.toLowerCase();
+                const match = accounts.find(a => String(a).toLowerCase() === wanted);
+                if (!match) {
+                    // This provider is on a different account; try the next one
+                    // before reporting a wrong-wallet error.
+                    if (accounts.length) {
+                        lastErr = new Error('Wrong wallet connected. Please switch to your GoodMarket wallet (' + WALLET.slice(0, 6) + '…) before submitting.');
+                        continue;
+                    }
+                    lastErr = lastErr || new Error('No wallet account available. Please unlock your wallet and try again.');
+                    continue;
+                }
+                const ethersProvider = new ethers.BrowserProvider(provider);
+                const signer = await ethersProvider.getSigner(match);
+                const addr = (signer.address || '').toLowerCase();
+                if (addr !== wanted) {
+                    lastErr = new Error('Wrong wallet connected. Please switch to your GoodMarket wallet (' + WALLET.slice(0, 6) + '…) before submitting.');
+                    continue;
+                }
+                return { signer, provider };
+            } catch (err) {
+                if (_isUserRejectedSigning(err)) throw err;
+                lastErr = err;
+            }
         }
-        return { signer, provider };
+        throw lastErr || new Error('Could not connect to your wallet. Please try again.');
     }
 
     async function _ensureCelo(provider) {
@@ -480,6 +623,24 @@
         return '0x' + Array.from(new TextEncoder().encode(msg))
             .map(b => b.toString(16).padStart(2, '0'))
             .join('');
+    }
+
+    // A mobile dApp browser can leave personal_sign pending forever after the
+    // user already tapped Approve in the wallet — the button then spins with no
+    // explanation. Racing a timeout turns that into a real, actionable error.
+    function _withSignTimeout(promise, timeoutMs) {
+        let timer = null;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const err = new Error(
+                    'Your wallet did not return the signature. If you already approved it, ' +
+                    'reload the page and try again — or use WalletConnect for a more reliable signing flow.'
+                );
+                err.code = 'GM_SIGN_TIMEOUT';
+                reject(err);
+            }, timeoutMs);
+        });
+        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
     }
 
     function _isUserRejectedSigning(err) {
@@ -527,11 +688,15 @@
         let lastErr = null;
         for (const attempt of attempts) {
             try {
-                const sig = await provider.request(attempt);
+                const sig = await _withSignTimeout(provider.request(attempt), 120000);
                 if (!sig) throw new Error('Wallet did not return a signature.');
                 return sig.startsWith('0x') ? sig : '0x' + sig;
             } catch (err) {
                 if (_isUserRejectedSigning(err)) throw err;
+                // A hung wallet is not a payload problem — retrying the other
+                // parameter orderings would hang again, so fail fast with the
+                // actionable message.
+                if (err && err.code === 'GM_SIGN_TIMEOUT') throw err;
                 lastErr = err;
             }
         }
