@@ -1961,6 +1961,45 @@ def local_wallet_keystore():
         logger.exception("Local wallet keystore fetch error")
         return jsonify({"success": False, "error": "Lookup failed"}), 500
 
+@routes.route("/api/local-wallet/session-keystore", methods=["GET"])
+def local_wallet_session_keystore():
+    """Return the encrypted keystore for the CURRENTLY LOGGED-IN session wallet.
+
+    The email-based endpoint above needs the address of the login page, but the
+    email only survives in sessionStorage/window on the tab that logged in — so
+    a user whose local keystore is missing (private mode, cleared site data, a
+    new browser profile) could not recover it on feature pages and the PIN
+    prompt died with "No wallet found on this device.".
+
+    Keying off the session instead makes recovery work on every page, with no
+    email and no extra prompt. The keystore is encrypted with the user's PIN, so
+    it is useless without it — the same trust model as the public endpoint.
+    """
+    try:
+        wallet = session.get("wallet") or session.get("wallet_address")
+        if not wallet:
+            return jsonify({"success": False, "error": "Not authenticated"}), 401
+        if (session.get("login_method") or "").lower() != "local":
+            # Only the in-app wallet has a server-side keystore; wallet-connect /
+            # injected sessions sign with their own extension.
+            return jsonify({"success": False, "error": "Not a local wallet session"}), 404
+        table = _local_wallet_table()
+        if table is None:
+            return jsonify({"success": False, "error": "Storage unavailable"}), 503
+        res = table.select("address,keystore_json").ilike("address", wallet).limit(1).execute()
+        rows = getattr(res, "data", None) or []
+        if not rows:
+            return jsonify({"success": False, "error": "No account found for this wallet"}), 404
+        row = rows[0]
+        return jsonify({
+            "success": True,
+            "address": row["address"],
+            "keystore": row["keystore_json"],
+        })
+    except Exception as e:
+        logger.exception("Local wallet session keystore fetch error")
+        return jsonify({"success": False, "error": "Lookup failed"}), 500
+
 @routes.route("/api/local-wallet/login", methods=["POST"])
 def local_wallet_login():
     try:
