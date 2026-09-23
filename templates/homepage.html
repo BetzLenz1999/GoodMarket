@@ -1974,6 +1974,49 @@
             margin-bottom: 0.75rem;
         }
 
+        /* Recovery-phrase instructions are bold on purpose: the 12 words are
+           the only path back to the funds, and they are never stored here. */
+        .lw-recovery-instruction {
+            background: #fef2f2;
+            border: 2px solid #dc2626;
+            border-radius: 10px;
+            padding: 0.7rem 0.8rem;
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: #991b1b;
+            line-height: 1.5;
+            margin-bottom: 0.7rem;
+        }
+
+        .lw-copy-btn {
+            display: block;
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid #7c3aed;
+            border-radius: 10px;
+            background: #f5f3ff;
+            color: #5b21b6;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .lw-copy-btn:hover { background: #ede9fe; }
+
+        .lw-community-note {
+            margin-top: 0.9rem;
+            text-align: center;
+            font-weight: 700;
+        }
+
+        .lw-community-link {
+            color: #2563eb;
+            font-weight: 700;
+            text-decoration: underline;
+            word-break: break-all;
+        }
+
         .lw-confirm-row {
             display: flex;
             align-items: flex-start;
@@ -3027,6 +3070,20 @@
                 <div id="lwPhraseStep" style="display:none">
                     <p class="wc-panel-note"><strong>Save your 12 recovery words.</strong> These restore your wallet if you forget your PIN or lose your phone:</p>
                     <div class="lw-words" id="lwWords"></div>
+
+                    <!-- The words are shown ONCE and are never stored on our
+                         servers, so this copy button is the only way to keep
+                         them. Instructions are bold by design — losing the
+                         phrase means losing the funds. -->
+                    <div class="lw-recovery-instruction">
+                        <strong>⚠️ IMPORTANT: You MUST copy and save your 12 recovery words.</strong><br>
+                        <strong>These 12 words are the ONLY way to recover your account and your funds.</strong><br>
+                        <strong>To recover into MetaMask or Trust Wallet, import this exact 12-word phrase there.</strong><br>
+                        <strong>If you lose these words, nobody — not even GoodMarket support — can recover your wallet.</strong>
+                    </div>
+
+                    <button id="lwCopyWordsBtn" class="lw-copy-btn" type="button" onclick="lwCopyRecoveryWords(this)">📋 Copy my 12 recovery words</button>
+
                     <div class="lw-warning">
                         ⚠️ Anyone with these words can access your funds. GoodMarket support can never reset your PIN or recover your account for you — write the words down and keep them private.
                         <br><small>🔒 We store only a masked copy of your email — the full address is never saved on our servers.</small>
@@ -3036,6 +3093,11 @@
                         <span>I wrote down my 12 recovery words and understand my PIN cannot be reset.</span>
                     </label>
                     <button id="lwFinishBtn" class="connect-btn" type="button" onclick="finishLocalWalletSignup()" disabled>Continue to GoodMarket</button>
+
+                    <p class="wc-panel-note lw-community-note">
+                        <strong>Need assistance? Join the GoodMarket Telegram community:</strong>
+                        <a href="https://t.me/GoodMarketCommunity" target="_blank" rel="noopener noreferrer" class="lw-community-link">t.me/GoodMarketCommunity</a>
+                    </p>
                 </div>
 
                 <!-- Shown after ANY local login while the account has no
@@ -3402,6 +3464,41 @@
 
         let _lwMode = 'create';
         let _lwPendingSignup = null; // {address, keystore, mnemonic, message}
+        let _lwRecoveryWords = '';   // current 12-word phrase, memory only
+
+        // Copy the recovery phrase straight to the clipboard. The words are
+        // shown once and never stored server-side, so this is the user's only
+        // chance to keep them — hence the explicit success/failure feedback.
+        function lwCopyRecoveryWords(btn) {
+            const text = _lwRecoveryWords || '';
+            const done = (ok) => {
+                if (!btn) return;
+                const orig = '📋 Copy my 12 recovery words';
+                btn.textContent = ok ? '✅ Copied — keep it safe!' : '❌ Copy failed — write the words down';
+                setTimeout(function () { btn.textContent = orig; }, 2200);
+            };
+            if (!text) { done(false); return; }
+            const fallback = function () {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    ta.setSelectionRange(0, text.length);
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    done(ok);
+                } catch (_) { done(false); }
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function () { done(true); }).catch(fallback);
+            } else {
+                fallback();
+            }
+        }
 
         function showLocalWalletPanel(mode) {
             if (typeof GMLocalWallet === 'undefined' || typeof ethers === 'undefined') {
@@ -3553,6 +3650,7 @@
 
         function _lwRenderPhraseStep(mnemonic) {
             const words = String(mnemonic || '').trim().split(/\s+/);
+            _lwRecoveryWords = words.join(' ');
             const wrap = document.getElementById('lwWords');
             wrap.innerHTML = '';
             words.forEach(function (word, i) {
@@ -3640,6 +3738,7 @@
             const strengthEl = document.getElementById('lwPinStrength');
             if (strengthEl) strengthEl.style.display = 'none';
             _lwPendingSignup = null;
+            _lwRecoveryWords = '';
             try {
                 sessionStorage.setItem('wallet', data.wallet || '');
                 sessionStorage.setItem('verified', 'true');
