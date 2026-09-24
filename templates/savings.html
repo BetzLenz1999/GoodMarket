@@ -985,10 +985,14 @@
     let __readProvider = null;
     function getReadProvider() {
         if (!__readProvider) {
-            // Use FallbackProvider with multiple RPC endpoints for reliability
+            // Use FallbackProvider with multiple RPC endpoints for reliability.
+            // The 2nd argument is the NETWORK — passing a bare `1` here pins
+            // the provider to mainnet and every Celo read fails with
+            // "network changed: 1 => 42220". Quorum goes in the 3rd argument.
             __readProvider = new ethers.FallbackProvider(
                 CELO_RPC_URLS.map(url => new ethers.JsonRpcProvider(url, { chainId: CHAIN_ID, name: 'celo' })),
-                1 // quorum: needs 1 provider to respond
+                { chainId: CHAIN_ID, name: 'celo' },
+                { quorum: 1 } // needs 1 provider to respond
             );
         }
         return __readProvider;
