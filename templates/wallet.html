@@ -163,47 +163,6 @@
         }
         
 
-        .private-key-export-card {
-            margin-bottom: 1.25rem;
-            
-            border: 1px solid rgba(250,204,21,0.26);
-            border-radius: 12px;
-            padding: 0.9rem 0.95rem;
-        }
-        .private-key-export-card .warning-title {
-            
-            font-size: 0.88rem;
-            font-weight: 800;
-            margin-bottom: 0.45rem;
-        }
-        .private-key-export-card .warning-copy {
-            
-            font-size: 0.82rem;
-            line-height: 1.55;
-            margin-bottom: 0.75rem;
-        }
-        .private-key-export-card .confirm-phrase {
-            display: block;
-            padding: 0.55rem 0.65rem;
-            border-radius: 10px;
-            
-            border: 1px solid rgba(255,255,255,0.08);
-            
-            font-size: 0.76rem;
-            line-height: 1.45;
-            word-break: break-word;
-            margin: 0.45rem 0 0.65rem;
-        }
-        .private-key-export-card .export-status {
-            display: none;
-            margin-top: 0.65rem;
-            font-size: 0.78rem;
-            line-height: 1.45;
-        }
-        .private-key-export-card .export-status.show { display: block; }
-        
-        
-
         .raffle-modal-overlay {
             position: fixed;
             inset: 0;
@@ -1205,31 +1164,6 @@
         }
         .countdown-note { font-size: 0.68rem; color: var(--text-muted); margin-top: 0.2rem; }
 
-        /* Private key warning */
-        .pk-warning {
-            
-            border: 1px solid rgba(255,82,82,0.25);
-            border-radius: 12px;
-            padding: 0.85rem 1rem;
-            font-size: 0.82rem;
-            
-            margin-bottom: 1rem;
-            line-height: 1.5;
-        }
-        .pk-warning strong { color: var(--red); }
-        .pk-box {
-            
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 0.9rem 1rem;
-            font-family: monospace;
-            font-size: 0.78rem;
-            
-            word-break: break-all;
-            line-height: 1.6;
-            margin-bottom: 1rem;
-            display: none;
-        }
 
         /* Alert */
         .alert {
@@ -1393,45 +1327,6 @@
             flex: 1;
             border: 0;
             
-        }
-
-        /* Savings card */
-        .savings-card {
-            margin: 0 1.25rem 1rem;
-            
-            border: 1px solid rgba(0,230,118,0.2);
-            border-radius: 16px;
-            padding: 1.1rem 1.25rem;
-        }
-        .savings-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .savings-label {
-            font-size: 0.85rem;
-            font-weight: 600;
-            
-        }
-        .savings-value {
-            font-size: 1.05rem;
-            font-weight: 800;
-            
-        }
-        .savings-sub {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            margin-top: 0.2rem;
-        }
-        .savings-btn {
-            
-            border: 1px solid rgba(0,230,118,0.3);
-            border-radius: 20px;
-            padding: 0.35rem 1rem;
-            font-size: 0.78rem;
-            font-weight: 700;
-            
-            cursor: pointer;
         }
 
         /* Section label */
@@ -1772,8 +1667,6 @@
            variables below, never on white-on-dark or dark-on-light literals.
            ───────────────────────────────────────────────────────────── */
         :root {
-            --serif: "Fraunces", Georgia, "Times New Roman", serif;
-            --sans: "Nunito Sans", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
             --bg: #0B0F2A;
             --bg2: #130D35;
             --card: rgba(255,255,255,0.05);
@@ -1781,14 +1674,11 @@
             --card-soft: rgba(255,255,255,0.06);
             --card-shadow: 0 8px 28px rgba(0,0,0,0.34);
             --blue: #5cc8ff;
-            --blue-dim: rgba(92,200,255,0.16);
-            --blue-glow: rgba(92,200,255,0.35);
             --accent: #7c3aed;
             --accent-rgb: 124,58,237;
             --accent-secondary: #a78bfa;
             --accent-secondary-rgb: 167,139,250;
             --green: #34d399;
-            --green-dim: rgba(52,211,153,0.14);
             --gold: #fbbf24;
             --gold-rgb: 251,191,36;
             --gold-deep: #f59e0b;
@@ -1947,11 +1837,6 @@
         .countdown-display { background: linear-gradient(90deg, #a78bfa, #22d3ee); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 
         /* ── Warnings / alerts ── */
-        .pk-warning { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.28); color: #fca5a5; }
-        .pk-box { background: rgba(255,255,255,0.04); border-color: var(--card-border); color: var(--text-dim); }
-        /* The legacy base rule hides .pk-box (it was a toggle target); the
-           private-key reveal needs it visible, so opt back in here. */
-        #pkModal .pk-box { display: block; color: var(--text); user-select: all; }
         .alert-success { background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.32); color: #6ee7b7; }
         .alert-error   { background: rgba(248,113,113,0.12); border-color: rgba(248,113,113,0.3); color: #fca5a5; }
         .alert-info    { background: rgba(var(--accent-rgb),0.14); border-color: rgba(var(--accent-rgb),0.34); color: #c4b5fd; }
@@ -1969,10 +1854,6 @@
         .savings-popup-explainer strong { color: var(--text); }
         .savings-popup-close { background: var(--card-soft); color: var(--text-dim); }
         .savings-popup-iframe { background: #141034; }
-        .savings-card { background: linear-gradient(135deg, rgba(52,211,153,0.1), rgba(var(--accent-rgb),0.08)); border-color: rgba(52,211,153,0.3); }
-        .savings-label { color: #6ee7b7; }
-        .savings-value { color: #6ee7b7; }
-        .savings-btn { background: rgba(52,211,153,0.14); border-color: rgba(52,211,153,0.34); color: #6ee7b7; }
 
         /* ── Raffle ── */
         .raffle-modal-overlay { background: rgba(4,6,18,0.72); }
@@ -2080,14 +1961,6 @@
         .bn-sheet-item:hover { border-color: rgba(var(--accent-rgb),0.5); background: rgba(var(--accent-rgb),0.16); }
         .bn-sheet-item .bn-sheet-circle { background: rgba(255,255,255,0.07); border-color: var(--card-border); }
         .bn-sheet-item .bn-sheet-name { color: var(--text-dim); }
-
-        /* ── Private key export card ── */
-        .private-key-export-card { background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.34); }
-        .private-key-export-card .warning-title { color: #fcd34d; }
-        .private-key-export-card .warning-copy { color: #fde68a; }
-        .private-key-export-card .confirm-phrase { background: rgba(255,255,255,0.06); border-color: rgba(251,191,36,0.3); color: var(--text); }
-        .private-key-export-card .export-status.error { color: #fca5a5; }
-        .private-key-export-card .export-status.info { color: #93c5fd; }
 
         /* ── Reduced motion ──
            Honour the OS-level setting: stop all decorative infinite loops
@@ -2824,18 +2697,6 @@
                 <div style="font-size:0.88rem;color:var(--text);">{{ 'GoodMarket' if login_method == 'walletconnect' else (login_method | replace('_', ' ') | title) }}</div>
             </div>
 
-            {% if (login_method or '')|lower == 'local' %}
-            {# Private-key reveal is only meaningful for the in-app wallet — the
-               key is generated in the browser and never leaves the device. #}
-            <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);">
-                <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">🔑 Private Key</div>
-                <div class="pk-warning" style="margin-bottom:0.75rem;">
-                    <strong>Never share your private key.</strong> Anyone who sees it can take <strong>all</strong> the funds in this wallet. GoodMarket support will <strong>never</strong> ask you for it.
-                </div>
-                <button type="button" class="btn-secondary" style="width:100%;" onclick="openPkModal()">Reveal private key</button>
-            </div>
-            {% endif %}
-
             <div style="margin-top:1rem;display:flex;gap:0.75rem;">
                 <a href="/overview" class="btn-secondary" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(255,255,255,0.06);color:var(--text-dim);font-size:0.9rem;font-weight:600;border:1px solid var(--card-border);">Overview</a>
                 <a href="/logout" class="btn-secondary btn-danger" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(248,113,113,0.06);color:#f87171;font-size:0.9rem;font-weight:600;border:1px solid rgba(248,113,113,0.22);">Logout</a>
@@ -2844,46 +2705,6 @@
             <button class="btn-secondary" style="margin-top:0.5rem;" onclick="closeModal('settingsModal')">Close</button>
         </div>
     </div>
-
-    {% if (login_method or '')|lower == 'local' %}
-    <!-- Private-key reveal for the in-app wallet. The key is decrypted locally
-         and shown only after an explicit warning acknowledgement + PIN
-         re-entry; it is never sent to the server. DOM-ordered AFTER
-         settingsModal so it stacks above it (shared z-index 200). -->
-    <div class="modal-overlay" id="pkModal">
-        <div class="modal-sheet">
-            <div class="modal-handle"></div>
-            <div class="modal-title">🔑 Private Key</div>
-
-            <div id="pkStepWarn">
-                <div class="pk-warning">
-                    <strong>Read this before revealing.</strong> This private key is <strong>full control</strong> of your wallet.
-                    Anyone who sees it — a friend, "support", an admin, or anyone who messages you — can <strong>take all the
-                    G$ and other funds</strong> in this wallet, and it <strong>cannot be reversed</strong>.
-                    <br><br>
-                    <strong>Never share it with anyone.</strong> GoodMarket support will never ask for your private key or your
-                    recovery words. Do not screenshot it, do not send it in chat or email, and do not paste it into any website.
-                </div>
-                <label style="display:flex;gap:0.6rem;align-items:flex-start;font-size:0.85rem;line-height:1.5;color:var(--text-dim);margin:0.25rem 0 1rem;">
-                    <input type="checkbox" id="pkAck" style="margin-top:0.2rem;flex:0 0 auto;" onchange="document.getElementById('pkContinueBtn').disabled = !this.checked">
-                    <span>I understand that my private key must be <strong>shared with no one</strong>, and that if it is shared, all my funds can be taken with no way to get them back.</span>
-                </label>
-                <button id="pkContinueBtn" type="button" class="btn-primary" style="width:100%;" disabled onclick="pkContinue()">Continue</button>
-                <button type="button" class="btn-secondary" style="width:100%;margin-top:0.5rem;" onclick="closeModal('pkModal')">Cancel</button>
-            </div>
-
-            <div id="pkStepKey" style="display:none;">
-                <div class="pk-warning" style="margin-bottom:0.75rem;">
-                    <strong>Do not share this.</strong> Copy-paste it only into your own backup — never into chat, email, or any website.
-                </div>
-                <div class="pk-box" id="pkValue"></div>
-                <button type="button" class="btn-secondary" style="width:100%;" onclick="copyPrivateKey()">Copy private key</button>
-                <div id="pkStatus" style="display:none;font-size:0.8rem;text-align:center;margin-top:0.6rem;"></div>
-                <button type="button" class="btn-secondary" style="width:100%;margin-top:0.5rem;" onclick="closePkModal()">Close</button>
-            </div>
-        </div>
-    </div>
-    {% endif %}
 
     <!-- Stream G$ Modal -->
     <div class="modal-overlay" id="streamModal">
@@ -3298,7 +3119,6 @@
     window.GM_WALLET_BOOT = {
         "wallet": {{ wallet|tojson }},
         "loginMethod": {{ login_method|default('', true)|tojson }},
-        "privyWalletClientType": {{ privy_wallet_client_type|default('', true)|tojson }},
         "gdTokenAddress": {{ gd_token_address|default('', true)|tojson }},
         "raffleContractAddress": {{ raffle_contract_address|default('', true)|tojson }},
         "walletConnectProjectId": {{ walletconnect_project_id|default('', true)|tojson }},
