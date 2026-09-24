@@ -4,55 +4,153 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <title>GoodMarket Chicken Farming</title>
+    <meta name="theme-color" content="#0b1020">
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
     <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        :root { --bg:#070b1a; --card:rgba(255,255,255,0.06); --border:rgba(255,255,255,0.11); --text:#eef2ff; --muted:rgba(238,242,255,0.66); --gold:#facc15; --green:#4ade80; }
+        :root { --bg:#0b1020; --bg2:#151a34; --border:rgba(255,255,255,0.11); --text:#eef2ff; --muted:rgba(238,242,255,0.66); --gold:#facc15; --green:#4ade80; --red:#f87171; }
         * { box-sizing:border-box; margin:0; padding:0; }
-        body { font-family:Inter,system-ui,sans-serif; min-height:100vh; color:var(--text); background:radial-gradient(circle at 15% 0%,rgba(250,204,21,0.2),transparent 34%),radial-gradient(circle at 100% 10%,rgba(74,222,128,0.13),transparent 32%),var(--bg); max-width:980px; margin:0 auto; padding:1rem; }
+        body { font-family:Inter,system-ui,sans-serif; min-height:100vh; color:var(--text);
+            background:radial-gradient(circle at 12% 0%,rgba(250,204,21,0.18),transparent 34%),
+                       radial-gradient(circle at 100% 8%,rgba(74,222,128,0.12),transparent 32%),
+                       linear-gradient(180deg,var(--bg),var(--bg2)); max-width:980px; margin:0 auto; padding:1rem 1rem 3rem; }
         .top { display:flex; align-items:center; justify-content:space-between; gap:0.8rem; margin-bottom:1rem; }
         .back { color:var(--text); text-decoration:none; background:rgba(255,255,255,0.08); border:1px solid var(--border); border-radius:999px; padding:0.62rem 0.9rem; font-weight:800; }
-        .hero { border:1px solid rgba(250,204,21,0.28); border-radius:28px; padding:1.25rem; background:linear-gradient(135deg,rgba(250,204,21,0.16),rgba(255,255,255,0.05)); box-shadow:0 18px 60px rgba(0,0,0,0.25); overflow:hidden; position:relative; }
-        .hero::after { content:'🐔'; position:absolute; right:1rem; top:0.5rem; font-size:5rem; opacity:0.22; }
         .kicker { color:var(--gold); font-weight:900; letter-spacing:0.08em; text-transform:uppercase; font-size:0.72rem; }
-        h1 { font-size:clamp(2rem,7vw,4rem); line-height:0.95; margin:0.45rem 0; letter-spacing:-0.06em; }
-        .copy { color:var(--muted); line-height:1.6; max-width:680px; font-size:0.98rem; }
-        .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; margin-top:1rem; }
-        .stat { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:0.9rem; }
-        .label { color:var(--muted); font-size:0.68rem; text-transform:uppercase; letter-spacing:0.08em; font-weight:800; margin-bottom:0.4rem; }
-        .value { font-size:1.25rem; font-weight:900; }
-        .panel { margin-top:1rem; background:rgba(255,255,255,0.045); border:1px solid var(--border); border-radius:22px; padding:1rem; }
-        .panel h2 { font-size:1.05rem; margin-bottom:0.6rem; }
-        .steps { display:grid; gap:0.55rem; color:var(--muted); line-height:1.45; }
-        .step { display:flex; gap:0.6rem; align-items:flex-start; padding:0.75rem; border-radius:14px; background:rgba(0,0,0,0.14); }
-        .badge { width:26px; height:26px; border-radius:999px; background:rgba(250,204,21,0.18); color:var(--gold); display:flex; align-items:center; justify-content:center; font-weight:900; flex:0 0 auto; }
-        .cta-row { display:flex; gap:0.7rem; flex-wrap:wrap; margin-top:1rem; }
-        .btn { border:0; border-radius:999px; padding:0.9rem 1.1rem; font-weight:900; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; gap:0.45rem; }
-        .primary { background:linear-gradient(135deg,#facc15,#f97316); color:#241300; }
-        .secondary { background:rgba(255,255,255,0.08); color:var(--text); border:1px solid var(--border); }
-        .notice { margin-top:0.85rem; color:var(--muted); font-size:0.82rem; line-height:1.45; }
-        .game-card { margin-top:1rem; background:rgba(5,10,24,0.72); border:1px solid rgba(250,204,21,0.22); border-radius:22px; padding:1rem; }
+
+        /* ── hero ─────────────────────────────────────────────────────── */
+        .hero { border:1px solid rgba(250,204,21,0.28); border-radius:28px; padding:1.4rem 1.25rem; overflow:hidden; position:relative;
+            background:linear-gradient(135deg,rgba(250,204,21,0.16),rgba(74,222,128,0.08) 55%,rgba(255,255,255,0.04));
+            box-shadow:0 18px 60px rgba(0,0,0,0.35); }
+        .hero::after { content:'🐔'; position:absolute; right:0.8rem; top:0.2rem; font-size:5.5rem; opacity:0.18; pointer-events:none; }
+        .hero h1 { font-size:clamp(1.9rem,6.4vw,3.4rem); line-height:1; margin:0.45rem 0; letter-spacing:-0.05em; }
+        .hero .copy { color:var(--muted); line-height:1.6; max-width:640px; font-size:0.96rem; }
+        .hero .copy strong { color:#fde68a; }
+        .hero-chips { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.9rem; }
+        .hero-chip { display:inline-flex; align-items:center; gap:0.4rem; border:1px solid rgba(250,204,21,0.35); background:rgba(250,204,21,0.12);
+            color:#fde68a; border-radius:999px; padding:0.4rem 0.8rem; font-weight:800; font-size:0.76rem; }
+        .egg-rain { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+        .egg-rain span { position:absolute; top:-2rem; font-size:1.1rem; opacity:0; animation:eggFall 7s linear infinite; }
+        .egg-rain span:nth-child(1){ left:12%; animation-delay:0s; }
+        .egg-rain span:nth-child(2){ left:38%; animation-delay:2.3s; }
+        .egg-rain span:nth-child(3){ left:64%; animation-delay:4.1s; }
+        .egg-rain span:nth-child(4){ left:86%; animation-delay:1.4s; }
+        @keyframes eggFall { 0%{transform:translateY(0) rotate(0);opacity:0} 12%{opacity:0.75} 88%{opacity:0.75} 100%{transform:translateY(340px) rotate(180deg);opacity:0} }
+
+        /* ── panels ───────────────────────────────────────────────────── */
+        .panel { margin-top:1rem; background:rgba(255,255,255,0.045); border:1px solid var(--border); border-radius:22px; padding:1.05rem; }
+        .panel h2 { font-size:1.05rem; margin-bottom:0.35rem; }
+        .panel .sub { color:var(--muted); font-size:0.85rem; line-height:1.5; }
+
+        /* ── farm status banner + cycle progress ──────────────────────── */
+        .phase-banner { display:flex; align-items:center; gap:0.7rem; margin-top:0.2rem; padding:0.9rem 1rem; border-radius:18px;
+            background:linear-gradient(135deg,rgba(250,204,21,0.14),rgba(74,222,128,0.1)); border:1px solid rgba(250,204,21,0.3); font-weight:700; }
+        .phase-banner .emoji { font-size:1.6rem; }
+        .progress-track { margin-top:0.7rem; height:12px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden; }
+        .progress-fill { height:100%; width:0%; border-radius:999px; background:linear-gradient(90deg,var(--gold),var(--green)); transition:width 0.4s ease; }
+        .progress-label { color:var(--muted); font-size:0.78rem; margin-top:0.45rem; }
+
+        /* ── action card ──────────────────────────────────────────────── */
+        .game-card { margin-top:1rem; background:rgba(6,11,26,0.72); border:1px solid rgba(250,204,21,0.22); border-radius:22px; padding:1.1rem; }
         .game-card h2 { font-size:1.12rem; margin-bottom:0.45rem; }
         .form-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0.7rem; margin-top:0.85rem; }
         .input { width:100%; border:1px solid var(--border); border-radius:16px; padding:0.9rem 1rem; background:rgba(255,255,255,0.08); color:var(--text); font:inherit; font-weight:800; outline:none; }
         .input:focus { border-color:rgba(250,204,21,0.7); box-shadow:0 0 0 3px rgba(250,204,21,0.14); }
-        .amount-help { color:var(--muted); font-size:0.84rem; line-height:1.45; margin-top:0.55rem; }
+        .amount-help { color:var(--muted); font-size:0.84rem; line-height:1.5; margin-top:0.55rem; }
         .amount-help strong { color:#fde68a; }
         .quick-amounts { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.6rem; }
-        .chip { border:1px solid var(--border); border-radius:999px; padding:0.5rem 0.7rem; background:rgba(255,255,255,0.07); color:var(--text); font-weight:800; cursor:pointer; }
+        .chip { border:1px solid var(--border); border-radius:999px; padding:0.5rem 0.75rem; background:rgba(255,255,255,0.07); color:var(--text); font-weight:800; cursor:pointer; font-family:inherit; }
         .chip:hover { border-color:rgba(250,204,21,0.55); }
-        .action-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.7rem; margin-top:0.85rem; }
-        .btn:disabled { opacity:0.52; cursor:not-allowed; filter:saturate(0.7); }
-        .mini-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:0.55rem; margin-top:0.85rem; }
+        .projection { display:grid; grid-template-columns:repeat(2,1fr); gap:0.6rem; margin-top:0.75rem; }
+        .projection .box { border:1px dashed rgba(74,222,128,0.35); border-radius:14px; padding:0.7rem; background:rgba(74,222,128,0.07); }
+        .projection .box span { display:block; color:var(--muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.07em; font-weight:800; }
+        .projection .box strong { font-size:1.05rem; color:var(--green); }
+
+        .action-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.7rem; margin-top:0.95rem; }
+        .btn { border:0; border-radius:999px; padding:0.9rem 1.1rem; font-weight:900; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; gap:0.45rem; font-family:inherit; font-size:0.92rem; }
+        .primary { background:linear-gradient(135deg,#facc15,#f97316); color:#241300; box-shadow:0 8px 22px rgba(250,204,21,0.28); }
+        .secondary { background:rgba(255,255,255,0.08); color:var(--text); border:1px solid var(--border); }
+        .btn:disabled { opacity:0.5; cursor:not-allowed; filter:saturate(0.6); box-shadow:none; }
+        .btn:not(:disabled):active { transform:scale(0.98); }
+
+        .mini-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:0.55rem; margin-top:0.9rem; }
         .mini-stat { border:1px solid var(--border); border-radius:14px; padding:0.7rem; background:rgba(255,255,255,0.045); }
-        .mini-stat strong { display:block; font-size:0.95rem; margin-top:0.25rem; }
-        .status { margin-top:0.85rem; padding:0.75rem; border-radius:14px; background:rgba(255,255,255,0.07); color:var(--muted); line-height:1.45; }
+        .mini-stat strong { display:block; font-size:0.95rem; margin-top:0.25rem; word-break:break-word; }
+
+        .tx-progress { display:none; align-items:center; gap:0.5rem; margin-top:0.85rem; padding:0.7rem 0.9rem; border-radius:14px;
+            background:rgba(250,204,21,0.1); border:1px solid rgba(250,204,21,0.28); color:#fde68a; font-weight:700; font-size:0.85rem; }
+        .tx-progress.show { display:flex; }
+        .spinner { width:14px; height:14px; border-radius:50%; border:2px solid rgba(253,230,138,0.35); border-top-color:#fde68a; animation:spin 0.7s linear infinite; flex:0 0 auto; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+
+        .status { margin-top:0.85rem; padding:0.8rem 0.9rem; border-radius:14px; background:rgba(255,255,255,0.07); color:var(--muted); line-height:1.5; font-size:0.88rem; }
         .status.ok { color:#bbf7d0; background:rgba(34,197,94,0.13); }
         .status.error { color:#fecaca; background:rgba(239,68,68,0.13); }
-        code { color:#fde68a; word-break:break-all; }
-        @media (max-width:720px) { .grid, .mini-stats, .action-grid, .form-row { grid-template-columns:1fr; } }
+        .status.info { color:#fde68a; background:rgba(250,204,21,0.1); }
+
+        /* ── transaction history ──────────────────────────────────────── */
+        .history-head { display:flex; align-items:flex-start; justify-content:space-between; gap:0.6rem; flex-wrap:wrap; }
+        .history-list { margin-top:0.75rem; display:grid; gap:0.6rem; }
+        .tx-row { border:1px solid var(--border); border-radius:16px; padding:0.8rem 0.9rem; background:rgba(255,255,255,0.04); border-left-width:4px; }
+        .tx-row.ok { border-left-color:var(--green); }
+        .tx-row.pending { border-left-color:var(--gold); }
+        .tx-row.error { border-left-color:var(--red); }
+        .tx-top { display:flex; align-items:center; justify-content:space-between; gap:0.6rem; }
+        .tx-action { font-weight:900; font-size:0.95rem; }
+        .tx-status { font-size:0.72rem; font-weight:800; border-radius:999px; padding:0.22rem 0.6rem; white-space:nowrap; }
+        .tx-status.ok { background:rgba(34,197,94,0.16); color:var(--green); }
+        .tx-status.pending { background:rgba(250,204,21,0.16); color:var(--gold); }
+        .tx-status.error { background:rgba(248,113,113,0.16); color:var(--red); }
+        .tx-meta { display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.3rem; color:var(--muted); font-size:0.8rem; }
+        .tx-amount { color:#fde68a; font-weight:800; }
+        .tx-received { margin-top:0.3rem; color:var(--green); font-weight:800; font-size:0.84rem; }
+        .tx-error { margin-top:0.3rem; color:#fecaca; font-size:0.8rem; }
+        .tx-foot { margin-top:0.35rem; }
+        .tx-hash { color:#fde68a; font-size:0.8rem; text-decoration:none; word-break:break-all; }
+        .tx-hash:hover { text-decoration:underline; }
+        .tx-hash.muted { color:var(--muted); }
+        .empty-note { color:var(--muted); font-size:0.86rem; line-height:1.5; margin-top:0.6rem; }
+
+        /* ── steps ────────────────────────────────────────────────────── */
+        .steps { display:grid; gap:0.55rem; color:var(--muted); line-height:1.45; }
+        .step { display:flex; gap:0.6rem; align-items:flex-start; padding:0.75rem; border-radius:14px; background:rgba(0,0,0,0.16); font-size:0.88rem; }
+        .badge { width:26px; height:26px; border-radius:999px; background:rgba(250,204,21,0.18); color:var(--gold); display:flex; align-items:center; justify-content:center; font-weight:900; flex:0 0 auto; }
+
+        .notice { margin-top:0.8rem; color:var(--muted); font-size:0.8rem; line-height:1.45; word-break:break-all; }
+        code { color:#fde68a; }
+
+        /* ── toast ────────────────────────────────────────────────────── */
+        .farm-toast { position:fixed; left:50%; bottom:1.4rem; transform:translate(-50%,140%); z-index:9000; max-width:90vw;
+            padding:0.85rem 1.1rem; border-radius:14px; font-weight:800; font-size:0.88rem; transition:transform 0.28s ease;
+            background:#1d2440; border:1px solid var(--border); color:var(--text); box-shadow:0 16px 40px rgba(0,0,0,0.45); }
+        .farm-toast.show { transform:translate(-50%,0); }
+        .farm-toast.success { background:rgba(34,197,94,0.95); color:#04180c; border-color:transparent; }
+        .farm-toast.error { background:rgba(239,68,68,0.95); color:#fff; border-color:transparent; }
+
+        /* ── close-farm congrats modal ────────────────────────────────── */
+        .modal-overlay { position:fixed; inset:0; z-index:9500; display:none; align-items:center; justify-content:center; padding:1rem; background:rgba(3,6,16,0.78); }
+        .modal-overlay.open { display:flex; }
+        .modal-card { width:100%; max-width:380px; text-align:center; border-radius:24px; padding:1.6rem 1.3rem;
+            background:linear-gradient(160deg,rgba(250,204,21,0.2),rgba(74,222,128,0.14)),#131a33; border:1px solid rgba(250,204,21,0.35);
+            box-shadow:0 24px 70px rgba(0,0,0,0.55); animation:modalPop 0.28s ease; }
+        @keyframes modalPop { from { transform:scale(0.9); opacity:0; } to { transform:scale(1); opacity:1; } }
+        .modal-card .big-emoji { font-size:3.2rem; }
+        .modal-card h3 { font-size:1.35rem; margin:0.4rem 0; }
+        .modal-card .congrats { color:var(--muted); font-size:0.9rem; line-height:1.55; margin-bottom:0.6rem; }
+        .modal-card .paid { font-size:1.9rem; font-weight:900; color:var(--green); margin:0.5rem 0; }
+        .modal-card .tx-line { font-size:0.8rem; color:var(--muted); margin-top:0.4rem; word-break:break-all; }
+        .modal-card a { color:#fde68a; }
+        .modal-card button { margin-top:1rem; width:100%; }
+
+        @media (max-width:720px) { .action-grid, .form-row, .projection { grid-template-columns:1fr; } .mini-stats { grid-template-columns:repeat(2,1fr); } }
+
+        @media (prefers-reduced-motion: reduce) {
+            .egg-rain span { animation:none; opacity:0.25; }
+            .progress-fill, .farm-toast { transition:none; }
+            .modal-card { animation:none; }
+        }
     </style>
 </head>
 <body>
@@ -62,42 +160,52 @@
     </div>
 
     <section class="hero">
+        <div class="egg-rain" aria-hidden="true"><span>🥚</span><span>🥚</span><span>🐣</span><span>🥚</span></div>
         <div class="kicker">Chicken-and-Egg Farming</div>
-        <h1>Start your chicken farm</h1>
-        <p class="copy">Buy chickens with G$, let them produce eggs daily, then sell eggs during the farming cycle. When the cycle matures, close the farm to receive your chicken capital plus any remaining egg rewards.</p>
-        <div class="grid">
-            <div class="stat"><div class="label">Minimum</div><div class="value">{{ farming_config.min_farm_gd }} G$</div></div>
-            <div class="stat"><div class="label">Chicken Price</div><div class="value">{{ farming_config.chicken_price_gd }} G$</div></div>
-            <div class="stat"><div class="label">Egg Rate</div><div class="value">1 / chicken / day</div></div>
-            <div class="stat"><div class="label">Cycle</div><div class="value">{{ farming_config.farm_days }} days</div></div>
+        <h1>Grow your G$ farm</h1>
+        <p class="copy">Buy chickens with G$, collect eggs every day, and sell them for G$ whenever you like. When the {{ farming_config.farm_days }}-day cycle matures, close the farm to get your capital back <strong>plus</strong> the remaining egg rewards.</p>
+        <div class="hero-chips">
+            <span class="hero-chip">🐔 {{ farming_config.chicken_price_gd }} G$ = 1 chicken</span>
+            <span class="hero-chip">🥚 1 egg / chicken / day</span>
+            <span class="hero-chip">📈 up to {{ farming_config.monthly_profit_percent }}% profit</span>
+            <span class="hero-chip">🗓 {{ farming_config.farm_days }}-day cycle</span>
         </div>
-        <div class="cta-row">
-            <a class="btn primary" href="#playFarm">🐣 Play farming now</a>
-            <a class="btn secondary" href="/farming/api/config">View farming config</a>
-        </div>
-        <p class="notice">Contract address: <code>{{ farming_contract or 'Not deployed yet — set FARMING_CONTRACT_ADDRESS after deployment' }}</code></p>
+    </section>
+
+    <section class="panel">
+        <div class="phase-banner"><span class="emoji">🌾</span><span id="farmStatusBanner">Checking your farm…</span></div>
+        <div class="progress-track"><div class="progress-fill" id="cycleProgressFill"></div></div>
+        <div class="progress-label" id="cycleProgressLabel">Loading your farming cycle…</div>
     </section>
 
     <section class="game-card" id="playFarm" aria-labelledby="playTitle">
         <div class="kicker">Play Farming</div>
         <h2 id="playTitle">Start, sell eggs, or close your farm</h2>
-        <p class="copy">Enter how many G$ you want to farm. Since you are already signed in, farm actions will open your wallet confirmation only when a transaction is needed.</p>
+        <p class="copy" style="color:var(--muted); line-height:1.55; font-size:0.9rem;">You are already signed in — your wallet opens only when a transaction needs your confirmation.</p>
+
         <div class="form-row">
             <input class="input" id="farmAmount" type="number" min="{{ farming_config.min_farm_gd }}" step="{{ farming_config.chicken_price_gd }}" value="{{ farming_config.min_farm_gd }}" inputmode="decimal" aria-label="Farm amount in G$">
-            <button class="btn primary" type="button" id="startFarmBtn">🐣 Approve & start farm</button>
+            <button class="btn primary" type="button" id="startFarmBtn">🐣 Approve &amp; start farm</button>
         </div>
-        <p class="amount-help">Every <strong>{{ farming_config.chicken_price_gd }} G$</strong> buys <strong>1 chicken</strong>. Your current amount buys <strong id="chickensToBuy">{{ farming_config.min_chickens }}</strong> chickens.</p>
+        <p class="amount-help">Every <strong>{{ farming_config.chicken_price_gd }} G$</strong> buys <strong>1 chicken</strong>. Your amount buys <strong id="chickensToBuy">{{ farming_config.min_chickens }}</strong> chickens.</p>
         <div class="quick-amounts" aria-label="Quick chicken amounts">
             <button class="chip" type="button" data-farm-amount="{{ farming_config.chicken_price_gd * 10 }}">10 chickens</button>
             <button class="chip" type="button" data-farm-amount="{{ farming_config.chicken_price_gd * 20 }}">20 chickens</button>
             <button class="chip" type="button" data-farm-amount="{{ farming_config.chicken_price_gd * 50 }}">50 chickens</button>
         </div>
-        <p class="amount-help">Rewards come from the contract reward pool and are funded by admins from the Admin Dashboard. Gas is estimated by the Celo network and your wallet; it is not a hardcoded farming fee.</p>
-        <div class="action-grid">
-            <button class="btn secondary" type="button" id="refreshFarmBtn">🔄 Refresh status</button>
-            <button class="btn secondary" type="button" id="sellEggsBtn">🥚 Sell eggs</button>
-            <button class="btn secondary" type="button" id="closeFarmBtn">💰 Close farm</button>
+        <div class="projection">
+            <div class="box"><span>Est. egg profit / cycle</span><strong id="projectedProfit">0 G$</strong></div>
+            <div class="box"><span>Est. payout at maturity</span><strong id="projectedPayout">0 G$</strong></div>
         </div>
+
+        <div class="action-grid">
+            <button class="btn secondary" type="button" id="refreshFarmBtn">🔄 Refresh</button>
+            <button class="btn secondary" type="button" id="sellEggsBtn" disabled>🥚 Sell eggs</button>
+            <button class="btn secondary" type="button" id="closeFarmBtn" disabled>💰 Close farm</button>
+        </div>
+
+        <div class="tx-progress" id="txProgress"></div>
+
         <div class="mini-stats">
             <div class="mini-stat"><span class="label">Wallet</span><strong id="walletStatus">{{ wallet[:6] }}…{{ wallet[-4:] }}</strong></div>
             <div class="mini-stat"><span class="label">Chickens</span><strong id="chickenCount">—</strong></div>
@@ -105,194 +213,75 @@
             <div class="mini-stat"><span class="label">Egg value</span><strong id="eggValue">—</strong></div>
             <div class="mini-stat"><span class="label">Reward pool</span><strong id="rewardPoolValue">—</strong></div>
         </div>
-        <div class="status" id="farmStatus">Choose an action below. If you already have a farm, tap Refresh status.</div>
+        <div class="mini-stats" style="grid-template-columns:repeat(2,1fr);">
+            <div class="mini-stat"><span class="label">Your capital</span><strong id="principalValue">—</strong></div>
+            <div class="mini-stat"><span class="label">Farm phase</span><strong id="farmPhaseValue">—</strong></div>
+        </div>
+
+        <div class="status" id="farmStatus">Loading your farm… If you already have a farm, tap Refresh.</div>
+    </section>
+
+    <section class="panel">
+        <div class="history-head">
+            <div>
+                <h2>📜 Transaction history</h2>
+                <p class="sub">Every farm action is recorded here the moment it is broadcast — with its on-chain status and a Celoscan link — so you always know whether your G$ arrived.</p>
+            </div>
+            <button class="btn secondary" type="button" id="refreshHistoryBtn">🔄 Check on-chain status</button>
+        </div>
+        <div class="history-list" id="farmHistoryList"></div>
+        <div class="empty-note" id="farmHistoryEmpty">No farm transactions yet. Your history appears here after your first farm action.</div>
     </section>
 
     <section class="panel">
         <h2>How it works</h2>
         <div class="steps">
-            <div class="step"><span class="badge">1</span><span>Start with at least 1,000 G$. Every 100 G$ buys 1 chicken, so the minimum farm starts with 10 chickens.</span></div>
+            <div class="step"><span class="badge">1</span><span>Start with at least {{ farming_config.min_farm_gd }} G$. Every {{ farming_config.chicken_price_gd }} G$ buys 1 chicken, so the minimum farm starts with {{ farming_config.min_chickens }} chickens.</span></div>
             <div class="step"><span class="badge">2</span><span>Each chicken produces 1 egg per day during the farming cycle. Egg reward value follows the live contract configuration.</span></div>
             <div class="step"><span class="badge">3</span><span>Sell eggs during the cycle, or wait until maturity. Closing the farm returns principal plus any remaining egg rewards.</span></div>
             <div class="step"><span class="badge">4</span><span>Minimum final withdrawal is hardcoded at {{ farming_config.min_withdraw_gd }} G$ in the smart contract.</span></div>
+            <div class="step"><span class="badge">5</span><span>Rewards come from the contract reward pool, funded by admins from the Admin Dashboard. Gas is estimated by the Celo network and your wallet — it is not a hardcoded farming fee.</span></div>
         </div>
+        <p class="notice">Contract address: <code>{{ farming_contract or 'Not deployed yet — set FARMING_CONTRACT_ADDRESS after deployment' }}</code></p>
     </section>
 
+    <!-- Close-farm success (congrats) modal -->
+    <div class="modal-overlay" id="closeSuccessModal" role="dialog" aria-modal="true" aria-labelledby="closeSuccessTitle">
+        <div class="modal-card">
+            <div class="big-emoji">🎉</div>
+            <h3 id="closeSuccessTitle">Congratulations!</h3>
+            <p class="congrats">Your farm is now closed and your G$ has already been sent to your wallet.</p>
+            <div class="paid" id="closeSuccessAmount">0 G$</div>
+            <p class="congrats">Principal + egg rewards have been paid out on-chain.</p>
+            <div class="tx-line">Transaction: <a id="closeSuccessTx" href="#" target="_blank" rel="noopener">view on Celoscan ↗</a></div>
+            <button class="btn primary" type="button" id="closeSuccessClose">Great, thanks!</button>
+        </div>
+    </div>
 
+    <div class="farm-toast" id="farmToast" role="status" aria-live="polite"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
+            integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/farming-history.js', v=ASSET_VERSION) }}"></script>
     <script>
-        const FARMING_CONTRACT = "{{ farming_contract }}";
-        const GD_CONTRACT = "{{ gd_contract }}";
-        const CHAIN_ID_DEC = {{ chain_id }};
-        const CHAIN_ID_HEX = "0x" + CHAIN_ID_DEC.toString(16);
-        const MIN_FARM = {{ farming_config.min_farm_gd }};
-        const CHICKEN_PRICE = {{ farming_config.chicken_price_gd }};
-        const DECIMALS = 18n;
-        const UNIT = 10n ** DECIMALS;
-        const SELECTORS = {
-            approve: "0x095ea7b3",
-            startFarm: "0x6b9189ea",
-            sellEggs: "0x3955f0fe",
-            closeFarm: "0x93c45462",
-            getFarm: "0x3bfc187c",
-            fundRewardPool: "0x1d583e0d",
-            rewardPool: "0x66666aa9",
+        window.WALLET_ADDRESS = "{{ wallet }}";
+        window.GM_FARM_BOOT = {
+            wallet: "{{ wallet }}",
+            loginMethod: "{{ login_method }}",
+            farmingContract: "{{ farming_contract }}",
+            gdContract: "{{ gd_contract }}",
+            chainId: {{ chain_id }},
+            celoRpc: "{{ celo_rpc }}",
+            celoRpcFallbacks: {{ celo_rpc_fallbacks | tojson }},
+            walletconnectProjectId: "{{ walletconnect_project_id }}",
+            assetVersion: "{{ ASSET_VERSION }}",
+            config: {{ farming_config | tojson }}
         };
-
-        const $ = (id) => document.getElementById(id);
-        let selectedAccount = "";
-        let farmState = null;
-
-        function provider() {
-            if (!window.ethereum) return null;
-            if (Array.isArray(window.ethereum.providers)) {
-                return window.ethereum.providers.find((p) => p && p.isMiniPay) || window.ethereum.providers[0];
-            }
-            return window.ethereum;
-        }
-
-        function setStatus(message, type = "") {
-            const el = $("farmStatus");
-            el.textContent = message;
-            el.className = `status ${type}`.trim();
-        }
-
-        function pad64(hex) { return hex.replace(/^0x/, "").padStart(64, "0"); }
-        function addressArg(address) { return pad64(address.toLowerCase()); }
-        function uintArg(value) { return pad64(value.toString(16)); }
-        function gdToWei(amount) { return BigInt(Math.round(Number(amount) * 1e6)) * (UNIT / 1000000n); }
-        function weiToGd(value) { return (Number(value) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 4 }); }
-        function updateChickensToBuy() {
-            const amount = Number($("farmAmount").value || 0);
-            const chickens = Math.floor(amount / CHICKEN_PRICE);
-            $("chickensToBuy").textContent = Number.isFinite(chickens) && chickens > 0 ? chickens.toLocaleString() : "0";
-        }
-
-        async function getWalletAccount() {
-            const eth = provider();
-            if (!eth) throw new Error("No wallet provider found. Open this page inside MiniPay or another Web3 wallet browser.");
-            const existing = await eth.request({ method: "eth_accounts" }).catch(() => []);
-            const accounts = existing.length ? existing : await eth.request({ method: "eth_requestAccounts" });
-            selectedAccount = accounts[0];
-            $("walletStatus").textContent = `${selectedAccount.slice(0, 6)}…${selectedAccount.slice(-4)}`;
-            try { await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CHAIN_ID_HEX }] }); } catch (_) {}
-            return eth;
-        }
-
-        async function sendTx(to, data) {
-            const eth = provider();
-            if (!selectedAccount) await getWalletAccount();
-            const transaction = { from: selectedAccount, to, data, chainId: CHAIN_ID_HEX };
-            // Simulate first so a known contract revert never reaches the wallet. Some
-            // wallets show a very large fallback fee when gas estimation fails.
-            await eth.request({ method: "eth_call", params: [transaction, "latest"] });
-            return eth.request({ method: "eth_sendTransaction", params: [transaction] });
-        }
-
-        function updateActionAvailability() {
-            const active = Boolean(farmState && farmState.active);
-            const eggsPayable = active && farmState.eggValue > 0n && farmState.pool >= farmState.eggValue;
-            const closePayable = active && farmState.mature && farmState.pool >= farmState.eggValue;
-            $("sellEggsBtn").disabled = !eggsPayable;
-            $("closeFarmBtn").disabled = !closePayable;
-        }
-
-        function actionBlockReason(action) {
-            if (!farmState || !farmState.active) return "No active farm found. Tap Refresh status first.";
-            if (action === "close" && !farmState.mature) return "This farm is still growing and cannot be closed yet.";
-            if (farmState.eggValue === 0n && action === "sell") return "There are no egg rewards ready to sell yet.";
-            if (farmState.pool < farmState.eggValue) {
-                const shortage = farmState.eggValue - farmState.pool;
-                return `The transaction was not opened because it would fail: the reward pool needs ${weiToGd(shortage)} more G$. Gas is network-estimated, not a hardcoded farm fee. Please ask an admin to fund the reward pool, then refresh.`;
-            }
-            return "";
-        }
-
-        async function waitForReceipt(hash, waitingMessage) {
-            const eth = provider();
-            setStatus(waitingMessage);
-            for (let tries = 0; tries < 40; tries += 1) {
-                const receipt = await eth.request({ method: "eth_getTransactionReceipt", params: [hash] }).catch(() => null);
-                if (receipt) {
-                    if (receipt.status && receipt.status !== "0x1") throw new Error("Transaction failed on-chain.");
-                    return receipt;
-                }
-                await new Promise((resolve) => setTimeout(resolve, 3000));
-            }
-            setStatus("Transaction submitted, but confirmation is still pending. Tap Refresh status after it confirms.");
-            return null;
-        }
-
-        async function approveGd(amountWei, message) {
-            setStatus(message);
-            const hash = await sendTx(GD_CONTRACT, SELECTORS.approve + addressArg(FARMING_CONTRACT) + uintArg(amountWei));
-            await waitForReceipt(hash, "Approval submitted. Waiting for approval confirmation before the next wallet prompt…");
-            return hash;
-        }
-
-        async function startFarm() {
-            if (!FARMING_CONTRACT) return setStatus("Farming contract is not configured yet.", "error");
-            const amount = Number($("farmAmount").value || 0);
-            if (amount < MIN_FARM || amount % CHICKEN_PRICE !== 0) return setStatus(`Amount must be at least ${MIN_FARM} G$ and divisible by ${CHICKEN_PRICE} G$.`, "error");
-            const wei = gdToWei(amount);
-            await approveGd(wei, "Step 1/2: approve G$ spending in your wallet…");
-            setStatus("Step 2/2: now confirm Start Farm in your wallet. Chickens update after this transaction confirms.");
-            const hash = await sendTx(FARMING_CONTRACT, SELECTORS.startFarm + uintArg(wei));
-            $("chickenCount").textContent = Math.floor(amount / CHICKEN_PRICE).toLocaleString();
-            await waitForReceipt(hash, "Farm start submitted. Waiting for confirmation so chickens can update…");
-            setStatus(`Farm confirmed: ${Math.floor(amount / CHICKEN_PRICE).toLocaleString()} chickens started. Refreshing farm status…`, "ok");
-            await refreshFarm();
-        }
-
-        async function refreshFarm() {
-            if (!FARMING_CONTRACT) return setStatus("Farming contract is not configured yet.", "error");
-            const eth = provider();
-            if (!selectedAccount) await getWalletAccount();
-            const data = SELECTORS.getFarm + addressArg(selectedAccount);
-            const raw = await eth.request({ method: "eth_call", params: [{ to: FARMING_CONTRACT, data }, "latest"] });
-            const words = raw.replace(/^0x/, "").match(/.{1,64}/g) || [];
-            const principal = BigInt(`0x${words[0] || "0"}`), chickens = BigInt(`0x${words[1] || "0"}`), eggs = BigInt(`0x${words[8] || "0"}`), eggValue = BigInt(`0x${words[9] || "0"}`), active = BigInt(`0x${words[6] || "0"}`) === 1n, mature = BigInt(`0x${words[7] || "0"}`) === 1n;
-            $("chickenCount").textContent = chickens.toString();
-            $("eggsReady").textContent = eggs.toString();
-            $("eggValue").textContent = `${weiToGd(eggValue)} G$`;
-            const poolRaw = await eth.request({ method: "eth_call", params: [{ to: FARMING_CONTRACT, data: SELECTORS.rewardPool }, "latest"] });
-            const pool = BigInt(poolRaw || "0x0");
-            $("rewardPoolValue").textContent = `${weiToGd(pool)} G$`;
-            farmState = { active, mature, eggValue, pool };
-            updateActionAvailability();
-            const fundingShortfall = active && pool < eggValue ? ` Reward pool is short by ${weiToGd(eggValue - pool)} G$; Sell/Close is blocked to prevent a failed transaction and misleading wallet gas estimate.` : "";
-            setStatus(active ? `Active farm: ${weiToGd(principal)} G$ principal. ${mature ? "Mature." : "Still growing."}${fundingShortfall || (mature ? " Ready to close." : "")}` : "No active farm yet. Start one above.", active && !fundingShortfall ? "ok" : fundingShortfall ? "error" : "");
-        }
-
-        async function simpleAction(selector, label) {
-            if (!FARMING_CONTRACT) return setStatus("Farming contract is not configured yet.", "error");
-            setStatus(`${label}: confirm in your wallet…`);
-            const hash = await sendTx(FARMING_CONTRACT, selector);
-            await waitForReceipt(hash, `${label} submitted. Waiting for confirmation before refreshing status…`);
-            setStatus(`${label} confirmed. Refreshing farm status…`, "ok");
-            await refreshFarm();
-        }
-
-        $("farmAmount").addEventListener("input", updateChickensToBuy);
-        document.querySelectorAll("[data-farm-amount]").forEach((button) => {
-            button.addEventListener("click", () => {
-                $("farmAmount").value = button.dataset.farmAmount;
-                updateChickensToBuy();
-            });
-        });
-        updateChickensToBuy();
-        $("startFarmBtn").addEventListener("click", () => startFarm().catch((e) => setStatus(e.message || "Unable to start farm.", "error")));
-        $("refreshFarmBtn").addEventListener("click", () => refreshFarm().catch((e) => setStatus(e.message || "Unable to refresh farm.", "error")));
-        $("sellEggsBtn").addEventListener("click", () => {
-            const reason = actionBlockReason("sell");
-            if (reason) return setStatus(reason, "error");
-            return simpleAction(SELECTORS.sellEggs, "Sell eggs").catch((e) => setStatus(e.message || "Unable to sell eggs.", "error"));
-        });
-        $("closeFarmBtn").addEventListener("click", () => {
-            const reason = actionBlockReason("close");
-            if (reason) return setStatus(reason, "error");
-            return simpleAction(SELECTORS.closeFarm, "Close farm").catch((e) => setStatus(e.message || "Unable to close farm.", "error"));
-        });
-        refreshFarm().catch((e) => setStatus(e.message || "Unable to load farm status.", "error"));
     </script>
+    <script src="{{ url_for('static', filename='js/farming.js', v=ASSET_VERSION) }}"></script>
 </body>
 </html>
