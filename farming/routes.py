@@ -12,6 +12,16 @@ GD_TOKEN_ADDRESS = os.getenv(
 )
 CHAIN_ID = get_env_int("CHAIN_ID", 42220)
 
+# Reads (farm state, receipts) go through a public RPC so the page never pops a
+# wallet prompt just to render, and never lags behind the phone's wallet node.
+CELO_RPC_URL = os.getenv("CELO_RPC_URL", "https://forno.celo.org")
+CELO_RPC_FALLBACKS = [
+    u.strip() for u in os.getenv(
+        "CELO_RPC_FALLBACKS",
+        "https://forno.celo.org,https://rpc.ankr.com/celo,https://celo.drpc.org",
+    ).split(",") if u.strip()
+]
+
 FARMING_CONFIG = {
     "min_farm_gd": 1000,
     "chicken_price_gd": 100,
@@ -39,9 +49,13 @@ def farming_home():
     return render_template(
         "farming.html",
         wallet=wallet,
+        login_method=session.get("login_method", ""),
+        walletconnect_project_id=os.getenv("WALLETCONNECT_PROJECT_ID", ""),
         farming_contract=FARMING_CONTRACT_ADDRESS,
         gd_contract=GD_TOKEN_ADDRESS,
         chain_id=CHAIN_ID,
+        celo_rpc=CELO_RPC_URL,
+        celo_rpc_fallbacks=CELO_RPC_FALLBACKS,
         farming_config=FARMING_CONFIG,
     )
 
