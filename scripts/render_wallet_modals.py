@@ -26,7 +26,6 @@ tmpl = env.get_template("wallet.html")
 base = tmpl.render(
     wallet="0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
     login_method="local",
-    privy_wallet_client_type="",
     gd_token_address="0x0000000000000000000000000000000000000000",
     raffle_contract_address="0x0000000000000000000000000000000000000000",
     walletconnect_project_id="demo",
