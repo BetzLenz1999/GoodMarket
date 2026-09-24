@@ -150,10 +150,16 @@ window.P2PWallet = (function () {
     }
 
     function getReadProvider() {
+        // Pin the network explicitly: with no 2nd argument the provider
+        // auto-detects (anyNetwork), which hides a wrong-chain RPC instead of
+        // failing loudly. Never pass a bare quorum number here — it is read as
+        // the network and breaks every Celo read with
+        // "network changed: 1 => 42220".
         return new ethers.FallbackProvider(
             CELO_RPC_URLS.map(function (u) {
                 return new ethers.JsonRpcProvider(u, { chainId: cfg.chainId, name: "celo" });
-            })
+            }),
+            { chainId: cfg.chainId, name: "celo" }
         );
     }
 
