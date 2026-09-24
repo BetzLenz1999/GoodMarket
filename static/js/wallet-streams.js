@@ -5,7 +5,6 @@
     // ============================
 
     // Stream state
-    let currentStreamInfo = null;
     let streamConstants = null;
     let streamHistory = [];  // Local storage stream history
 
