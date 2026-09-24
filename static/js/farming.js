@@ -1,4 +1,3 @@
-
 /* GoodMarket Chicken Farm — page logic.
  *
  * Extracted from templates/farming.html so the markup stays readable and the
@@ -116,6 +115,11 @@
         // receipt read that silently fails is exactly what makes a user think
         // their G$ never arrived. quorum 1 keeps a single fast provider in
         // normal operation while allowing a switch on failure.
+        //
+        // The 2nd FallbackProvider argument is the NETWORK, not the quorum —
+        // passing a bare `1` silently pins the provider to mainnet, so every
+        // Celo read dies with "network changed: 1 => 42220". Quorum belongs in
+        // the 3rd options argument.
         if (typeof ethers.FallbackProvider === "function" && urls.length > 1) {
             try {
                 var entries = urls.map(function (u, i) {
@@ -126,7 +130,11 @@
                         stallTimeout: 2000,
                     };
                 });
-                readProvider = new ethers.FallbackProvider(entries, 1);
+                readProvider = new ethers.FallbackProvider(
+                    entries,
+                    { chainId: CHAIN_ID, name: "celo" },
+                    { quorum: 1 }
+                );
                 return readProvider;
             } catch (_) {
                 readProvider = null;
