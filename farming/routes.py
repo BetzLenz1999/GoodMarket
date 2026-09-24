@@ -1,7 +1,10 @@
+import logging
 import os
-from flask import Blueprint, jsonify, redirect, render_template, session
+from flask import Blueprint, jsonify, redirect, render_template, request, session
 
 from env_utils import get_env_int
+
+logger = logging.getLogger(__name__)
 
 farming_bp = Blueprint("farming", __name__, url_prefix="/farming")
 
@@ -67,4 +70,43 @@ def api_config():
         "gd_contract": GD_TOKEN_ADDRESS,
         "chain_id": CHAIN_ID,
         "config": FARMING_CONFIG,
+    })
+
+
+@farming_bp.route("/api/history")
+def api_history():
+    """Return the CONNECTED wallet's complete farm history from the contract.
+
+    The wallet is taken from the SESSION only — never from a query parameter or
+    request body. That is what guarantees each user sees their own on-chain
+    activity and nothing else: a caller cannot ask for another address, and the
+    underlying log filter is anchored on the session wallet's indexed topic.
+
+    The contract events are the durable record, so this survives cleared browser
+    storage, a new device, and private mode. Returns ``[]`` (never an error) when
+    the contract is not configured or the RPC is unreachable, so the page can
+    fall back to its locally tracked rows.
+    """
+    wallet, verified = _require_auth()
+    if not wallet or not verified:
+        return jsonify({"error": "Not authenticated"}), 401
+
+    if not FARMING_CONTRACT_ADDRESS:
+        return jsonify({"transactions": [], "contract": "", "source": "onchain"})
+
+    force = str(request.args.get("force", "")).lower() in ("1", "true", "yes")
+    try:
+        from farming.blockchain import fetch_wallet_farm_history
+        rows = fetch_wallet_farm_history(
+            FARMING_CONTRACT_ADDRESS, wallet, force=force)
+    except Exception as exc:
+        logging.getLogger(__name__).error("farming history fetch failed: %s", exc)
+        rows = []
+
+    return jsonify({
+        "transactions": rows,
+        "contract": FARMING_CONTRACT_ADDRESS,
+        "wallet": wallet,
+        "source": "onchain",
+        "count": len(rows),
     })
