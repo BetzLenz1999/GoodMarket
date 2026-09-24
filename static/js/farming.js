@@ -1,3 +1,4 @@
+
 /* GoodMarket Chicken Farm — page logic.
  *
  * Extracted from templates/farming.html so the markup stays readable and the
