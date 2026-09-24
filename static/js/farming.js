@@ -850,6 +850,39 @@
         }
     }
 
+    // The hero hen reflects the REAL farm, never a decorative count: she rests
+    // and no eggs appear when there is no farm, turns gold at maturity, and the
+    // nest fills with the eggs actually ready to sell.
+    function renderScene() {
+        var scene = $("farmScene");
+        if (!scene) return;
+        var active = Boolean(farmState && farmState.active);
+        var mature = Boolean(farmState && farmState.mature);
+        var chickens = active ? Number(farmState.chickens) : 0;
+        var eggsReady = active ? Number(farmState.eggs) : 0;
+
+        scene.classList.toggle("is-idle", !active);
+        scene.classList.toggle("is-mature", mature);
+
+        // The nest holds 3 eggs; the 4th slot is the fresh egg that pops out
+        // after a drop. Fill them in order so the count is readable at a glance.
+        var nestEggs = scene.querySelectorAll(".chicken-egg");
+        for (var i = 0; i < nestEggs.length; i++) {
+            nestEggs[i].classList.toggle("is-hidden", i >= eggsReady);
+        }
+
+        var caption = $("sceneCaption");
+        if (caption) {
+            if (!active) caption.textContent = "Start a farm to see your chickens";
+            else if (mature) caption.textContent = chickens.toLocaleString() + " chickens · cycle complete — close to collect";
+            else caption.textContent = chickens.toLocaleString() + " chickens · " + eggsReady + " eggs ready";
+        }
+        scene.setAttribute("aria-label", !active
+            ? "Your farm — start a farm to see your chickens"
+            : chickens.toLocaleString() + " chickens with " + eggsReady + " eggs ready" +
+              (mature ? ", cycle complete" : ""));
+    }
+
     function renderFarm() {
         var active = Boolean(farmState && farmState.active);
         var principalEl = $("principalValue");
@@ -891,6 +924,8 @@
                     : pct + "% · " + days + "d " + hours + "h until maturity";
             }
         }
+
+        renderScene();
     }
 
     function refreshFarm() {
