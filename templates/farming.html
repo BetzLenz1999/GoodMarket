@@ -38,41 +38,36 @@
         .egg-rain span:nth-child(4){ left:86%; animation-delay:1.4s; }
         @keyframes eggFall { 0%{transform:translateY(0) rotate(0);opacity:0} 12%{opacity:0.75} 88%{opacity:0.75} 100%{transform:translateY(340px) rotate(180deg);opacity:0} }
 
-        /* ── chicken scene (inline SVG, driven by the real farm state) ────
-           Every animated property is transform/opacity — animating
-           box-shadow or left/top repaints the whole box each frame. */
-        .hero-grid { display:grid; grid-template-columns:minmax(0,1fr) 230px; gap:1.1rem; align-items:center; }
+        /* ── farm scene (hand-drawn inline SVG, driven by the real farm) ──
+           Sky, sun, hills, fence and coop are scenery; the flock and the nest
+           eggs come from the contract. Every animated property is transform or
+           opacity — animating box-shadow/left/top repaints the whole box. */
+        .hero-grid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:1.1rem; align-items:center; }
         .hero-copy { min-width:0; }
-        .hero-chicken { width:100%; max-width:230px; margin:0 auto; }
-        .hero-chicken svg { width:100%; height:auto; display:block; overflow:visible; }
-        .chicken-halo { opacity:0; transition:opacity 0.4s ease; }
-        .chicken-bird { transform-box:fill-box; transform-origin:50% 100%; animation:chickenBob 2.6s ease-in-out infinite; }
-        .chicken-head { transform-box:fill-box; transform-origin:16% 90%; animation:chickenPeck 6s ease-in-out infinite; }
-        .chicken-body, .chicken-wing, .chicken-comb, .chicken-beak { transition:fill 0.4s ease, opacity 0.4s ease; }
-        .chicken-egg { transition:opacity 0.4s ease, transform 0.4s ease; }
+        .hero-chicken { width:100%; max-width:320px; margin:0 auto; }
+        .hero-chicken svg { width:100%; height:auto; display:block; }
+        .farm-sun { transform-box:fill-box; transform-origin:50% 50%; animation:sunGlow 7s ease-in-out infinite; }
+        .farm-chicken { transform-box:fill-box; transform-origin:50% 100%; animation:chickenBob 2.6s ease-in-out infinite; transition:opacity 0.45s ease; }
+        .farm-chicken.is-off { opacity:0; animation:none; }
+        .chicken-peck { transform-box:fill-box; transform-origin:82% 100%; animation:chickenPeck 5.5s ease-in-out infinite; }
+        .chicken-egg { transition:opacity 0.45s ease; }
         .chicken-egg.is-hidden { opacity:0; }
-        .chicken-egg.is-new { animation:eggPop 6s ease-in-out infinite; transform-box:fill-box; transform-origin:50% 100%; }
-        .chicken-egg-drop { transform-box:fill-box; transform-origin:50% 0%; animation:eggDrop 6s ease-in-out infinite; }
+        .chicken-egg.is-pop { animation:eggPop 0.9s ease-out 1; transform-box:fill-box; transform-origin:50% 100%; }
+        .chicken-halo { opacity:0; transition:opacity 0.45s ease; }
         .chicken-caption { margin-top:0.5rem; text-align:center; font-size:0.74rem; font-weight:800; color:#fde68a; letter-spacing:0.02em; }
-        @keyframes chickenBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
-        @keyframes chickenPeck { 0%,70%,100%{transform:rotate(0)} 76%{transform:rotate(20deg)} 83%{transform:rotate(-4deg)} 90%{transform:rotate(0)} }
-        @keyframes eggDrop { 0%,18%{opacity:0;transform:translateY(-36px)} 25%{opacity:1} 37%{opacity:1;transform:translateY(0)} 44%,100%{opacity:0;transform:translateY(0)} }
-        @keyframes eggPop { 0%,38%{transform:scale(0.5)} 48%,100%{transform:scale(1)} }
-        @keyframes haloPulse { 0%,100%{opacity:0.3} 50%{opacity:0.65} }
+        @keyframes chickenBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-2.5px)} }
+        @keyframes chickenPeck { 0%,68%,100%{transform:rotate(0)} 74%{transform:rotate(11deg)} 81%{transform:rotate(-3deg)} 88%{transform:rotate(0)} }
+        @keyframes eggPop { 0%{transform:scale(0.4)} 60%{transform:scale(1.12)} 100%{transform:scale(1)} }
+        @keyframes haloPulse { 0%,100%{opacity:0.28} 50%{opacity:0.6} }
+        @keyframes sunGlow { 0%,100%{opacity:0.85} 50%{opacity:1} }
 
-        /* No farm yet: the hen rests, no eggs drop, plumage is muted. */
-        .hero-chicken.is-idle .chicken-bird { animation-duration:4.4s; }
-        .hero-chicken.is-idle .chicken-head,
-        .hero-chicken.is-idle .chicken-egg-drop,
+        /* No farm yet: an empty pasture — no chickens, no eggs, no halo. */
+        .hero-chicken.is-idle .farm-chicken { opacity:0; animation:none; }
         .hero-chicken.is-idle .chicken-egg { animation:none; }
-        .hero-chicken.is-idle .chicken-egg-drop { opacity:0; }
-        .hero-chicken.is-idle .chicken-body,
-        .hero-chicken.is-idle .chicken-wing { fill:#94a3b8; }
         .hero-chicken.is-idle .chicken-caption { color:var(--muted); }
-        /* Mature: the hen turns gold and gets a pulsing halo. */
-        .hero-chicken.is-mature .chicken-halo { opacity:0.5; animation:haloPulse 2.8s ease-in-out infinite; }
-        .hero-chicken.is-mature .chicken-body { fill:#fde68a; }
-        .hero-chicken.is-mature .chicken-wing { fill:#facc15; }
+        /* Mature: the flock basks in a pulsing gold halo. */
+        .hero-chicken.is-mature .chicken-halo { opacity:0.4; animation:haloPulse 2.8s ease-in-out infinite; }
+
 
         /* ── panels ───────────────────────────────────────────────────── */
         .panel { margin-top:1rem; background:rgba(255,255,255,0.045); border:1px solid var(--border); border-radius:22px; padding:1.05rem; }
@@ -179,12 +174,11 @@
         .modal-card a { color:#fde68a; }
         .modal-card button { margin-top:1rem; width:100%; }
 
-        @media (max-width:720px) { .action-grid, .form-row, .projection { grid-template-columns:1fr; } .mini-stats { grid-template-columns:repeat(2,1fr); } .hero-grid { grid-template-columns:1fr; } .hero-chicken { max-width:170px; } }
+        @media (max-width:720px) { .action-grid, .form-row, .projection { grid-template-columns:1fr; } .mini-stats { grid-template-columns:repeat(2,1fr); } .hero-grid { grid-template-columns:1fr; } .hero-chicken { max-width:280px; } }
 
         @media (prefers-reduced-motion: reduce) {
             .egg-rain span { animation:none; opacity:0.25; }
-            .chicken-bird, .chicken-head, .chicken-egg-drop, .chicken-egg, .chicken-halo { animation:none; }
-            .chicken-egg-drop { opacity:0; }
+            .farm-sun, .farm-chicken, .chicken-peck, .chicken-egg, .chicken-halo { animation:none; }
             .progress-fill, .farm-toast { transition:none; }
             .modal-card { animation:none; }
         }
@@ -211,29 +205,82 @@
                 </div>
             </div>
             <div class="hero-chicken is-idle" id="farmScene" role="img" aria-label="Your farm — start a farm to see your chickens">
-                <svg viewBox="0 0 220 180" aria-hidden="true" focusable="false">
-                    <ellipse class="chicken-halo" cx="110" cy="132" rx="86" ry="30" fill="#facc15"/>
-                    <g class="chicken-bird">
-                        <path d="M116 100 C110 78 116 64 132 60 C124 72 124 86 132 100 Z" fill="#f59e0b"/>
-                        <ellipse class="chicken-body" cx="96" cy="106" rx="40" ry="27" fill="#fbbf24"/>
-                        <path class="chicken-wing" d="M86 98 C102 92 116 98 120 108 C110 116 94 116 84 108 Z" fill="#f59e0b"/>
-                        <path class="chicken-comb" d="M50 78 C46 68 54 64 58 71 C60 63 70 64 70 72 Z" fill="#ef4444"/>
-                        <g class="chicken-head">
-                            <circle cx="56" cy="84" r="15" fill="#fcd34d"/>
-                            <circle cx="51" cy="81" r="2.4" fill="#1f1300"/>
-                            <path class="chicken-beak" d="M40 86 L30 90 L40 94 Z" fill="#f97316"/>
-                            <path d="M54 99 C54 106 62 106 62 99 Z" fill="#ef4444"/>
+                <svg viewBox="0 0 320 240" aria-hidden="true" focusable="false">
+                    <defs>
+                        <linearGradient id="farmSky" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stop-color="#1b2a55"/><stop offset="1" stop-color="#3a4d7a"/>
+                        </linearGradient>
+                        <radialGradient id="farmSunG" cx="50%" cy="50%" r="50%">
+                            <stop offset="0" stop-color="#fef3c7"/><stop offset="0.5" stop-color="#fcd34d"/>
+                            <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
+                        </radialGradient>
+                        <linearGradient id="farmHillG" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stop-color="#2c6149"/><stop offset="1" stop-color="#1f4a38"/>
+                        </linearGradient>
+                        <linearGradient id="farmGrassG" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stop-color="#2f6b3a"/><stop offset="1" stop-color="#1a4023"/>
+                        </linearGradient>
+                        <linearGradient id="farmPlumeG" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0" stop-color="#fde68a"/><stop offset="0.55" stop-color="#fbbf24"/>
+                            <stop offset="1" stop-color="#f59e0b"/>
+                        </linearGradient>
+                        <clipPath id="farmClip"><rect x="0" y="0" width="320" height="240" rx="18"/></clipPath>
+                    </defs>
+                    <rect x="0.5" y="0.5" width="319" height="239" rx="18" fill="url(#farmSky)" stroke="rgba(250,204,21,0.4)"/>
+                    <g clip-path="url(#farmClip)">
+                        <circle class="farm-sun" cx="258" cy="46" r="32" fill="url(#farmSunG)"/>
+                        <circle cx="258" cy="46" r="13" fill="#fde68a" opacity="0.92"/>
+                        <path d="M0 130 C42 102 74 98 106 122 C134 86 178 84 212 116 C240 94 284 102 320 126 L320 240 L0 240 Z" fill="url(#farmHillG)"/>
+                        <path d="M0 152 C70 142 132 154 192 148 C242 143 286 150 320 146 L320 240 L0 240 Z" fill="url(#farmGrassG)"/>
+                        <g stroke="#c8a165" stroke-width="2.4" stroke-linecap="round" opacity="0.85">
+                            <path d="M10 146 L10 163 M36 144 L36 161 M62 146 L62 163 M88 144 L88 161 M114 146 L114 163"/>
+                            <path d="M6 151 L118 148 M6 159 L118 156" stroke-width="1.7"/>
                         </g>
-                        <path d="M92 132 L92 146 M104 132 L104 146" stroke="#d97706" stroke-width="3" stroke-linecap="round"/>
+                        <g>
+                            <path d="M218 136 L218 110 L258 88 L298 110 L298 136 Z" fill="#8b5e3c"/>
+                            <path d="M212 112 L258 82 L304 112 Z" fill="#a97155"/>
+                            <rect x="228" y="118" width="15" height="14" rx="3" fill="#fde68a" opacity="0.55"/>
+                            <rect x="272" y="118" width="15" height="14" rx="3" fill="#fde68a" opacity="0.55"/>
+                            <rect x="250" y="114" width="18" height="22" rx="3" fill="#3b2416"/>
+                            <circle cx="264" cy="126" r="1.7" fill="#facc15"/>
+                        </g>
+                        <ellipse class="chicken-halo" cx="120" cy="186" rx="120" ry="34" fill="#facc15"/>
+                        <g>
+                            <path d="M205 198 C214 216 296 216 305 198 C292 192 218 192 205 198 Z" fill="#a9743f"/>
+                            {% for egg in [ {'x':232,'y':198,'r':-12}, {'x':250,'y':195,'r':0}, {'x':267,'y':199,'r':10}, {'x':283,'y':196,'r':-6} ] %}
+                            <path class="chicken-egg is-hidden" transform="translate({{ egg.x }},{{ egg.y }}) rotate({{ egg.r }})" d="M0 -9 C4 -9 7 -4 7 1 C7 6 4 9 0 9 C-4 9 -7 6 -7 1 C-7 -4 -4 -9 0 -9 Z" fill="#fef3c7" stroke="#e0a82e" stroke-width="1.2"/>
+                            {% endfor %}
+                            <path d="M203 198 C213 218 297 218 307 198 C300 205 278 210 255 210 C232 210 210 205 203 198 Z" fill="#8b5a2b"/>
+                            <g stroke="#6f4520" stroke-width="1.1" opacity="0.75" stroke-linecap="round">
+                                <path d="M214 204 L226 201 M240 207 L252 204 M266 207 L278 204 M292 204 L300 201"/>
+                            </g>
+                        </g>
+                        {% set flock = [ {'x':30,'s':0.84,'d':0.0}, {'x':66,'s':0.96,'d':0.35}, {'x':104,'s':0.80,'d':0.7}, {'x':140,'s':0.92,'d':1.05}, {'x':176,'s':0.78,'d':1.4} ] %}
+                        {% for c in flock %}
+                        <g class="farm-chicken" style="animation-delay:{{ '%.2f'|format(c.d) }}s">
+                            <g transform="translate({{ c.x }},184) scale({{ c.s }})">
+                                <path d="M-20 -14 C-27 -28 -20 -40 -6 -40 C-15 -30 -14 -20 -6 -12 Z" fill="#f59e0b"/>
+                                <ellipse cx="-2" cy="-15" rx="20" ry="13.5" fill="url(#farmPlumeG)"/>
+                                <ellipse cx="-2" cy="-9" rx="16" ry="7" fill="#f59e0b" opacity="0.32"/>
+                                <path d="M-12 -19 C0 -25 12 -19 15 -10 C6 -5 -6 -6 -13 -11 Z" fill="#f59e0b"/>
+                                <path d="M-6 -17 L6 -11 M-8 -14 L3 -8" stroke="#d97706" stroke-width="1.2" stroke-linecap="round" opacity="0.85"/>
+                                <path d="M-4 -1 L-4 -6 M3 -1 L3 -6" stroke="#b45309" stroke-width="2.4" stroke-linecap="round"/>
+                                <path d="M-7 -1 L-4 -1 L-1 -1 M0 -1 L3 -1 L6 -1" stroke="#b45309" stroke-width="1.8" stroke-linecap="round"/>
+                                <g class="chicken-peck" style="animation-delay:{{ '%.2f'|format(c.d * 1.7) }}s">
+                                    <path d="M-6 -40 C-9 -47 -2 -50 1 -44 C3 -51 12 -50 12 -42 Z" fill="#ef4444"/>
+                                    <circle cx="2" cy="-29" r="10" fill="#fcd34d"/>
+                                    <path d="M0 -19 C0 -13 7 -13 7 -19 Z" fill="#ef4444"/>
+                                    <path d="M-8 -30 L-21 -26 L-8 -22 Z" fill="#f97316"/>
+                                    <circle cx="-2" cy="-31" r="2.2" fill="#1f1300"/>
+                                    <circle cx="-2.7" cy="-31.9" r="0.9" fill="#ffffff" opacity="0.85"/>
+                                </g>
+                            </g>
+                        </g>
+                        {% endfor %}
+                        <g fill="#ffffff" opacity="0.5">
+                            <circle cx="40" cy="60" r="1.3"/><circle cx="150" cy="44" r="1.1"/><circle cx="196" cy="70" r="1.2"/>
+                        </g>
                     </g>
-                    <g>
-                        <path class="chicken-egg-drop" d="M96 74 C90 84 86 90 86 96 C86 103 90 108 96 108 C102 108 106 103 106 96 C106 90 102 84 96 74 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
-                        <path class="chicken-egg is-hidden" d="M70 120 C66 126 64 130 64 134 C64 139 67 142 70 142 C73 142 76 139 76 134 C76 130 74 126 70 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
-                        <path class="chicken-egg is-new is-hidden" d="M88 120 C84 126 82 130 82 134 C82 139 85 142 88 142 C91 142 94 139 94 134 C94 130 92 126 88 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
-                        <path class="chicken-egg is-hidden" d="M106 120 C102 126 100 130 100 134 C100 139 103 142 106 142 C109 142 112 139 112 134 C112 130 110 126 106 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
-                        <path class="chicken-egg is-hidden" d="M124 120 C120 126 118 130 118 134 C118 139 121 142 124 142 C127 142 130 139 130 134 C130 130 128 126 124 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
-                    </g>
-                    <ellipse cx="98" cy="148" rx="58" ry="9" fill="#fbbf24" opacity="0.16"/>
                 </svg>
                 <div class="chicken-caption" id="sceneCaption">Start a farm to see your chickens</div>
             </div>
