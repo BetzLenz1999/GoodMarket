@@ -850,9 +850,13 @@
         }
     }
 
-    // The hero hen reflects the REAL farm, never a decorative count: she rests
-    // and no eggs appear when there is no farm, turns gold at maturity, and the
-    // nest fills with the eggs actually ready to sell.
+    // The farm scene reflects the REAL contract, never a decorative count: one
+    // visible bird per chicken owned (capped at the drawn flock), the nest
+    // fills with the eggs actually ready to sell, and an empty pasture before
+    // the user starts. Eggs pop ONCE when the count grows — an endless trickle
+    // would imply eggs accrue in real time, but the contract pays 1/chicken/day.
+    var sceneEggsShown = null;
+
     function renderScene() {
         var scene = $("farmScene");
         if (!scene) return;
@@ -864,12 +868,26 @@
         scene.classList.toggle("is-idle", !active);
         scene.classList.toggle("is-mature", mature);
 
-        // The nest holds 3 eggs; the 4th slot is the fresh egg that pops out
-        // after a drop. Fill them in order so the count is readable at a glance.
-        var nestEggs = scene.querySelectorAll(".chicken-egg");
-        for (var i = 0; i < nestEggs.length; i++) {
-            nestEggs[i].classList.toggle("is-hidden", i >= eggsReady);
+        var flock = scene.querySelectorAll(".farm-chicken");
+        for (var i = 0; i < flock.length; i++) {
+            flock[i].classList.toggle("is-off", i >= chickens);
         }
+
+        var nestEggs = scene.querySelectorAll(".chicken-egg");
+        var grew = sceneEggsShown !== null && eggsReady > sceneEggsShown;
+        var newest = Math.min(eggsReady, nestEggs.length) - 1;
+        for (var j = 0; j < nestEggs.length; j++) {
+            var shown = j < eggsReady;
+            nestEggs[j].classList.toggle("is-hidden", !shown);
+            if (!shown) {
+                nestEggs[j].classList.remove("is-pop");
+            } else if (grew && j === newest) {
+                nestEggs[j].classList.remove("is-pop");
+                void nestEggs[j].offsetWidth;   // force a reflow so it re-triggers
+                nestEggs[j].classList.add("is-pop");
+            }
+        }
+        sceneEggsShown = eggsReady;
 
         var caption = $("sceneCaption");
         if (caption) {
