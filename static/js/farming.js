@@ -37,6 +37,11 @@
 
     var GD_DECIMALS = 18;
     var HISTORY = window.GMFarmHistory;
+    // Scope the history store to THIS wallet before anything reads it — a
+    // shared browser must never mix two accounts' farm transactions.
+    if (HISTORY && typeof HISTORY.setWallet === "function") {
+        HISTORY.setWallet(WALLET);
+    }
     var readProvider = null;
     var farmState = null;
     var tickTimer = null;
@@ -432,6 +437,35 @@
         })).then(renderHistory);
     }
 
+    // ── on-chain history (the durable, per-wallet source of truth) ──────────
+    //
+    // The browser-local list is a convenience cache; the CONTRACT holds the
+    // permanent record. The backend scans the farm events for the SESSION
+    // wallet and returns them, so clearing site data / switching device no
+    // longer loses old transactions — they are re-merged here on every load.
+    function loadOnchainHistory(opts) {
+        opts = opts || {};
+        var url = "/farming/api/history" + (opts.force ? "?force=1" : "");
+        return fetch(url, { credentials: "same-origin" })
+            .then(function (res) {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.json();
+            })
+            .then(function (data) {
+                var rows = (data && data.transactions) || [];
+                var result = HISTORY.mergeOnchain(rows);
+                renderHistory();
+                return result;
+            })
+            .catch(function (err) {
+                // Never fatal: the locally tracked rows are still shown.
+                if (typeof console !== "undefined" && console.warn) {
+                    console.warn("[farm] on-chain history unavailable:", err && err.message);
+                }
+                return { added: 0, updated: 0, error: true };
+            });
+    }
+
     // ── contract calls ──────────────────────────────────────────────────────
 
     function farmContract(signer) {
@@ -783,7 +817,7 @@
                     '<span class="tx-status ' + chipClass + '">' + chip + '</span></div>' +
                     '<div class="tx-meta">' +
                         (e.amountLabel ? '<span class="tx-amount">' + escapeHtml(e.amountLabel) + '</span>' : '') +
-                        '<span class="tx-time">' + HISTORY.formatTime(e.confirmedAt || e.createdAt) + '</span>' +
+                        '<span class="tx-time">' + escapeHtml(e.timeLabel || HISTORY.formatTime(e.confirmedAt || e.createdAt)) + '</span>' +
                     '</div>' +
                     receivedNote + errorNote +
                     '<div class="tx-foot">' + hashHtml + '</div>' +
@@ -957,7 +991,11 @@
         var refreshHistoryBtn = $("refreshHistoryBtn");
         if (refreshHistoryBtn) refreshHistoryBtn.addEventListener("click", function () {
             toast("Checking on-chain status of pending transactions…", "info");
-            reconcilePending().then(function () {
+            // Re-read the contract too, so transactions made on another device
+            // (or before the browser history was cleared) reappear here.
+            return loadOnchainHistory({ force: true }).then(function () {
+                return reconcilePending();
+            }).then(function () {
                 toast("Transaction history is up to date.", "success");
             });
         });
@@ -966,7 +1004,9 @@
 
         renderHistory();
         startTick();
-        reconcilePending().then(refreshFarm);
+        // Merge the contract's record first (durable, per-wallet), then settle
+        // any locally-tracked rows still awaiting a receipt.
+        loadOnchainHistory().then(reconcilePending).then(refreshFarm);
     }
 
     window.GMFarm = {
@@ -980,6 +1020,7 @@
         sumGdReceived: sumGdReceived,
         settleFromReceipt: settleFromReceipt,
         reconcilePending: reconcilePending,
+        loadOnchainHistory: loadOnchainHistory,
     };
 
     if (document.readyState === "loading") {
