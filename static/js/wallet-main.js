@@ -3,7 +3,6 @@
 const WALLET = window.GM_WALLET_BOOT.wallet;
     var LOGIN_METHOD = window.GM_WALLET_BOOT.loginMethod;
     const IS_PRIVY_LOGIN = (LOGIN_METHOD || '').toLowerCase() === 'privy';
-    const SERVER_PRIVY_WALLET_CLIENT_TYPE = window.GM_WALLET_BOOT.privyWalletClientType;
 
     // Configure the shared WalletConnect bridge so users that logged in via
     // WalletConnect (no `window.ethereum`) can still claim / send / sign with
@@ -931,9 +930,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return snapshot;
     };
 
-    function isMobile() {
-        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    }
     function fmt(n, decimals=4) {
         if (n === undefined || n === null) return '—';
         return Number(n).toLocaleString('en', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
@@ -3777,10 +3773,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const current = status.innerHTML || '';
             status.innerHTML = current ? `${current}<br>${safeMsg}` : safeMsg;
             if (color) status.style.color = color;
-        }
-
-        async function claimXdcServerSide() {
-            throw new Error('Server signing is disabled. Please use your injected wallet / WalletConnect.');
         }
 
         // Public XDC RPCs. Wallets that respect the rpcUrls list pick the
