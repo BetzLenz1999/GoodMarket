@@ -24,7 +24,6 @@
         .hero { border:1px solid rgba(250,204,21,0.28); border-radius:28px; padding:1.4rem 1.25rem; overflow:hidden; position:relative;
             background:linear-gradient(135deg,rgba(250,204,21,0.16),rgba(74,222,128,0.08) 55%,rgba(255,255,255,0.04));
             box-shadow:0 18px 60px rgba(0,0,0,0.35); }
-        .hero::after { content:'🐔'; position:absolute; right:0.8rem; top:0.2rem; font-size:5.5rem; opacity:0.18; pointer-events:none; }
         .hero h1 { font-size:clamp(1.9rem,6.4vw,3.4rem); line-height:1; margin:0.45rem 0; letter-spacing:-0.05em; }
         .hero .copy { color:var(--muted); line-height:1.6; max-width:640px; font-size:0.96rem; }
         .hero .copy strong { color:#fde68a; }
@@ -38,6 +37,42 @@
         .egg-rain span:nth-child(3){ left:64%; animation-delay:4.1s; }
         .egg-rain span:nth-child(4){ left:86%; animation-delay:1.4s; }
         @keyframes eggFall { 0%{transform:translateY(0) rotate(0);opacity:0} 12%{opacity:0.75} 88%{opacity:0.75} 100%{transform:translateY(340px) rotate(180deg);opacity:0} }
+
+        /* ── chicken scene (inline SVG, driven by the real farm state) ────
+           Every animated property is transform/opacity — animating
+           box-shadow or left/top repaints the whole box each frame. */
+        .hero-grid { display:grid; grid-template-columns:minmax(0,1fr) 230px; gap:1.1rem; align-items:center; }
+        .hero-copy { min-width:0; }
+        .hero-chicken { width:100%; max-width:230px; margin:0 auto; }
+        .hero-chicken svg { width:100%; height:auto; display:block; overflow:visible; }
+        .chicken-halo { opacity:0; transition:opacity 0.4s ease; }
+        .chicken-bird { transform-box:fill-box; transform-origin:50% 100%; animation:chickenBob 2.6s ease-in-out infinite; }
+        .chicken-head { transform-box:fill-box; transform-origin:16% 90%; animation:chickenPeck 6s ease-in-out infinite; }
+        .chicken-body, .chicken-wing, .chicken-comb, .chicken-beak { transition:fill 0.4s ease, opacity 0.4s ease; }
+        .chicken-egg { transition:opacity 0.4s ease, transform 0.4s ease; }
+        .chicken-egg.is-hidden { opacity:0; }
+        .chicken-egg.is-new { animation:eggPop 6s ease-in-out infinite; transform-box:fill-box; transform-origin:50% 100%; }
+        .chicken-egg-drop { transform-box:fill-box; transform-origin:50% 0%; animation:eggDrop 6s ease-in-out infinite; }
+        .chicken-caption { margin-top:0.5rem; text-align:center; font-size:0.74rem; font-weight:800; color:#fde68a; letter-spacing:0.02em; }
+        @keyframes chickenBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+        @keyframes chickenPeck { 0%,70%,100%{transform:rotate(0)} 76%{transform:rotate(20deg)} 83%{transform:rotate(-4deg)} 90%{transform:rotate(0)} }
+        @keyframes eggDrop { 0%,18%{opacity:0;transform:translateY(-36px)} 25%{opacity:1} 37%{opacity:1;transform:translateY(0)} 44%,100%{opacity:0;transform:translateY(0)} }
+        @keyframes eggPop { 0%,38%{transform:scale(0.5)} 48%,100%{transform:scale(1)} }
+        @keyframes haloPulse { 0%,100%{opacity:0.3} 50%{opacity:0.65} }
+
+        /* No farm yet: the hen rests, no eggs drop, plumage is muted. */
+        .hero-chicken.is-idle .chicken-bird { animation-duration:4.4s; }
+        .hero-chicken.is-idle .chicken-head,
+        .hero-chicken.is-idle .chicken-egg-drop,
+        .hero-chicken.is-idle .chicken-egg { animation:none; }
+        .hero-chicken.is-idle .chicken-egg-drop { opacity:0; }
+        .hero-chicken.is-idle .chicken-body,
+        .hero-chicken.is-idle .chicken-wing { fill:#94a3b8; }
+        .hero-chicken.is-idle .chicken-caption { color:var(--muted); }
+        /* Mature: the hen turns gold and gets a pulsing halo. */
+        .hero-chicken.is-mature .chicken-halo { opacity:0.5; animation:haloPulse 2.8s ease-in-out infinite; }
+        .hero-chicken.is-mature .chicken-body { fill:#fde68a; }
+        .hero-chicken.is-mature .chicken-wing { fill:#facc15; }
 
         /* ── panels ───────────────────────────────────────────────────── */
         .panel { margin-top:1rem; background:rgba(255,255,255,0.045); border:1px solid var(--border); border-radius:22px; padding:1.05rem; }
@@ -144,10 +179,12 @@
         .modal-card a { color:#fde68a; }
         .modal-card button { margin-top:1rem; width:100%; }
 
-        @media (max-width:720px) { .action-grid, .form-row, .projection { grid-template-columns:1fr; } .mini-stats { grid-template-columns:repeat(2,1fr); } }
+        @media (max-width:720px) { .action-grid, .form-row, .projection { grid-template-columns:1fr; } .mini-stats { grid-template-columns:repeat(2,1fr); } .hero-grid { grid-template-columns:1fr; } .hero-chicken { max-width:170px; } }
 
         @media (prefers-reduced-motion: reduce) {
             .egg-rain span { animation:none; opacity:0.25; }
+            .chicken-bird, .chicken-head, .chicken-egg-drop, .chicken-egg, .chicken-halo { animation:none; }
+            .chicken-egg-drop { opacity:0; }
             .progress-fill, .farm-toast { transition:none; }
             .modal-card { animation:none; }
         }
@@ -161,14 +198,45 @@
 
     <section class="hero">
         <div class="egg-rain" aria-hidden="true"><span>🥚</span><span>🥚</span><span>🐣</span><span>🥚</span></div>
-        <div class="kicker">Chicken-and-Egg Farming</div>
-        <h1>Grow your G$ farm</h1>
-        <p class="copy">Buy chickens with G$, collect eggs every day, and sell them for G$ whenever you like. When the {{ farming_config.farm_days }}-day cycle matures, close the farm to get your capital back <strong>plus</strong> the remaining egg rewards.</p>
-        <div class="hero-chips">
-            <span class="hero-chip">🐔 {{ farming_config.chicken_price_gd }} G$ = 1 chicken</span>
-            <span class="hero-chip">🥚 1 egg / chicken / day</span>
-            <span class="hero-chip">📈 up to {{ farming_config.monthly_profit_percent }}% profit</span>
-            <span class="hero-chip">🗓 {{ farming_config.farm_days }}-day cycle</span>
+        <div class="hero-grid">
+            <div class="hero-copy">
+                <div class="kicker">Chicken-and-Egg Farming</div>
+                <h1>Grow your G$ farm</h1>
+                <p class="copy">Buy chickens with G$, collect eggs every day, and sell them for G$ whenever you like. When the {{ farming_config.farm_days }}-day cycle matures, close the farm to get your capital back <strong>plus</strong> the remaining egg rewards.</p>
+                <div class="hero-chips">
+                    <span class="hero-chip">🐔 {{ farming_config.chicken_price_gd }} G$ = 1 chicken</span>
+                    <span class="hero-chip">🥚 1 egg / chicken / day</span>
+                    <span class="hero-chip">📈 up to {{ farming_config.monthly_profit_percent }}% profit</span>
+                    <span class="hero-chip">🗓 {{ farming_config.farm_days }}-day cycle</span>
+                </div>
+            </div>
+            <div class="hero-chicken is-idle" id="farmScene" role="img" aria-label="Your farm — start a farm to see your chickens">
+                <svg viewBox="0 0 220 180" aria-hidden="true" focusable="false">
+                    <ellipse class="chicken-halo" cx="110" cy="132" rx="86" ry="30" fill="#facc15"/>
+                    <g class="chicken-bird">
+                        <path d="M116 100 C110 78 116 64 132 60 C124 72 124 86 132 100 Z" fill="#f59e0b"/>
+                        <ellipse class="chicken-body" cx="96" cy="106" rx="40" ry="27" fill="#fbbf24"/>
+                        <path class="chicken-wing" d="M86 98 C102 92 116 98 120 108 C110 116 94 116 84 108 Z" fill="#f59e0b"/>
+                        <path class="chicken-comb" d="M50 78 C46 68 54 64 58 71 C60 63 70 64 70 72 Z" fill="#ef4444"/>
+                        <g class="chicken-head">
+                            <circle cx="56" cy="84" r="15" fill="#fcd34d"/>
+                            <circle cx="51" cy="81" r="2.4" fill="#1f1300"/>
+                            <path class="chicken-beak" d="M40 86 L30 90 L40 94 Z" fill="#f97316"/>
+                            <path d="M54 99 C54 106 62 106 62 99 Z" fill="#ef4444"/>
+                        </g>
+                        <path d="M92 132 L92 146 M104 132 L104 146" stroke="#d97706" stroke-width="3" stroke-linecap="round"/>
+                    </g>
+                    <g>
+                        <path class="chicken-egg-drop" d="M96 74 C90 84 86 90 86 96 C86 103 90 108 96 108 C102 108 106 103 106 96 C106 90 102 84 96 74 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+                        <path class="chicken-egg is-hidden" d="M70 120 C66 126 64 130 64 134 C64 139 67 142 70 142 C73 142 76 139 76 134 C76 130 74 126 70 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+                        <path class="chicken-egg is-new is-hidden" d="M88 120 C84 126 82 130 82 134 C82 139 85 142 88 142 C91 142 94 139 94 134 C94 130 92 126 88 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+                        <path class="chicken-egg is-hidden" d="M106 120 C102 126 100 130 100 134 C100 139 103 142 106 142 C109 142 112 139 112 134 C112 130 110 126 106 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+                        <path class="chicken-egg is-hidden" d="M124 120 C120 126 118 130 118 134 C118 139 121 142 124 142 C127 142 130 139 130 134 C130 130 128 126 124 120 Z" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+                    </g>
+                    <ellipse cx="98" cy="148" rx="58" ry="9" fill="#fbbf24" opacity="0.16"/>
+                </svg>
+                <div class="chicken-caption" id="sceneCaption">Start a farm to see your chickens</div>
+            </div>
         </div>
     </section>
 
