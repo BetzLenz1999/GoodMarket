@@ -56,15 +56,8 @@
 
         /* Mobile */
         @media (max-width: 768px) {
-            .hero-grid {
-                grid-template-columns: 1fr;
-                gap: 2rem;
-            }
             .hero-content {
                 text-align: center;
-            }
-            .hero-section {
-                padding: 1.5rem 1rem 2rem;
             }
             .hero-eyebrow {
                 margin-left: auto;
@@ -86,17 +79,6 @@
             margin: 0;
             padding: 0;
             position: relative;
-        }
-
-        /* Fixed network canvas background */
-        #networkCanvas {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 0;
-            pointer-events: none;
         }
 
         /* Radial center glow */
@@ -1111,11 +1093,6 @@
             50%       { text-shadow: 0 0 18px rgba(124, 58, 237, 0.45); }
         }
 
-        @keyframes disclaimerPulse {
-            0%, 100% { color: rgba(255,255,255,0.75); text-shadow: none; }
-            50%       { color: rgba(167, 139, 250, 1); text-shadow: 0 0 14px rgba(167, 139, 250, 0.6); }
-        }
-
         .submenu-wrapper {
             background: rgba(11, 15, 42, 0.95);
             border: 1px solid rgba(124, 58, 237, 0.25);
@@ -1358,18 +1335,7 @@
             border-color: #ede9fe;
         }
 
-        .dev-avatar {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 3px solid #7c3aed;
-            box-shadow: 0 4px 8px rgba(124,58,237,0.25);
-            margin-bottom: 1rem;
-        }
-
         .dev-name { font-size: 1.05rem; font-weight: 700; color: #1f2937; margin-bottom: 0.25rem; }
-        .dev-role { font-size: 0.85rem; color: #7c3aed; font-weight: 600; }
 
         /* Community links in Developers tab */
         .community-bar {
@@ -1526,11 +1492,6 @@
             }
             .hero-stat-card .stat-value { font-size: 1.5rem; }
 
-            .features-section {
-                padding: 2rem 1rem;
-                margin-top: 1.5rem;
-            }
-
             .features-grid {
                 grid-template-columns: 1fr;
                 gap: 1.25rem;
@@ -1621,10 +1582,6 @@
             .btn-primary, .btn-secondary {
                 padding: 0.5rem 1rem;
                 font-size: 0.85rem;
-            }
-
-            .features-section {
-                padding: 1.75rem 1rem;
             }
 
             h2 {
@@ -2137,17 +2094,6 @@
                 font-size: 1.25rem;
                 margin: 0 auto 3rem;
             }
-        }
-
-        @keyframes gradientBackground {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.1); opacity: 0.7; }
         }
 
         /* ── YouTube Video Carousel ── */
@@ -3022,10 +2968,10 @@
                 </button>
                 {% endif %}
                 <button id="walletConnectPrimaryButton" class="wallet-option-card" type="button" onclick="showWalletConnectOptions()">
-                    <div class="option-icon">💚</div>
+                    <div class="option-icon">📲</div>
                     <div class="option-text">
-                        <div class="option-title">Connect GoodWallet</div>
-                        <p class="option-desc">Already using GoodWallet for G$? Scan the QR or copy the URI link to connect it</p>
+                        <div class="option-title">WalletConnect QR / URI</div>
+                        <p class="option-desc">Scan a barcode or copy the URI link from your wallet app</p>
                     </div>
                     <span class="option-arrow">→</span>
                 </button>
@@ -4036,11 +3982,10 @@
             return out;
         }
 
-        // Exposes a one-tap diagnostic for the "wallet not detected" reports we
+        // Exposes a console diagnostic for the "wallet not detected" reports we
         // get from Trust Wallet users. Open the homepage inside the dApp
         // browser, then in the DevTools / remote console call
-        // `window._gmDebugDumpWallets()` (or tap the hidden long-press on the
-        // Get Started button) to see what the page actually sees.
+        // `window._gmDebugDumpWallets()` to see what the page actually sees.
         window._gmDebugDumpWallets = function _gmDebugDumpWallets() {
             const providers = getAllInjectedProviders();
             const info6963 = _eip6963Details().map(d => ({
@@ -4267,18 +4212,11 @@
             return isTrustWalletMobileContext() ? 12 : (isLikelyMobileWalletContext() ? 9 : 6);
         }
 
-        function _setWalletDetectionHelpVisible(visible) {
-            const help = document.getElementById('walletDetectionHelp');
-            if (!help) return;
-            help.style.display = visible ? 'block' : 'none';
-            if (!visible) hideWalletDebugInfo();
-        }
-
         // Pending retry timer for detectInjectedWallet. Stored at module
-        // scope so new detection cycles (e.g. modal re-open, refresh tap,
+        // scope so new detection cycles (e.g. modal re-open,
         // visibilitychange re-trigger) can cancel the in-flight retry chain
         // before starting their own — otherwise concurrent chains interleave
-        // and flicker the description text / help card at different depths.
+        // and flicker the description text at different depths.
         let _detectWalletTimerId = null;
         function detectInjectedWallet(_retryDepth) {
             // Cancel any pending retry from a previous chain so we never run
@@ -4321,10 +4259,6 @@
                     desc.textContent = 'Not detected — install MetaMask extension or use WalletConnect QR.';
                 }
                 btn.style.opacity = '0.78';
-                // Show the "wallet not detected?" helper after the first couple
-                // of retries so users who opened the modal fast aren't nagged
-                // with a failure card the instant it appears.
-                if (depth >= 2) _setWalletDetectionHelpVisible(true);
                 if (depth < maxDepth) {
                     _detectWalletTimerId = setTimeout(() => {
                         _detectWalletTimerId = null;
@@ -4338,7 +4272,6 @@
             if (icon) icon.textContent = getInjectedProviderIcon(provider);
             desc.textContent = `${name} detected — connect wallet, then approve signature to login`;
             btn.style.opacity = '1';
-            _setWalletDetectionHelpVisible(false);
         }
 
         // Aggressive EIP-6963 re-dispatch loop for mobile dApp contexts.
@@ -4406,81 +4339,6 @@
                 if (document.visibilityState === 'visible') retrigger();
             });
         })();
-
-        // Manual "Refresh detection" tap handler — re-runs the full discovery
-        // pipeline from depth 0 so users who waited for their wallet to
-        // inject can force a rescan.
-        function refreshWalletDetection() {
-            const btn = document.getElementById('walletDetectionRefreshBtn');
-            if (btn) {
-                const originalText = btn.textContent;
-                btn.disabled = true;
-                btn.textContent = '🔄 Scanning…';
-                setTimeout(() => {
-                    btn.disabled = false;
-                    btn.textContent = originalText;
-                }, 1500);
-            }
-            // Fire several EIP-6963 dispatches back-to-back, then re-run detection.
-            try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
-            setTimeout(() => { try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {} }, 150);
-            setTimeout(() => { try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {} }, 400);
-            setTimeout(() => detectInjectedWallet(0), 200);
-        }
-
-        function showWalletDebugInfo() {
-            const panel = document.getElementById('walletDebugPanel');
-            const out = document.getElementById('walletDebugOutput');
-            if (!panel || !out) return;
-            let snapshot;
-            try {
-                snapshot = window._gmDebugDumpWallets ? window._gmDebugDumpWallets() : { error: '_gmDebugDumpWallets not available' };
-            } catch (e) {
-                snapshot = { error: String((e && e.message) || e) };
-            }
-            try { out.value = JSON.stringify(snapshot, null, 2); }
-            catch (_) { out.value = String(snapshot); }
-            panel.style.display = 'block';
-        }
-
-        function hideWalletDebugInfo() {
-            const panel = document.getElementById('walletDebugPanel');
-            if (panel) panel.style.display = 'none';
-        }
-
-        function copyWalletDebugOutput() {
-            const out = document.getElementById('walletDebugOutput');
-            const btn = document.getElementById('walletDebugCopyBtn');
-            if (!out) return;
-            const text = out.value || '';
-            const done = (ok) => {
-                if (!btn) return;
-                const orig = btn.textContent;
-                btn.textContent = ok ? '✅ Copied' : '❌ Copy failed';
-                setTimeout(() => { btn.textContent = orig; }, 1800);
-            };
-            const fallback = () => {
-                try {
-                    out.focus();
-                    out.select();
-                    out.setSelectionRange(0, text.length);
-                    const ok = document.execCommand('copy');
-                    done(ok);
-                } catch (_) { done(false); }
-            };
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(() => done(true)).catch(fallback);
-            } else {
-                fallback();
-            }
-        }
-
-
-        function getPendingReferralCode() {
-            const fromLocal = ((document.getElementById('lwReferralCode') || {}).value || '').trim();
-            const saved = (sessionStorage.getItem('pending_referral_code') || '').trim();
-            return (fromLocal || saved || '').toUpperCase();
-        }
 
         function syncReferralInputs(sourceEl) {
             const value = (sourceEl && sourceEl.value ? sourceEl.value : '').trim().toUpperCase();
@@ -4945,22 +4803,6 @@
                     }
                 });
             }
-            
-            // Show instructions banner with auto-hide after 30 seconds
-            const banner = document.getElementById('wcInstructionsBanner');
-            const bannerCloseBtn = document.getElementById('wcBannerCloseBtn');
-            if (banner) {
-                banner.style.display = 'block';
-                let bannerTimeout;
-                
-                const hideBanner = function() {
-                    banner.style.display = 'none';
-                    if (bannerTimeout) clearTimeout(bannerTimeout);
-                };
-                
-                bannerCloseBtn.addEventListener('click', hideBanner);
-                bannerTimeout = setTimeout(hideBanner, 30000);
-            }
         }
 
         async function connectWalletConnect() {
@@ -5243,76 +5085,6 @@
             } catch (_) {}
         }
 
-
-        function showXDCForm() {
-            document.getElementById('walletOptions').style.display = 'none';
-            document.getElementById('walletForm').classList.remove('visible');
-            const xdcForm = document.getElementById('xdcWalletForm');
-            if (xdcForm) {
-                xdcForm.classList.add('visible');
-                setTimeout(() => { document.getElementById('xdcAddress').focus(); }, 100);
-            }
-        }
-
-        async function connectXDCWallet() {
-            const raw = document.getElementById('xdcAddress').value.trim();
-            const statusDiv = document.getElementById('xdcStatusMessage');
-            const btnText = document.getElementById('xdcConnectBtnText');
-            const connectBtn = btnText ? btnText.closest('button') : null;
-
-            function showXDCSt(msg, type) {
-                statusDiv.className = 'status-message ' + type;
-                statusDiv.textContent = msg;
-                statusDiv.style.display = 'block';
-            }
-
-            if (!raw) {
-                showXDCSt('Please enter your XDC wallet address', 'error');
-                return;
-            }
-
-            let addr = raw;
-            if (raw.toLowerCase().startsWith('xdc')) addr = '0x' + raw.slice(3);
-
-            if (!addr.startsWith('0x') || addr.length !== 42) {
-                showXDCSt('Invalid XDC address. Use 0x... or xdc... format.', 'error');
-                return;
-            }
-
-            if (btnText) btnText.textContent = 'Connecting...';
-            if (connectBtn) connectBtn.disabled = true;
-            showXDCSt('⏳ Connecting XDC wallet...', '');
-
-            try {
-                const response = await fetch('/verify-ubi', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        wallet: addr,
-                        referral_code: null,
-                        timestamp: new Date().toISOString(),
-                        user_agent: navigator.userAgent,
-                        track_analytics: true,
-                        network: 'xdc'
-                    })
-                });
-                const data = await response.json();
-
-                if (data.status === 'success' || data.success) {
-                    sessionStorage.setItem('wallet', data.wallet || addr);
-                    sessionStorage.setItem('verified', 'true');
-                    sessionStorage.setItem('network', 'xdc');
-                    showXDCSt('✅ XDC wallet connected! Redirecting...', 'success');
-                    setTimeout(() => { window.location.href = '/xdc-wallet'; }, 1400);
-                } else {
-                    throw new Error(data.message || 'Connection failed');
-                }
-            } catch (err) {
-                if (btnText) btnText.textContent = 'Connect XDC Wallet';
-                if (connectBtn) connectBtn.disabled = false;
-                showXDCSt('❌ ' + (err.message || 'Connection failed. Please try again.'), 'error');
-            }
-        }
 
         // Close modal when clicking outside
         document.getElementById('walletModal').addEventListener('click', function(e) {
