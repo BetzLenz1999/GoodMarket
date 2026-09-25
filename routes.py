@@ -449,8 +449,16 @@ def _parse_xdc_revert_message(raw_message: str, fallback_reason: str = "Transact
             "category": "fee_mismatch",
         },
         "0xc5426f8d": {
-            "label": "Bridge route is paused/closed",
-            "user_reason": "Bridge route is currently paused. Please retry later.",
+            # BRIDGE_LIMITS(string) wraps EVERY outbound policy rejection —
+            # 'closed', 'minAmount', 'txLimit', 'dailyLimit', 'not whitelisted',
+            # 'source disabled'. Labelling it as always "paused" sent users
+            # chasing a pause that was actually an amount/limit problem.
+            "label": "Bridge policy rejection (BRIDGE_LIMITS)",
+            "user_reason": (
+                "The bridge rejected this transfer under its current policy "
+                "(the route may be paused, or the amount may exceed a limit). "
+                "Check the bridge limits shown on the page, or retry later."
+            ),
             "category": "route_paused",
         },
         "0x92a27eac": {
