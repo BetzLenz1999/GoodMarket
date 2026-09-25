@@ -23,6 +23,19 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     const GD_TOKEN_ADDRESS = window.GM_WALLET_BOOT.gdTokenAddress;
     const GOODMARKET_RAFFLE_ADDRESS = window.GM_WALLET_BOOT.raffleContractAddress;
+
+    // GoodDollar Identity contract (Celo) — used by the Settings page
+    // "De-verify my account" action. renounceWhitelisted() is the on-chain
+    // kill-switch: it removes THIS wallet's whitelist entry, so it can no
+    // longer claim. The facial record itself lives with GoodDollar's identity
+    // service and is only removed by expiry (~180 days), which is why the
+    // confirmation copy must never promise "delete my data".
+    const IDENTITY_CONTRACT_ADDRESS = window.GM_WALLET_BOOT.identityContractAddress;
+    const IDENTITY_ABI = [
+        "function isWhitelisted(address _account) view returns (bool)",
+        "function renounceWhitelisted()",
+        "function paused() view returns (bool)",
+    ];
     const GOODMARKET_RAFFLE_ABI = [
         "function currentRoundId() view returns (uint256)",
         "function ENTRY_FEE() view returns (uint256)",
@@ -1339,6 +1352,173 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
     }
 
+    // ── Face Verification: de-verify (Settings) ──────────────────────
+    // Removes THIS wallet's whitelist entry via renounceWhitelisted() on the
+    // GoodDollar Identity contract. The browser signs, so the server never
+    // needs a key; /api/fv/renounce only CONFIRMS the on-chain result before
+    // the 30-minute identity cache is dropped.
+    function openFvDeVerifyModal() {
+        if (!IDENTITY_CONTRACT_ADDRESS) {
+            _fvDeVerifyAlert('Face verification is not configured on this deployment, so it cannot be removed here.');
+            return;
+        }
+        const btn = document.getElementById('fvDeVerifyConfirmBtn');
+        if (btn) { btn.disabled = false; btn.textContent = 'Yes, de-verify'; }
+        const stale = document.getElementById('fvDeVerifyAlert');
+        if (stale) stale.remove();
+        const note = document.getElementById('fvDeVerifyNote');
+        if (note) note.style.display = 'none';
+        // Opened directly rather than through openModal(): the shared helper
+        // closes every other open overlay, which would dismiss Settings — the
+        // confirmation sheet is meant to sit ON TOP of it so Cancel returns the
+        // user to the card they came from. Same pattern as lwUnlockModal.
+        document.getElementById('fvDeVerifyModal').classList.add('open');
+        document.body.style.overflow = 'hidden';
+        document.body.classList.add('gm-modal-open');
+    }
+    window.openFvDeVerifyModal = openFvDeVerifyModal;
+
+    function _fvDeVerifyAlert(message, isError) {
+        const modal = document.getElementById('fvDeVerifyModal');
+        if (!modal) return;
+        let el = document.getElementById('fvDeVerifyAlert');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'fvDeVerifyAlert';
+            el.style.cssText = 'margin-top:0.6rem;font-size:0.8rem;line-height:1.5;border-radius:10px;padding:0.6rem 0.75rem;';
+            const footer = modal.querySelector('.modal-sheet-footer');
+            if (footer) footer.parentNode.insertBefore(el, footer);
+            else modal.querySelector('.modal-sheet').appendChild(el);
+        }
+        el.style.background = isError ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.12)';
+        el.style.border = isError ? '1px solid rgba(248,113,113,0.3)' : '1px solid rgba(52,211,153,0.32)';
+        el.style.color = isError ? '#fca5a5' : '#6ee7b7';
+        el.textContent = message;
+    }
+
+    // Signer routing mirrors getRaffleSignerProvider(): local in-app wallet is
+    // PIN-unlocked and used exclusively (an injected MetaMask is a DIFFERENT
+    // account), WalletConnect signs through its session, otherwise injected
+    // providers are bound to the session wallet's account.
+    async function _fvResolveSigner() {
+        await _fvEnsureEthers();
+        const localLogin = (LOGIN_METHOD || '').toLowerCase() === 'local';
+        if (localLogin && typeof GMLocalWallet !== 'undefined') {
+            if (!GMLocalWallet.isUnlocked() && typeof _lwUnlockIfNeeded === 'function') {
+                await _lwUnlockIfNeeded();
+            }
+            const localProvider = GMLocalWallet.getProvider();
+            // The provider pointer may still sit on XDC after an XDC flow in
+            // this same page — the Identity contract is Celo-only.
+            await localProvider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: '0xa4ec' }]
+            }).catch(function () { /* the address check below still gates */ });
+            const browserProvider = new ethers.BrowserProvider(localProvider);
+            const signer = await browserProvider.getSigner();
+            const addr = await signer.getAddress();
+            if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+                throw new Error('Wrong wallet unlocked. Please use your GoodMarket wallet.');
+            }
+            return signer;
+        }
+        let ep = null;
+        if (IS_PRIVY_LOGIN) {
+            ep = await _walletGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
+        }
+        if (!ep && _gmPreferWc()) {
+            ep = await _walletGetWcProviderIfPreferred();
+        }
+        if (!ep) ep = await _vAwaitEthProvider();
+        if (!ep) throw new Error('No wallet detected. Please connect your GoodMarket wallet via MetaMask, Trust Wallet, or WalletConnect.');
+        await _aiSwapEnsureCeloChain(ep);
+        const browserProvider = new ethers.BrowserProvider(ep);
+        const signer = await browserProvider.getSigner();
+        const addr = await signer.getAddress();
+        if ((addr || '').toLowerCase() !== (WALLET || '').toLowerCase()) {
+            throw new Error('Wrong wallet connected. Please use your GoodMarket wallet.');
+        }
+        return signer;
+    }
+
+    async function _fvEnsureEthers() {
+        if (window.ethers) return;
+        for (let i = 0; i < 20 && !window.ethers; i++) {
+            await new Promise(r => setTimeout(r, 150));
+        }
+        if (!window.ethers) throw new Error('Wallet library is still loading. Please try again in a moment.');
+    }
+
+    async function confirmFvDeVerify() {
+        const btn = document.getElementById('fvDeVerifyConfirmBtn');
+        try {
+            if (!IDENTITY_CONTRACT_ADDRESS) throw new Error('Face verification is not configured on this deployment.');
+            if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+
+            const signer = await _fvResolveSigner();
+            const identity = new ethers.Contract(IDENTITY_CONTRACT_ADDRESS, IDENTITY_ABI, signer);
+
+            // Refuse before asking for a signature when the contract is paused:
+            // renounceWhitelisted() would revert and cost the user a pointless
+            // failed transaction.
+            try {
+                const isPaused = await identity.paused();
+                if (isPaused) {
+                    throw new Error('Face verification is paused by GoodDollar right now. Please try again later.');
+                }
+            } catch (pauseErr) {
+                if (pauseErr && /paused by GoodDollar/i.test(pauseErr.message || '')) throw pauseErr;
+                // A read failure must not block the user — fall through.
+            }
+
+            if (btn) btn.textContent = 'Confirm in your wallet…';
+            const tx = await identity.renounceWhitelisted();
+            if (btn) btn.textContent = 'Confirming on-chain…';
+            await tx.wait();
+
+            // Server confirms the on-chain result and clears the verification
+            // caches; without this the cards stay green for up to 30 minutes.
+            const resp = await fetch('/api/fv/renounce', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ tx_hash: tx.hash })
+            });
+            const data = await resp.json().catch(function () { return {}; });
+            if (!resp.ok || !data.success) {
+                throw new Error(data.message || 'The de-verification could not be confirmed. Please refresh and check your status.');
+            }
+
+            // Close only the confirmation sheet: Settings stays open behind it
+            // so the user sees the card flip to Unverified and the note below
+            // the button, in the same place they started.
+            closeModal('fvDeVerifyModal');
+            // Flip the page out of the verified state immediately: the claim
+            // orb must go back to "Verify to start earning".
+            window._walletNeedsFV = true;
+            window._walletFvReason = 'not_verified';
+            if (typeof window._triggerReVerify === 'function') window._triggerReVerify();
+            if (typeof fetchEntitlement === 'function') fetchEntitlement(true);
+            const note = document.getElementById('fvDeVerifyNote');
+            if (note) {
+                note.textContent = '✅ Verification removed. You will no longer receive daily G$. You can verify again later with this same wallet.';
+                note.style.display = '';
+            }
+            loadFvStatus(true);
+        } catch (err) {
+            const msg = (err && err.message) || 'De-verification failed.';
+            // The user rejecting the signature is not an error worth alarming over.
+            if (err && (err.code === 4001 || err.code === 'ACTION_REJECTED')) {
+                _fvDeVerifyAlert('You cancelled the request — your account is still verified.', false);
+            } else {
+                _fvDeVerifyAlert(msg, true);
+            }
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Yes, de-verify'; }
+        }
+    }
+    window.confirmFvDeVerify = confirmFvDeVerify;
+
     // ── Face Verification onboarding (unverified users) ──────────────
     // The claim hero is the only route to face verification, so it must lead
     // an unverified user somewhere that explains WHY (KYC / one account per
@@ -1466,6 +1646,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             ctaLbl.textContent = ctaText;
         } else {
             cta.style.display = 'none';
+        }
+
+        // De-verify is offered only to a wallet that is actually verified. An
+        // unverified/expired/error card has nothing to renounce, and offering
+        // it during 'renewal' (whitelist already gone) would be a no-op tx.
+        const deverifyBtn = document.getElementById('fvDeVerifyBtn');
+        if (deverifyBtn) {
+            deverifyBtn.style.display = (state === 'verified' || state === 'warning') ? '' : 'none';
         }
 
         // Top-of-page banner: only show in 'warning', 'expired', or 'renewal' states.
