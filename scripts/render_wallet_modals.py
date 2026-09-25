@@ -17,7 +17,7 @@ def _stub_url_for(endpoint, **values):
 
 
 MODALS = ["sendModal", "gcashModal", "settingsModal", "referralModal",
-          "dailyTaskModal", "streamModal", "receiveModal", "claimModal"]
+          "dailyTaskModal", "streamModal", "receiveModal", "claimModal", "fvIntroModal"]
 
 env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=True)
 env.globals["url_for"] = _stub_url_for
