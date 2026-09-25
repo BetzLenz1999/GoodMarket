@@ -5197,6 +5197,12 @@
             // (e.g. "minAmount", "txLimit", "dailyLimit"). The earlier
             // `bool`-only ABI was wrong and silently swallowed the reason.
             "function canBridge(address from, uint256 amount) view returns (bool, string)",
+            // Owner/guardian kill-switch. When true every outbound bridgeTo
+            // reverts BRIDGE_LIMITS('closed'). Read so the tab can pre-disable
+            // instead of letting the user reach a guaranteed revert. This is
+            // live on-chain state (GoodDollar flips it via pauseBridge), NOT a
+            // deploy-time constant — it clears itself the moment they reopen.
+            "function isClosed() view returns (bool)",
             // (uint128 dailyLimit, uint128 txLimit, uint128 accountDailyLimit, uint64 minAmount, bool onlyWhitelisted)
             "function bridgeLimits() view returns (uint128, uint128, uint128, uint64, bool)",
             // (uint128 minFee, uint128 maxFee, uint128 feeBPS) — feeBPS is in basis points (1 bps = 0.01%)
@@ -5256,6 +5262,18 @@
         // amounts and to display correct net G$ on XDC.
         let _celoBridgeLimitsCache = null; // { dailyLimit, txLimit, accountDailyLimit, minAmount } as bigint G$ wei
         let _celoBridgeFeesCache  = null;  // { minFee, maxFee, feeBPS } as bigint G$ wei + bps
+        // Live pause state of the bridge contract on Celo. null = not read yet.
+        // Deliberately read fresh each visit and NOT persisted, so GoodDollar
+        // reopening the route restores bridging with no deploy on our side.
+        let _celoBridgeClosedCache = null;
+
+        // Single source of truth for the wording used whenever the bridge
+        // contract's owner/guardian has paused the route. Mirrors the
+        // BRIDGE_LIMITS('closed') custom error surfaced by the contract.
+        const CELO_BRIDGE_PAUSED_REASON =
+            'The GoodDollar bridge is temporarily paused by the GoodDollar team. ' +
+            'Bridging is unavailable until they re-open it — no funds are at risk. ' +
+            'Please try again later.';
 
         function _formatBridgeAmountCelo(value, symbol = 'G$') {
             const num = Number(value || 0);
@@ -5385,14 +5403,18 @@
             // GoodDollar docs at the top-level page don't reproduce them, so
             // we read them straight from the source of truth on Celo mainnet.
             if (_celoBridgeLimitsCache && _celoBridgeFeesCache) {
+                _applyCeloBridgePausedState();
                 return { limits: _celoBridgeLimitsCache, fees: _celoBridgeFeesCache };
             }
             try {
                 const provider = new ethers.JsonRpcProvider(CELO_RPC);
                 const bridge = new ethers.Contract(CELO_TO_XDC_BRIDGE_CONTRACT, CELO_TO_XDC_BRIDGE_ABI, provider);
-                const [limits, fees] = await Promise.all([
+                const [limits, fees, closed] = await Promise.all([
                     bridge.bridgeLimits(),
-                    bridge.bridgeFees()
+                    bridge.bridgeFees(),
+                    // Soft-fail: a flaky RPC must not hard-block a working
+                    // bridge. canBridge() at click time is still the gate.
+                    bridge.isClosed().catch(() => false)
                 ]);
                 _celoBridgeLimitsCache = {
                     dailyLimit:        BigInt(limits[0]),
@@ -5406,10 +5428,48 @@
                     maxFee: BigInt(fees[1]),
                     feeBPS: BigInt(fees[2])
                 };
+                _celoBridgeClosedCache = Boolean(closed);
+                _applyCeloBridgePausedState();
                 return { limits: _celoBridgeLimitsCache, fees: _celoBridgeFeesCache };
             } catch (err) {
                 console.warn('[bridge celo→xdc] failed to load on-chain limits/fees', err);
                 return { limits: null, fees: null };
+            }
+        }
+
+        // Reflects the bridge contract's live pause state on the Celo → XDC
+        // controls. Called on every limits refresh so the tab self-heals when
+        // GoodDollar re-opens the route (no redeploy needed on our side).
+        // Tracks the last applied value so a refresh triggered mid-flow (e.g.
+        // the post-bridge balance reload) can't clobber the in-flight spinner
+        // label the click handler owns.
+        let _celoBridgePausedApplied = null;
+
+        function _applyCeloBridgePausedState() {
+            const paused = _celoBridgeClosedCache === true;
+            const btn = document.getElementById('btnBridgeCeloToXdc');
+            const estimateBtn = document.getElementById('btnBridgeEstimateFeeCeloToXdc');
+            const amountInput = document.getElementById('bridgeAmountCeloToXdc');
+            const alertEl = document.getElementById('bridgeAlertCeloToXdc');
+
+            const alertShowsPause = Boolean(alertEl && alertEl.textContent.includes('temporarily paused'));
+            if (_celoBridgePausedApplied === paused && (paused === alertShowsPause)) return;
+            _celoBridgePausedApplied = paused;
+
+            if (btn) {
+                btn.disabled = paused;
+                btn.innerHTML = paused ? 'Bridge temporarily paused' : 'Bridge to XDC';
+                btn.title = paused ? CELO_BRIDGE_PAUSED_REASON : '';
+            }
+            if (estimateBtn) estimateBtn.disabled = paused;
+            if (amountInput) amountInput.disabled = paused;
+
+            if (paused && alertEl) {
+                showCeloBridgeAlert('alert-error', '⏸️ ' + CELO_BRIDGE_PAUSED_REASON);
+            } else if (!paused && alertEl && alertShowsPause) {
+                // Route reopened — clear the pause banner we own so a stale
+                // "paused" message never outlives the actual state.
+                clearCeloBridgeAlert();
             }
         }
 
@@ -5753,7 +5813,14 @@
                 if (!isAllowed) {
                     let friendly = 'Bridge preflight failed (canBridge=false). Lower the amount or retry later.';
                     const reason = reasonRaw.toLowerCase();
-                    if (reason === 'minamount' && _celoBridgeLimitsCache) {
+                    if (reason === 'closed') {
+                        // Owner/guardian pause: not an amount problem, not
+                        // something the user can work around. Say so plainly
+                        // instead of "lower the amount".
+                        _celoBridgeClosedCache = true;
+                        _applyCeloBridgePausedState();
+                        friendly = CELO_BRIDGE_PAUSED_REASON;
+                    } else if (reason === 'minamount' && _celoBridgeLimitsCache) {
                         const minG = Number(ethers.formatUnits(_celoBridgeLimitsCache.minAmount, 18));
                         friendly = `Minimum bridge amount is ${minG.toLocaleString(undefined,{maximumFractionDigits:2})} G$.`;
                     } else if (reason === 'txlimit' && _celoBridgeLimitsCache) {
@@ -6101,6 +6168,47 @@
             }
         }
 
+        // Destination-side pause/fee preflight for XDC → Celo.
+        //
+        // The bridge enforces its limits on the *minting* (destination) side:
+        // MessagePassingBridge._bridgeFrom -> _enforceLimits -> canBridge on
+        // CELO. `_bridgeTo` on XDC is only gated by XDC's OWN isClosed flag.
+        // So when GoodDollar pauses on Celo but not XDC, the source check
+        // passes, XDC burns the user's G$, the LayerZero message is relayed,
+        // and Celo rejects it with BRIDGE_LIMITS('closed') — leaving the G$
+        // burnt and the transfer stuck in LayerZero's stored-message queue
+        // until GoodDollar reopens and a retry succeeds. Checking the Celo
+        // destination BEFORE burning is what prevents that.
+        //
+        // Returns { blocked: bool, reason: string }. Fails OPEN (blocked=false)
+        // when Celo can't be read, so an RPC hiccup never wedges the tab.
+        const CELO_DEST_BRIDGE_ABI = [
+            "function canBridge(address from, uint256 amount) view returns (bool, string)",
+            "function isClosed() view returns (bool)"
+        ];
+        const CELO_DEST_READ_RPCS = [CELO_RPC].concat(
+            ['https://forno.celo.org', 'https://rpc.ankr.com/celo', 'https://celo-rpc.publicnode.com']
+        );
+
+        async function _checkCeloDestinationBridge(toAddr, amountWei) {
+            for (const url of CELO_DEST_READ_RPCS) {
+                try {
+                    const p = new ethers.JsonRpcProvider(url);
+                    const dest = new ethers.Contract(CELO_TO_XDC_BRIDGE_CONTRACT, CELO_DEST_BRIDGE_ABI, p);
+                    const [closed, can] = await Promise.all([
+                        dest.isClosed(),
+                        dest.canBridge(toAddr, amountWei)
+                    ]);
+                    if (closed) return { blocked: true, reason: 'closed' };
+                    const allowed = Array.isArray(can) ? Boolean(can[0]) : Boolean(can);
+                    const reason = Array.isArray(can) ? String(can[1] || '') : '';
+                    if (!allowed) return { blocked: true, reason: reason || 'rejected' };
+                    return { blocked: false, reason: '' };
+                } catch (_) { /* try the next Celo RPC */ }
+            }
+            return { blocked: false, reason: '' }; // unreadable → fail open
+        }
+
         async function _xdcReadProvider() {
             const ep = (typeof _getEthProvider === "function") ? _getEthProvider() : null;
             if (ep) {
@@ -6416,7 +6524,7 @@
                             '0x10ecdf44': 'Bridge fee is likely below current route requirement. Refresh fee and retry with a slightly higher XDC fee.',
                             '0x92a27eac': 'Bridge fee is lower than current LayerZero requirement. Increase fee and retry.',
                             '0x2e9394cc': 'Bridge fee was missing/too low for this route attempt. Increase bridge fee and retry.',
-                            '0xc5426f8d': 'Bridge route appears paused/closed right now. Retry later.',
+                            '0xc5426f8d': 'The bridge rejected this transfer under its current policy — the route may be paused, or the amount may exceed a limit. Check the bridge limits on the page, or retry later.',
                             '0x068a5053': 'Selected target chain appears unsupported by the route right now.',
                             '0x2c863d26': 'Token transferFrom failed. Check G$ allowance and balance.',
                             '0x76420e1d': 'Token transfer failed. Check token and bridge route state.'
@@ -6520,6 +6628,27 @@
                     const limitMessage = limitErr?.message || String(limitErr || '');
                     if (limitMessage.toLowerCase().includes('returned false')) throw limitErr;
                     throw new Error('Could not verify bridge limits on source bridge. Please retry in a moment.');
+                }
+
+                // Destination (Celo) gate — see _checkCeloDestinationBridge.
+                // Must run BEFORE any approve/burn so a paused Celo route can
+                // never burn the user's XDC G$.
+                const destCheck = await _checkCeloDestinationBridge(toAddr, amountWei);
+                if (destCheck.blocked) {
+                    const destReason = String(destCheck.reason || '').toLowerCase();
+                    let destMsg = 'The Celo destination bridge is not accepting this transfer right now. Please try again later.';
+                    if (destReason === 'closed') {
+                        destMsg = CELO_BRIDGE_PAUSED_REASON;
+                    } else if (destReason === 'minamount') {
+                        destMsg = `Amount is below the bridge minimum on the Celo side (${XDC_TO_CELO_UI_MIN_AMOUNT_GD.toLocaleString()} G$).`;
+                    } else if (destReason === 'txlimit') {
+                        destMsg = 'Amount exceeds the on-chain per-transaction limit on the Celo side.';
+                    } else if (destReason.includes('daily')) {
+                        destMsg = 'The Celo bridge daily limit has been reached. Please try again later.';
+                    } else if (destReason.includes('whitelist')) {
+                        destMsg = 'This wallet is not whitelisted on the bridge yet.';
+                    }
+                    throw new Error(destMsg);
                 }
 
                 let ep = null;
