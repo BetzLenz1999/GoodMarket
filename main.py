@@ -73,6 +73,16 @@ app.secret_key = os.environ.get('SESSION_SECRET') or os.environ.get('SECRET_KEY'
 compress = Compress()
 compress.init_app(app)
 
+# Translation engine (i18n.py). Translators edit ONE file (translations.py);
+# this hook swaps the finished HTML of every page for the language picked in
+# /wallet. Registered before the compression hook below so it operates on the
+# uncompressed body. English is a zero-cost pass-through.
+try:
+    import i18n
+    i18n.init_app(app)
+except Exception as _i18n_err:
+    logger.warning(f"i18n engine not installed: {_i18n_err}")
+
 # Configure session for better persistence
 from datetime import timedelta
 from env_utils import get_env_int
