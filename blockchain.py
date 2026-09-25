@@ -1075,6 +1075,20 @@ def invalidate_fv_expiry_cache(wallet_address: str | None = None) -> None:
             _fv_expiry_cache.clear()
 
 
+def invalidate_identity_cache(wallet_address: str | None = None) -> None:
+    """Drop cached is_identity_verified results (for a wallet, or all if None).
+
+    IDENTITY_CACHE_TTL is 30 minutes, so without this a wallet that just
+    renounced its whitelist entry would keep reading as verified — the claim
+    gate, the voucher gate and the Settings card would all stay green.
+    """
+    with _identity_cache_lock:
+        if wallet_address:
+            _identity_cache.pop(wallet_address.lower(), None)
+        else:
+            _identity_cache.clear()
+
+
 _entitlement_cache: dict = {}
 _entitlement_cache_lock = threading.Lock()
 ENTITLEMENT_CACHE_TTL = 180  # 3 minutes — short enough to reflect claim/status changes
