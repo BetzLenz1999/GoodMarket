@@ -2007,6 +2007,40 @@
                 animation: none !important;
             }
         }
+
+        /* ── Face Verification de-verify (Settings) ── */
+        /* Muted, low-emphasis secondary action — deliberately quieter than the
+           purple "Verify Now" CTA so it cannot be mistaken for the primary path.
+           The 0.6 border alpha is not cosmetic: at 0.3 the boundary measured
+           1.60:1 against the dark canvas, below the 3:1 WCAG 1.4.11 floor for
+           identifying a control. The 0.08 fill stays subtle. */
+        .fv-deverify-btn {
+            display: block;
+            width: 100%;
+            margin-top: 0.5rem;
+            padding: 0.55rem 0.8rem;
+            border-radius: 10px;
+            border: 1px solid rgba(248,113,113,0.6);
+            background: rgba(248,113,113,0.08);
+            color: #fca5a5;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .fv-deverify-btn:hover { background: rgba(248,113,113,0.16); }
+        .fv-deverify-btn:focus-visible { outline: 2px solid #fca5a5; outline-offset: 2px; }
+        .fv-deverify-btn[disabled] { opacity: 0.6; cursor: default; }
+        /* Success note shown in the Settings card after a completed renounce. */
+        .fv-deverify-note {
+            margin-top: 0.6rem;
+            padding: 0.6rem 0.75rem;
+            border-radius: 10px;
+            font-size: 0.78rem;
+            line-height: 1.5;
+            background: rgba(52,211,153,0.12);
+            border: 1px solid rgba(52,211,153,0.45);
+            color: #6ee7b7;
+        }
     </style>
 </head>
 <body>
@@ -2720,6 +2754,10 @@
                     <button type="button" id="fvStatusCta" onclick="handleFvReverifyClick()" style="display:none;margin-top:0.75rem;width:100%;padding:0.6rem 0.8rem;border-radius:10px;border:1px solid rgba(124,58,237,0.45);background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:600;cursor:pointer;">
                         🪪 <span id="fvStatusCtaLabel">Verify Now</span>
                     </button>
+                    <button type="button" id="fvDeVerifyBtn" onclick="openFvDeVerifyModal()" class="fv-deverify-btn" style="display:none;">
+                        De-verify my account
+                    </button>
+                    <div id="fvDeVerifyNote" class="fv-deverify-note" style="display:none;"></div>
                 </div>
             </div>
 
@@ -2736,6 +2774,58 @@
             </div>
 
             <button class="btn-secondary" style="margin-top:0.5rem;" onclick="closeModal('settingsModal')">Close</button>
+        </div>
+    </div>
+
+    <!-- De-verify Face Verification confirmation.
+         DOM-ordered AFTER settingsModal because all overlays share z-index
+         200 and stack by DOM order — an earlier position would open it
+         invisibly behind Settings ("dead button"). -->
+    <div class="modal-overlay" id="fvDeVerifyModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">🪪 De-verify my account</div>
+
+            <div class="fv-intro-lead">
+                This removes your face-verification status from this wallet on the
+                GoodDollar Identity contract. It cannot be undone from here, but you can
+                verify again later with this same wallet.
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">You will stop receiving daily G$</div>
+                <div class="fv-intro-card-copy">
+                    Daily G$, the daily voucher, and GoodMarket's earning features are for
+                    verified humans only. Once de-verified, <strong>this wallet cannot claim
+                    them</strong> until you verify again.
+                </div>
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">Your facial record is kept</div>
+                <div class="fv-intro-card-copy">
+                    This only removes the verification status on-chain. Your <strong>anonymized
+                    facial record stays with the GoodDollar identity service</strong> and is
+                    deleted automatically after the verification period (currently
+                    <strong>180 days</strong>). This action does not delete it.
+                </div>
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">Useful before selling or giving away a wallet</div>
+                <div class="fv-intro-card-copy">
+                    De-verifying first stops an unused wallet from holding a verification slot
+                    that belongs to your face. Verifying again with your face is always possible
+                    on this wallet.
+                </div>
+            </div>
+
+            <div class="modal-sheet-footer">
+                <button type="button" id="fvDeVerifyConfirmBtn" onclick="confirmFvDeVerify()" class="btn-danger" style="width:100%;padding:0.8rem;border-radius:14px;font-weight:600;">
+                    Yes, de-verify
+                </button>
+                <button type="button" class="btn-secondary" onclick="closeModal('fvDeVerifyModal')">Cancel</button>
+            </div>
         </div>
     </div>
 
@@ -3059,7 +3149,8 @@
                 <div class="fv-intro-card-title">🔒 Your privacy</div>
                 <div class="fv-intro-card-copy">
                     Verification creates an <strong>anonymized record</strong>. GoodMarket never sees or stores
-                    your face, photos or ID documents, and the record can be deleted later if you choose.
+                    your face, photos or ID documents. The record is held by the GoodDollar identity service
+                    and is deleted automatically after the verification period (currently <strong>180 days</strong>).
                 </div>
             </div>
 
@@ -3217,7 +3308,8 @@
         "celoGdTokenContract": {{ celo_gd_token_contract|default('', true)|tojson }},
         "xdcGdTokenContract": {{ xdc_gd_token_contract|default('', true)|tojson }},
         "xdcChainId": {{ xdc_chain_id|default(50, true)|tojson }},
-        "celoChainId": {{ celo_chain_id|default(42220, true)|tojson }}
+        "celoChainId": {{ celo_chain_id|default(42220, true)|tojson }},
+        "identityContractAddress": {{ identity_contract_address|default('', true)|tojson }}
     };
     </script>
     <script src="{{ url_for('static', filename='js/wallet-main.js', v=ASSET_VERSION) }}"></script>
