@@ -1962,6 +1962,36 @@
         .bn-sheet-item .bn-sheet-circle { background: rgba(255,255,255,0.07); border-color: var(--card-border); }
         .bn-sheet-item .bn-sheet-name { color: var(--text-dim); }
 
+        /* ── Face Verification intro modal ──
+           First-visit explainer for unverified users (KYC + one-account rule).
+           Uses only theme vars so it follows the dark canvas and cannot drift
+           below AA via a hardcoded literal. */
+        .fv-intro-lead {
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+        }
+        .fv-intro-card {
+            background: var(--card-soft);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 0.75rem 0.9rem;
+            margin-bottom: 0.65rem;
+        }
+        .fv-intro-card-title {
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: var(--accent-secondary);
+            margin-bottom: 0.3rem;
+        }
+        .fv-intro-card-copy {
+            font-size: 0.8rem;
+            line-height: 1.55;
+            color: var(--text-dim);
+        }
+        .fv-intro-card-copy strong { color: var(--text); }
+
         /* ── Reduced motion ──
            Honour the OS-level setting: stop all decorative infinite loops
            (spinners tied to in-flight work keep spinning so users still get
@@ -2282,18 +2312,21 @@
     </div>
 
     <!-- UBI Claim Hero (center) -->
+    <!-- The orb/CTA route through openClaimOrVerify(): an unverified wallet
+         opens the face-verification intro (KYC + one-account-per-person
+         explainer) instead of jumping straight into the claim sheet. -->
     <div class="ubi-hero">
         <div class="ubi-hero-orb" id="ubiClaimHero" role="button" tabindex="0"
-             onclick="openModal('claimModal');"
-             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('claimModal');}">
+             onclick="openClaimOrVerify();"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClaimOrVerify();}">
             <div class="ubi-hero-eyebrow" id="heroClaimEyebrow">Claimable UBI</div>
             <div class="ubi-hero-amount" id="heroClaimAmount">— <span class="unit">G$</span></div>
             <div class="ubi-hero-sub" id="heroClaimSub">Loading…</div>
             <div class="ubi-hero-timer" id="heroClaimTimer"></div>
         </div>
         <div class="ubi-hero-cta" id="heroClaimCta" role="button" tabindex="0"
-             onclick="openModal('claimModal');"
-             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('claimModal');}">Claim UBI G$</div>
+             onclick="openClaimOrVerify();"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClaimOrVerify();}">Claim UBI G$</div>
     </div>
     </section>
 
@@ -2985,6 +3018,63 @@
 
             <div class="modal-sheet-footer">
                 <button class="btn-secondary" onclick="closeModal('dailyTaskModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Face Verification Intro — shown the FIRST time an unverified user taps
+         the claim hero. Explains why verification is required (GoodDollar's
+         KYC / one-account-per-person) and what the user unlocks after
+         verifying, then hands off to the existing signing flow via
+         continueFvIntro() -> startFV(). -->
+    <div class="modal-overlay" id="fvIntroModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">🪪 Verify your account to start earning</div>
+
+            <div class="fv-intro-lead">
+                Daily G$ and GoodMarket's earning features are for verified humans only.
+                Verifying takes about a minute and keeps the shared G$ pool fair for everyone.
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">🔍 What this verification is (KYC)</div>
+                <div class="fv-intro-card-copy">
+                    This step is a <strong>Know Your Customer (KYC)</strong> check — it confirms you are a real,
+                    unique person. It is performed by the <strong>GoodDollar identity service</strong>,
+                    not by GoodMarket.
+                </div>
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">👤 One person, one account</div>
+                <div class="fv-intro-card-copy">
+                    Your verified face can be linked to <strong>one account only</strong>. A wallet verified for
+                    one person cannot be reused to run multiple accounts — this is how we prevent abuse of the
+                    daily G$ pool.
+                </div>
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">🔒 Your privacy</div>
+                <div class="fv-intro-card-copy">
+                    Verification creates an <strong>anonymized record</strong>. GoodMarket never sees or stores
+                    your face, photos or ID documents, and the record can be deleted later if you choose.
+                </div>
+            </div>
+
+            <div class="fv-intro-card">
+                <div class="fv-intro-card-title">💰 After you verify</div>
+                <div class="fv-intro-card-copy">
+                    You can <strong>claim your daily G$</strong> and use GoodMarket's earning features right away.
+                </div>
+            </div>
+
+            <div class="modal-sheet-footer">
+                <button type="button" id="fvIntroContinueBtn" onclick="continueFvIntro()" class="btn-primary">
+                    Continue
+                </button>
+                <button type="button" class="btn-secondary" onclick="closeModal('fvIntroModal')">Not now</button>
             </div>
         </div>
     </div>
