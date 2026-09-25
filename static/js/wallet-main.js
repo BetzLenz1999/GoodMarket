@@ -1339,6 +1339,44 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
     }
 
+    // ── Face Verification onboarding (unverified users) ──────────────
+    // The claim hero is the only route to face verification, so it must lead
+    // an unverified user somewhere that explains WHY (KYC / one account per
+    // person) and what they unlock — not straight into a claim sheet that
+    // cannot pay out yet. Verified / already-claimed users keep the plain
+    // claim modal.
+    function _fvNeedsOnboarding() {
+        // _walletNeedsFV is maintained by fetchEntitlement / _triggerReVerify
+        // and the ?fv_required=1 bounce. When the availability probe has not
+        // answered yet, default to the claim modal so the existing modal copy
+        // ("Checking entitlement…") still drives the flow.
+        if (window._walletNeedsFV !== true) return false;
+        // Re-verification (an expired whitelist entry on a wallet that was
+        // verified before) skips the intro — the user already saw the KYC /
+        // one-account explainer on their first pass, and the Settings card
+        // plus expiry banner already tell them what is happening. Only a
+        // never-verified wallet is educated here.
+        return window._walletFvReason !== 're_verification_needed';
+    }
+
+    function openClaimOrVerify() {
+        if (_fvNeedsOnboarding()) {
+            openModal('fvIntroModal');
+            return;
+        }
+        openModal('claimModal');
+    }
+
+    function continueFvIntro() {
+        closeModal('fvIntroModal');
+        openModal('claimModal');
+        if (typeof window._fvBeginOnboarding === 'function') {
+            window._fvBeginOnboarding();
+        }
+    }
+    window.openClaimOrVerify = openClaimOrVerify;
+    window.continueFvIntro = continueFvIntro;
+
     function renderFvStatus(d) {
         _fvStatusState = d || {};
         const pill    = document.getElementById('fvStatusPill');
@@ -4447,6 +4485,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 claims.celo.is_verified === false
             );
 
+            // Keep the module-level flag in sync so the top-level hero
+            // dispatcher (openClaimOrVerify) can route to the FV intro using
+            // the same condition that chose the hero copy above.
+            window._walletNeedsFV = !!needsVerification;
+            window._walletFvReason = needsVerification ? (claims.celo && claims.celo.reason) || 'not_verified' : null;
+
             // Check if any network has claimable balance
             const hasClaimable = totalClaimable > 0 && !needsVerification;
 
@@ -4455,10 +4499,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             heroTimer.textContent = '';
 
             if (needsVerification) {
-                heroEyebrow.textContent = 'Face verification';
+                heroEyebrow.textContent = 'Verify to start earning';
                 heroAmount.innerHTML = '🪪';
-                heroSub.textContent = 'Tap to start face verification';
-                heroCta.textContent = 'Verify Face ID';
+                heroSub.textContent = 'Tap to verify your account so you can start earning money';
+                heroCta.textContent = 'Verify my account';
                 hero.classList.add('is-disabled');
             } else if (hasClaimable) {
                 const formattedAmount = totalClaimable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -6436,6 +6480,16 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 history.replaceState(null, '', window.location.pathname);
             }
         })();
+
+        // Entry point for the face-verification intro modal (top-level
+        // openClaimOrVerify/continueFvIntro live outside this IIFE). The intro
+        // is only a wrapper around the existing signing flow — it owns no
+        // signing logic of its own.
+        window._fvBeginOnboarding = function() {
+            needsVerification = true;
+            window._walletNeedsFV = true;
+            startFV();
+        };
 
         // Init
         if (btn) { btn.disabled = true; label.textContent = 'Checking entitlement…'; icon.textContent = '⏳'; }
