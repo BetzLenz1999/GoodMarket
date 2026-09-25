@@ -7386,6 +7386,129 @@ def fv_status():
         }), 500
 
 
+@routes.route("/api/fv/renounce", methods=["POST"])
+@auth_required
+def fv_renounce():
+    """Confirm a face-verification renounce and drop the stale verification caches.
+
+    The browser signs `renounceWhitelisted()` on the GoodDollar Identity
+    contract itself, so this endpoint moves no funds and needs no key. Its job
+    is to prove the renounce actually landed before the server stops treating
+    the wallet as verified — otherwise a client could claim "de-verified" and
+    the 30-minute identity cache would keep the claim/voucher gates green.
+
+    Verification is state-based (the tx succeeded, came from the session
+    wallet, targeted the Identity contract, and the wallet is no longer
+    whitelisted) rather than purely event-based, so it stays correct across
+    Identity contract revisions that may emit a different event shape.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        tx_hash = (data.get("tx_hash") or "").strip()
+        wallet = session.get("wallet")
+
+        if not re.match(r"^0x[a-fA-F0-9]{64}$", tx_hash):
+            return jsonify({"success": False, "error": "invalid_tx_hash"}), 400
+        if not wallet:
+            return jsonify({"success": False, "error": "not_authenticated"}), 401
+
+        from web3 import Web3
+        import blockchain as _bc
+
+        identity_address = _bc.GOODDOLLAR_CONTRACTS.get("IDENTITY")
+        if not identity_address:
+            return jsonify({"success": False, "error": "identity_contract_not_configured"}), 500
+
+        w3 = Web3(Web3.HTTPProvider(_bc.CELO_RPC, request_kwargs={"timeout": 10}))
+
+        # The wallet has just broadcast the tx, so the receipt may not exist
+        # yet. Poll briefly instead of rejecting a legitimate renounce.
+        receipt = None
+        for attempt in range(6):
+            try:
+                receipt = w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is not None:
+                    break
+            except Exception:
+                pass
+            if attempt < 5:
+                time.sleep(2)
+
+        if receipt is None:
+            return jsonify({
+                "success": False,
+                "error": "receipt_pending",
+                "message": "The transaction is still confirming. Please try again in a moment.",
+            }), 409
+
+        if int(receipt.get("status", 0)) != 1:
+            return jsonify({
+                "success": False,
+                "error": "tx_failed",
+                "message": "The de-verification transaction failed on-chain.",
+            }), 400
+
+        tx_from = (receipt.get("from") or "").lower()
+        tx_to = (receipt.get("to") or "").lower()
+        if tx_from != wallet.lower():
+            return jsonify({"success": False, "error": "wallet_mismatch"}), 403
+        if tx_to != identity_address.lower():
+            return jsonify({"success": False, "error": "wrong_contract"}), 400
+
+        # Corroborate with the WhitelistedRemoved(address) event when present.
+        whitelisted_removed_topic = "0x270d9b30cf5b0793bbfd54c9d5b94aeb49462b8148399000265144a8722da6b6"
+        wallet_topic = "0x" + wallet.lower().replace("0x", "").rjust(64, "0")
+        event_seen = False
+        for log in receipt.get("logs", []) or []:
+            topics = log.get("topics") or []
+            if not topics:
+                continue
+            topic0 = topics[0].hex() if hasattr(topics[0], "hex") else str(topics[0])
+            if topic0.lower() != whitelisted_removed_topic:
+                continue
+            if len(topics) < 2:
+                continue
+            topic1 = topics[1].hex() if hasattr(topics[1], "hex") else str(topics[1])
+            if topic1.lower() == wallet_topic.lower():
+                event_seen = True
+                break
+
+        # Authoritative end state: the wallet must no longer be whitelisted.
+        still_whitelisted = None
+        try:
+            from blockchain import is_identity_verified, invalidate_identity_cache, invalidate_fv_expiry_cache
+            invalidate_identity_cache(wallet)
+            invalidate_fv_expiry_cache(wallet)
+            still_whitelisted = bool(is_identity_verified(wallet).get("verified"))
+        except Exception as state_err:
+            logger.warning(f"FV renounce state re-check failed: {state_err}")
+
+        if still_whitelisted:
+            return jsonify({
+                "success": False,
+                "error": "still_whitelisted",
+                "message": "This wallet is still face-verified on-chain. The de-verification did not take effect.",
+            }), 400
+
+        try:
+            from blockchain import invalidate_entitlement_cache
+            invalidate_entitlement_cache(wallet)
+        except Exception:
+            pass
+
+        logger.info(f"🪪 FV renounce confirmed for {wallet[:8]}… (tx {tx_hash[:12]}…, event_seen={event_seen})")
+        return jsonify({
+            "success": True,
+            "tx_hash": tx_hash,
+            "event_seen": event_seen,
+            "verified": False,
+        })
+
+    except Exception as e:
+        logger.error(f"FV renounce error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @routes.route("/daily-task")
 def daily_task_page():
     """Daily Task page - standalone page for completing daily tasks"""
@@ -7483,6 +7606,7 @@ def wallet_page():
         xdc_gd_token_contract=os.getenv("XDC_GD_TOKEN_CONTRACT", "0xEC2136843a983885AebF2feB3931F73A8eBEe50c"),
         xdc_chain_id=get_env_int("XDC_MAINNET_CHAIN_ID", 50),
         celo_chain_id=get_env_int("CELO_MAINNET_CHAIN_ID", 42220),
+        identity_contract_address=GOODDOLLAR_CONTRACTS.get("IDENTITY", ""),
     )
 
 
