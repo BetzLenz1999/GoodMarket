@@ -1224,6 +1224,50 @@
                 : [WXDC_ADDRESS, XDC_GD_TOKEN];
         }
 
+        // Destination-side pause/fee preflight for XDC → Celo.
+        //
+        // Limits are enforced on the minting (destination) side —
+        // MessagePassingBridge._bridgeFrom -> _enforceLimits -> canBridge on
+        // CELO — while `_bridgeTo` on XDC is gated only by XDC's own isClosed.
+        // So a Celo-side pause still lets the XDC source check pass, burns the
+        // user's G$, and then leaves the relayed message stored/undeliverable
+        // until GoodDollar reopens. Checking Celo BEFORE burning prevents it.
+        //
+        // Fails OPEN (blocked=false) when Celo is unreadable so an RPC hiccup
+        // never wedges the bridge.
+        const CELO_DEST_BRIDGE_ABI = [
+            "function canBridge(address from, uint256 amount) view returns (bool, string)",
+            "function isClosed() view returns (bool)"
+        ];
+        const CELO_DEST_READ_RPCS = [
+            'https://forno.celo.org',
+            'https://rpc.ankr.com/celo',
+            'https://celo-rpc.publicnode.com'
+        ];
+        const XDC_BRIDGE_PAUSED_REASON =
+            'The GoodDollar bridge is temporarily paused by the GoodDollar team. ' +
+            'Bridging is unavailable until they re-open it — no funds are at risk. ' +
+            'Please try again later.';
+
+        async function _checkCeloDestinationBridge(toAddr, amountWei) {
+            for (const url of CELO_DEST_READ_RPCS) {
+                try {
+                    const p = new ethers.JsonRpcProvider(url);
+                    const dest = new ethers.Contract(XDC_CELO_BRIDGE, CELO_DEST_BRIDGE_ABI, p);
+                    const [closed, can] = await Promise.all([
+                        dest.isClosed(),
+                        dest.canBridge(toAddr, amountWei)
+                    ]);
+                    if (closed) return { blocked: true, reason: 'closed' };
+                    const allowed = Array.isArray(can) ? Boolean(can[0]) : Boolean(can);
+                    const reason = Array.isArray(can) ? String(can[1] || '') : '';
+                    if (!allowed) return { blocked: true, reason: reason || 'rejected' };
+                    return { blocked: false, reason: '' };
+                } catch (_) { /* try the next Celo RPC */ }
+            }
+            return { blocked: false, reason: '' }; // unreadable → fail open
+        }
+
         async function _xswapReadProvider() {
             // Read-only XDC calls (allowance, balanceOf, getAmountsOut …) must go to
             // an XDC JSON-RPC endpoint directly.  Wrapping the WalletConnect bridge in
@@ -1480,7 +1524,7 @@
                             '0x10ecdf44': 'Bridge fee is likely below current route requirement (this is usually not an XDC wallet-balance issue). Refresh fee and retry with a slightly higher XDC fee.',
                             '0x92a27eac': 'Bridge fee is lower than current LayerZero requirement (wallet balance may still be sufficient). Increase fee and retry.',
                             '0x2e9394cc': 'Bridge fee was missing/too low for this route attempt. Increase bridge fee and retry.',
-                            '0xc5426f8d': 'Bridge route appears paused/closed right now. Retry later.',
+                            '0xc5426f8d': 'The bridge rejected this transfer under its current policy — the route may be paused, or the amount may exceed a limit. Check the bridge limits on the page, or retry later.',
                             '0x068a5053': 'Selected target chain appears unsupported by the route right now.',
                             '0x2c863d26': 'Token transferFrom failed. Check G$ allowance and balance.',
                             '0x76420e1d': 'Token transfer failed. Check token and bridge route state.',
@@ -1699,6 +1743,26 @@
                         throw limitErr;
                     }
                     throw new Error('Could not verify bridge limits on source bridge. Please retry in a moment.');
+                }
+
+                // Destination (Celo) gate — must run BEFORE any approve/burn so
+                // a paused Celo route can never burn the user's XDC G$.
+                const destCheck = await _checkCeloDestinationBridge(toAddr, amountWei);
+                if (destCheck.blocked) {
+                    const destReason = String(destCheck.reason || '').toLowerCase();
+                    let destMsg = 'The Celo destination bridge is not accepting this transfer right now. Please try again later.';
+                    if (destReason === 'closed') {
+                        destMsg = XDC_BRIDGE_PAUSED_REASON;
+                    } else if (destReason === 'minamount') {
+                        destMsg = `Amount is below the bridge minimum on the Celo side (${XDC_TO_CELO_UI_MIN_AMOUNT_GD.toLocaleString()} G$).`;
+                    } else if (destReason === 'txlimit') {
+                        destMsg = 'Amount exceeds the on-chain per-transaction limit on the Celo side.';
+                    } else if (destReason.includes('daily')) {
+                        destMsg = 'The Celo bridge daily limit has been reached. Please try again later.';
+                    } else if (destReason.includes('whitelist')) {
+                        destMsg = 'This wallet is not whitelisted on the bridge yet.';
+                    }
+                    throw new Error(destMsg);
                 }
 
                 let ep = null;
