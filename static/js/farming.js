@@ -47,6 +47,16 @@
     var tickTimer = null;
     var busy = false;
 
+    // The farm state is polled so an active farm shows up on its own — waiting
+    // for a manual Refresh tap made users think their farm had not registered.
+    // 15s is a read-only public-RPC eth_call, cheap enough to keep the page
+    // honest without hammering the node.
+    var POLL_MS = 15000;
+    var HISTORY_EVERY_TICKS = 4;   // reconcile the on-chain history every ~60s
+    var pollTimer = null;
+    var pollTicks = 0;
+    var refreshing = null;   // promise while a read is in flight
+
     // getFarm() returns the full farm state, so the per-field view helpers
     // (pendingEggs / pendingEggValue / maxMonthlyProfit) are not declared here.
     var FARM_ABI = [
@@ -490,6 +500,46 @@
         el.className = "status" + (type ? " " + type : "");
     }
 
+    // The status text this module last wrote. A background poll may only
+    // replace a status we own — never the result of an action the user just
+    // signed, or an error they still need to read.
+    var lastAutoStatus = null;
+
+    function statusOwnedByUs() {
+        if (lastAutoStatus === null) return false;
+        var el = $("farmStatus");
+        return Boolean(el) && el.textContent === lastAutoStatus;
+    }
+
+    function farmStatusMessage() {
+        if (!farmState) return { text: "", type: "" };
+        if (!farmState.active) {
+            return { text: "No active farm yet. Start one above to begin earning egg rewards.", type: "" };
+        }
+        if (farmState.pool < farmState.eggValue) {
+            var shortage = farmState.eggValue - farmState.pool;
+            return {
+                text: "Active farm (" + HISTORY.formatWei(farmState.principal) + " G$). The reward pool is short by " +
+                    HISTORY.formatWei(shortage) + " G$ — sell/close is disabled until an admin funds it.",
+                type: "error",
+            };
+        }
+        return {
+            text: "Active farm: " + HISTORY.formatWei(farmState.principal) + " G$ principal, " +
+                farmState.chickens.toString() + " chickens. " +
+                (farmState.mature ? "Mature — ready to close." : "Still growing."),
+            type: farmState.active ? "ok" : "",
+        };
+    }
+
+    function applyFarmStatus(silent) {
+        if (silent && !statusOwnedByUs()) return;
+        var msg = farmStatusMessage();
+        if (!msg.text) return;
+        setStatus(msg.text, msg.type);
+        lastAutoStatus = msg.text;
+    }
+
     function setProgress(step, total) {
         var bar = $("txProgress");
         if (!bar) return;
@@ -539,7 +589,7 @@
     function blockReason(action) {
         if (!FARMING_CONTRACT) return "The farming contract is not configured yet. Please try again later.";
         if (busy) return "Please wait for the current transaction to finish.";
-        if (!farmState || !farmState.active) return "No active farm found. Tap Refresh status first.";
+        if (!farmState || !farmState.active) return "No active farm found yet. Please wait a moment for your farm to load.";
         if (action === "close" && !farmState.mature) return "This farm is still growing and cannot be closed yet.";
         // A matured farm whose profit was already sold off still closes — the
         // contract returns the principal with a 0 final profit. Only selling
@@ -946,17 +996,28 @@
         renderScene();
     }
 
-    function refreshFarm() {
+    function refreshFarm(opts) {
+        opts = opts || {};
+        var silent = Boolean(opts.silent);
+        // A background poll that is still running when the user taps Refresh
+        // must not swallow the tap: join the in-flight read and then re-read,
+        // so the explicit request always observes a fresh value.
+        if (refreshing) {
+            if (silent) return refreshing;
+            return refreshing.then(function () { return refreshFarm(opts); });
+        }
         if (!FARMING_CONTRACT) {
-            setStatus("The farming contract is not configured yet. Please try again later.", "error");
+            if (!silent) setStatus("The farming contract is not configured yet. Please try again later.", "error");
             return Promise.resolve();
         }
         var reader = getReadProvider();
         if (!reader) {
-            setStatus("Could not reach the Celo network. Please check your connection.", "error");
+            if (!silent) setStatus("Could not reach the Celo network. Please check your connection.", "error");
             return Promise.resolve();
         }
         var farm = farmContract(reader);
+        var done;
+        refreshing = new Promise(function (resolve) { done = resolve; });
         return farm.getFarm(WALLET).then(function (result) {
             return farm.rewardPool().then(function (pool) {
                 farmState = {
@@ -973,21 +1034,19 @@
                 };
                 renderFarm();
                 updateActionState();
-                if (!farmState.active) {
-                    setStatus("No active farm yet. Start one above to begin earning egg rewards.", "");
-                } else if (farmState.pool < farmState.eggValue) {
-                    var shortage = farmState.eggValue - farmState.pool;
-                    setStatus("Active farm (" + HISTORY.formatWei(farmState.principal) + " G$). The reward pool is short by " +
-                        HISTORY.formatWei(shortage) + " G$ — sell/close is disabled until an admin funds it.", "error");
-                } else {
-                    setStatus("Active farm: " + HISTORY.formatWei(farmState.principal) + " G$ principal, " +
-                        farmState.chickens.toString() + " chickens. " +
-                        (farmState.mature ? "Mature — ready to close." : "Still growing."), farmState.active ? "ok" : "");
-                }
+                // A background poll may only replace a status this module
+                // owns; it must never overwrite the outcome of the action the
+                // user just signed, or an error they still need to read.
+                applyFarmStatus(silent);
                 return farmState;
             });
         }).catch(function (err) {
-            setStatus("Could not load farm status. " + _errMessage(err), "error");
+            if (!silent) setStatus("Could not load farm status. " + _errMessage(err), "error");
+            return farmState;
+        }).then(function (result) {
+            refreshing = null;
+            done(result);
+            return result;
         });
     }
 
@@ -998,6 +1057,38 @@
         tickTimer = setInterval(function () {
             if (farmState && farmState.active) renderFarm();
         }, 1000);
+    }
+
+    // Background refresh: the farm state (and periodically the on-chain
+    // history) is re-read on its own so an active farm is visible the moment
+    // the page opens and stays current without a manual Refresh tap. Skipped
+    // while a transaction is in flight (busy) so the poll can't fight the
+    // action's own state, and skipped while the tab is hidden so a phone left
+    // in the background isn't making RPC calls all night.
+    function pollOnce() {
+        if (busy || refreshing) return Promise.resolve();
+        if (typeof document !== "undefined" && document.hidden) return Promise.resolve();
+        pollTicks += 1;
+        var tasks = [refreshFarm({ silent: true })];
+        if (pollTicks % HISTORY_EVERY_TICKS === 0) {
+            // Not forced: the backend caches the log scan for ~60s, so a poll
+            // that lands on a warm cache is a cheap no-op. The explicit "Check
+            // on-chain status" button is what forces a fresh scan.
+            tasks.push(loadOnchainHistory().then(reconcilePending));
+        }
+        return Promise.all(tasks);
+    }
+
+    function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(pollOnce, POLL_MS);
+    }
+
+    // Returning to the tab (or the window regaining focus) should feel instant:
+    // refresh right away instead of waiting out the rest of the interval.
+    function onVisible() {
+        if (typeof document !== "undefined" && document.hidden) return;
+        pollOnce();
     }
 
     function init() {
@@ -1055,11 +1146,20 @@
         var closeModalBtn = $("closeSuccessClose");
         if (closeModalBtn) closeModalBtn.addEventListener("click", closeCloseModal);
 
+        // Auto-refresh: returning to the tab refreshes immediately, and the
+        // interval keeps the farm state (and history) current from then on.
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+
         renderHistory();
         startTick();
-        // Merge the contract's record first (durable, per-wallet), then settle
-        // any locally-tracked rows still awaiting a receipt.
-        loadOnchainHistory().then(reconcilePending).then(refreshFarm);
+        startPolling();
+        // Read the farm FIRST so an active farm is visible on load. The
+        // on-chain history scan is the slow part (it walks contract logs), so
+        // chaining it ahead of the state read is what forced users to tap
+        // Refresh — they saw "no active farm" until the scan finished.
+        refreshFarm();
+        loadOnchainHistory().then(reconcilePending);
     }
 
     window.GMFarm = {
