@@ -3108,6 +3108,19 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         'function bridgeTo(address target, uint256 targetChainId, uint256 amount, uint8 bridge) payable',
         'function canBridge(address from, uint256 amount) view returns (bool)'
     ];
+    // Destination-side (Celo) guard for XDC → Celo. Limits/pause are enforced
+    // on the minting side, so an XDC-only source check lets a Celo-side pause
+    // burn the user's G$ and strand the relayed message.
+    const AI_CELO_DEST_CANBRIDGE_ABI = [
+        'function canBridge(address from, uint256 amount) view returns (bool, string)',
+        'function isClosed() view returns (bool)'
+    ];
+    // Owner/guardian pause switch on the bridge contract (shared by both
+    // directions). Live on-chain state — clears itself when GoodDollar reopens.
+    const AI_BRIDGE_PAUSED_REASON =
+        'The GoodDollar bridge is temporarily paused by the GoodDollar team. ' +
+        'Bridging is unavailable until they re-open it — no funds are at risk. ' +
+        'Please try again later.';
     const AI_XSWAP_ROUTER = '0xf9c5E4f6E627201aB2d6FB6391239738Cf4bDcf9';
     const AI_XSWAP_WXDC   = '0x951857744785E80e2De051c32EE7b25f9c458C42';
     const AI_XSWAP_ROUTER_ABI = [
@@ -3355,10 +3368,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 const can = await bridgeRead.canBridge(WALLET, amountWei);
                 if (can && can[0] === false) {
                     const reason = (can[1] || '').trim();
+                    // 'closed' is the contract owner's pause switch — not an
+                    // amount problem, and not something the user can retry
+                    // around. Say what it actually is.
+                    if (reason.toLowerCase() === 'closed') throw new Error(AI_BRIDGE_PAUSED_REASON);
                     throw new Error('Bridge route rejected this transfer' + (reason ? ' (' + reason + ')' : '') + '. Try a different amount or retry later.');
                 }
             } catch (limitErr) {
-                if (limitErr && /rejected this transfer/i.test(String(limitErr.message || ''))) throw limitErr;
+                if (limitErr && (/rejected this transfer/i.test(String(limitErr.message || '')) || /temporarily paused/i.test(String(limitErr.message || '')))) throw limitErr;
                 // contract read failed — let the wallet-side simulation be the gate
             }
             const allowance = await gdRead.allowance(WALLET, AI_BRIDGE_CONTRACT);
@@ -3405,6 +3422,25 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (can === false) throw new Error('Bridge route rejected this transfer (canBridge=false). Try a different amount or retry later.');
             } catch (limitErr) {
                 if (limitErr && /canBridge=false/i.test(String(limitErr.message || ''))) throw limitErr;
+            }
+            // Destination (Celo) gate — must run BEFORE the XDC burn. See
+            // AI_CELO_DEST_CANBRIDGE_ABI. Reads a public Celo RPC, never the
+            // wallet, so this never pops a prompt.
+            try {
+                const celoRead = new ethers.JsonRpcProvider(AI_SWAP_CELO_RPC);
+                const destBridge = new ethers.Contract(AI_BRIDGE_CONTRACT, AI_CELO_DEST_CANBRIDGE_ABI, celoRead);
+                const [destClosed, destCan] = await Promise.all([
+                    destBridge.isClosed(),
+                    destBridge.canBridge(WALLET, amountWei)
+                ]);
+                if (destClosed) throw new Error(AI_BRIDGE_PAUSED_REASON);
+                if (destCan && destCan[0] === false) {
+                    const destReason = (destCan[1] || '').trim();
+                    throw new Error('The Celo destination bridge is not accepting this transfer right now' + (destReason ? ' (' + destReason + ')' : '') + '. Try a different amount or retry later.');
+                }
+            } catch (destErr) {
+                if (destErr && (/temporarily paused/i.test(String(destErr.message || '')) || /destination bridge is not accepting/i.test(String(destErr.message || '')))) throw destErr;
+                // Celo unreadable — fail open; the relay/mint is still the final gate.
             }
             const allowance = await gdRead.allowance(WALLET, AI_BRIDGE_CONTRACT);
             if (allowance < amountWei) {
