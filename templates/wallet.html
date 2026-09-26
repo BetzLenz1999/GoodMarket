@@ -1131,19 +1131,43 @@
             text-align: center;
         }
 
-        .ubi-pool-row {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            
+        .ubi-pool-panel {
             border: 1px solid rgba(var(--accent-rgb),0.24);
-            border-radius: 10px;
-            padding: 0.55rem 1rem;
+            border-radius: 12px;
+            padding: 0.7rem 0.85rem;
             margin-bottom: 1rem;
         }
-        .ubi-pool-label { font-size: 0.72rem; color: var(--text-muted); }
-        .ubi-pool-value { font-size: 0.9rem; font-weight: 700;  }
+        .ubi-pool-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.6rem;
+        }
+        .ubi-pool-title { font-size: 0.76rem; font-weight: 800; }
+        .ubi-pool-live {
+            font-size: 0.6rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-radius: 999px;
+            padding: 0.18rem 0.5rem;
+        }
+        .ubi-pool-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.5rem;
+        }
+        .ubi-pool-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 0.12rem;
+            border-radius: 8px;
+            padding: 0.45rem 0.55rem;
+            min-width: 0;
+        }
+        .ubi-pool-cell-label { font-size: 0.62rem; line-height: 1.25; }
+        .ubi-pool-cell-value { font-size: 0.82rem; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+        .ubi-pool-note { font-size: 0.62rem; line-height: 1.35; margin-top: 0.5rem; text-align: center; }
         .countdown-box {
             display: none;
             text-align: center;
@@ -1852,8 +1876,15 @@
         .claim-network-status.available { background: rgba(52,211,153,0.16); color: #6ee7b7; }
         .claim-network-status.claimed { background: var(--card-soft); color: var(--text-muted); }
         .claim-network-status.warning { background: rgba(251,191,36,0.16); color: #fcd34d; }
-        .ubi-pool-row { background: rgba(255,255,255,0.04); border-color: var(--card-border); }
-        .ubi-pool-value { color: var(--accent-secondary); }
+        .ubi-pool-panel { background: rgba(255,255,255,0.04); border-color: var(--card-border); }
+        .ubi-pool-title { color: var(--text); }
+        .ubi-pool-live { background: rgba(52,211,153,0.16); color: #6ee7b7; }
+        .ubi-pool-live.is-stale { background: rgba(251,191,36,0.16); color: #fcd34d; }
+        .ubi-pool-cell { background: rgba(255,255,255,0.05); border: 1px solid var(--card-border); }
+        .ubi-pool-cell-label { color: var(--text-muted); }
+        .ubi-pool-cell-value { color: var(--text); }
+        .ubi-pool-cell-value.is-accent { color: var(--accent-secondary); }
+        .ubi-pool-note { color: var(--text-muted); }
         .countdown-box { background: rgba(255,255,255,0.04); border: 1px solid var(--card-border); }
         .countdown-display { background: linear-gradient(90deg, #a78bfa, #22d3ee); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 
@@ -2512,9 +2543,30 @@
             <div class="modal-handle"></div>
             <div class="modal-title">🪙 Available G$ Claims</div>
 
-            <div class="ubi-pool-row">
-                <span class="ubi-pool-label">Celo UBI Pool Balance</span>
-                <span class="ubi-pool-value" id="ubiPoolBalance">Loading...</span>
+            <div class="ubi-pool-panel">
+                <div class="ubi-pool-head">
+                    <span class="ubi-pool-title">🏦 Celo UBI Pool</span>
+                    <span class="ubi-pool-live" id="ubiPoolLive">Live</span>
+                </div>
+                <div class="ubi-pool-grid">
+                    <div class="ubi-pool-cell">
+                        <span class="ubi-pool-cell-label">Today's G$ Distribution</span>
+                        <span class="ubi-pool-cell-value is-accent" id="ubiDailyDistribution">—</span>
+                    </div>
+                    <div class="ubi-pool-cell">
+                        <span class="ubi-pool-cell-label">Per claimer (est.)</span>
+                        <span class="ubi-pool-cell-value" id="ubiDailyPerClaimer">—</span>
+                    </div>
+                    <div class="ubi-pool-cell">
+                        <span class="ubi-pool-cell-label">Claimers today</span>
+                        <span class="ubi-pool-cell-value" id="ubiClaimersToday">—</span>
+                    </div>
+                    <div class="ubi-pool-cell">
+                        <span class="ubi-pool-cell-label">Pool balance</span>
+                        <span class="ubi-pool-cell-value" id="ubiPoolBalance">—</span>
+                    </div>
+                </div>
+                <div class="ubi-pool-note" id="ubiPoolNote">Live figures from the GoodDollar UBI pool — the same ones shown on GoodDapp.</div>
             </div>
 
             <div class="claim-network-list" id="claimNetworkList" aria-live="polite">
