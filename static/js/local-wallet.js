@@ -14,6 +14,7 @@
  *   loginSignature(message)           -> personal_sign with active wallet
  *   getActiveAddress()                -> checksummed address or null
  *   exportMnemonic(pin)               -> 12 words after PIN re-auth
+ *   getPrivateKey()                   -> hex private key (unlocked session only)
  *   lock()                            -> zero out decrypted key material
  *   getProvider()                     -> EIP-1193-style provider covering the
  *                                        signer chains the app supports
@@ -232,6 +233,13 @@
             _requireUnlocked();
         }
         return _requireUnlocked().mnemonic && _requireUnlocked().mnemonic.phrase;
+    }
+
+    // Key material is only reachable from an unlocked session: callers must
+    // PIN-unlock first, and the settings reveal flow re-prompts every time
+    // (the same rule exportMnemonic applies to the recovery phrase).
+    function getPrivateKey() {
+        return _requireUnlocked().privateKey;
     }
 
     function lock() {
@@ -655,6 +663,7 @@
         unlockWithKeystore: unlockWithKeystore,
         loginSignature: loginSignature,
         getActiveAddress: getActiveAddress,
+        getPrivateKey: getPrivateKey,
         exportMnemonic: exportMnemonic,
         lock: lock,
         getProvider: getProvider,
