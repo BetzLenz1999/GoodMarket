@@ -3,6 +3,8 @@ import json
 from supabase_client import supabase_logger
 from datetime import datetime, timedelta
 
+from env_utils import get_env_float
+
 logger = logging.getLogger(__name__)
 
 # PostgREST caps a single response at ~1000 rows, so any platform-wide total
@@ -195,6 +197,18 @@ def _is_completed_payout(row):
     return status in (
         'completed', 'complete', 'success', 'successful', 'paid', 'sent',
     )
+
+
+def _configured_gd_usd_price() -> float:
+    """G$ price in USD from the operator-set ``GD_USD_PRICE`` env var.
+
+    Deliberately env-only: G$ pricing in this app is operator-controlled (see
+    ``blockchain._get_gd_usd_price``), so the homepage USD figure uses the same
+    rate as the wallet balances instead of a market feed. Returns 0.0 when the
+    var is missing/invalid, which the caller renders as "no USD value".
+    """
+    price = get_env_float("GD_USD_PRICE", 0.0)
+    return price if price > 0 else 0.0
 
 
 class AnalyticsService:
@@ -476,12 +490,22 @@ class AnalyticsService:
 
         total_g_disbursed = 0.0
         total_g_disbursed_formatted = "0 G$"
+        total_g_disbursed_usd = 0.0
+        total_g_disbursed_usd_formatted = ""
         try:
             disbursements_stats = self._get_total_disbursements_stats()
             total_g_disbursed = float(disbursements_stats.get("total_g_disbursed", 0) or 0)
             total_g_disbursed_formatted = self._format_compact_number(total_g_disbursed) + " G$"
         except Exception as e:
             logger.error(f"homepage_public_stats: disbursements failed: {e}")
+
+        # USD value of the distributed total, at the operator-set GD_USD_PRICE
+        # rate. Omitted (empty string) when no price is configured so the hero
+        # never shows a fabricated "$0.00".
+        gd_usd_price = _configured_gd_usd_price()
+        if gd_usd_price > 0 and total_g_disbursed > 0:
+            total_g_disbursed_usd = total_g_disbursed * gd_usd_price
+            total_g_disbursed_usd_formatted = self._format_compact_usd(total_g_disbursed_usd)
 
         active_earners = self._count_active_earners_across_features()
         tasks_last_30_days = self._count_daily_tasks_last_30_days()
@@ -490,6 +514,9 @@ class AnalyticsService:
         result = {
             "total_g_disbursed": total_g_disbursed,
             "total_g_disbursed_formatted": total_g_disbursed_formatted,
+            "total_g_disbursed_usd": total_g_disbursed_usd,
+            "total_g_disbursed_usd_formatted": total_g_disbursed_usd_formatted,
+            "gd_usd_price": gd_usd_price,
             "total_g_disbursed_week_growth_pct": week_growth_pct,
             "active_earners": active_earners,
             "active_earners_formatted": f"{active_earners:,}",
@@ -498,6 +525,32 @@ class AnalyticsService:
         }
         self._set_cache("homepage_public_stats", result)
         return result
+
+    def _format_compact_usd(self, value):
+        """Format a USD amount compactly, e.g. ``$1.42K`` / ``$2.84M``.
+
+        Values under $1 are shown with cent precision; the G$ rate is small, so
+        a headline figure can legitimately land below a dollar.
+        """
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            return "$0"
+        if n <= 0:
+            return "$0"
+        sign = "-" if n < 0 else ""
+        n = abs(n)
+        if n >= 1_000_000_000:
+            return f"{sign}${n / 1_000_000_000:.2f}B"
+        if n >= 1_000_000:
+            return f"{sign}${n / 1_000_000:.2f}M"
+        if n >= 10_000:
+            return f"{sign}${n / 1_000:.1f}K"
+        if n >= 1_000:
+            return f"{sign}${n:,.0f}"
+        if n >= 1:
+            return f"{sign}${n:,.2f}"
+        return f"{sign}${n:.4f}"
 
     def _format_compact_number(self, value):
         """Format a number into a compact human-readable string (e.g. 2.84M)."""
