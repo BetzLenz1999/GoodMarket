@@ -1606,8 +1606,6 @@ def index():
         logger.error(f"homepage stats failed: {e}")
         homepage_stats = {
             "total_g_disbursed_formatted": "—",
-            "total_g_disbursed_usd_formatted": "",
-            "gd_usd_price": 0.0,
             "total_g_disbursed_week_growth_pct": None,
             "active_earners_formatted": "—",
             "tasks_last_30_days_formatted": "—",
@@ -2116,9 +2114,7 @@ def dashboard():
     except Exception as e:
         logger.error(f"dashboard stats failed: {e}")
         homepage_stats = {
-            "total_g_disbursed_formatted": "—",
-            "total_g_disbursed_usd_formatted": "",
-            "gd_usd_price": 0.0,
+            "total_g_disbursed_formatted": "���",
             "total_g_disbursed_week_growth_pct": None,
             "active_earners_formatted": "—",
             "tasks_last_30_days_formatted": "—",
@@ -12360,4 +12356,3 @@ def fuse_faucet_gas():
     except Exception as e:
         logger.error(f"fuse_faucet_gas error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
-c
