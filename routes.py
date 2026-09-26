@@ -8147,17 +8147,50 @@ def update_payment_link(payment_id):
 
 @routes.route("/api/ubi-pool-balance", methods=["GET"])
 def ubi_pool_balance():
-    """Get the G$ balance held in the GoodDollar UBI Pool contract (public, no auth needed)."""
+    """GoodDollar UBI pool figures for the claim screen (public, no auth needed).
+
+    Returns the same numbers GoodDapp shows on its Claim screen (read straight
+    from the Celo UBIScheme), plus the scheme's total G$ balance that this
+    endpoint has always exposed:
+
+    * ``daily_cycle_pool`` — "Today's G$ Distribution" (the current cycle pool)
+    * ``daily_ubi`` — the per-claimer share for one day
+    * ``claimers_today`` / ``claimed_today`` — today's claim stats
+    * ``pool_balance`` — the UBIScheme contract's whole G$ balance
+
+    Legacy keys ``balance`` / ``balance_formatted`` are kept so existing
+    consumers (and cached pages) keep working.
+    """
     try:
-        from blockchain import get_gooddollar_balance, GOODDOLLAR_CONTRACTS
+        from blockchain import get_ubi_pool_stats, get_gooddollar_balance, GOODDOLLAR_CONTRACTS
         ubi_proxy = GOODDOLLAR_CONTRACTS["UBI_PROXY"]
-        result = get_gooddollar_balance(ubi_proxy)
-        return jsonify({
+        force = request.args.get("force", "").lower() in ("1", "true", "yes")
+        stats = get_ubi_pool_stats(force=force)
+
+        # Pool balance: prefer the value read alongside the other stats so the
+        # whole panel comes from one consistent snapshot.
+        balance = stats.get("pool_balance")
+        balance_formatted = stats.get("pool_balance_formatted")
+        if balance is None:
+            fallback = get_gooddollar_balance(ubi_proxy)
+            balance = fallback.get("balance", 0)
+            balance_formatted = fallback.get("balance_formatted", "—")
+
+        payload = {
             "success": True,
             "pool_address": ubi_proxy,
-            "balance": result.get("balance", 0),
-            "balance_formatted": result.get("balance_formatted", "—")
-        })
+            "balance": balance,
+            "balance_formatted": balance_formatted,
+        }
+        for key in (
+            "daily_cycle_pool", "daily_cycle_pool_formatted",
+            "daily_ubi", "daily_ubi_formatted",
+            "active_users", "claimers_today",
+            "claimed_today", "claimed_today_formatted",
+            "current_day", "period_start", "paused", "next_claim_ts",
+        ):
+            payload[key] = stats.get(key)
+        return jsonify(payload)
     except Exception as e:
         logger.error(f"ubi_pool_balance error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
