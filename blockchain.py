@@ -81,6 +81,48 @@ UBI_SCHEME_ABI = [
         "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
         "stateMutability": "view",
         "type": "function"
+    },
+    # ── Pool stats (the figures GoodDapp shows on its Claim screen) ──
+    # GoodDapp's GoodWalletClass.getClaimScreenStats() reads these same
+    # methods: dailyCyclePool() is its "Today's G$ Distribution", and
+    # getDailyStats() returns (claimers today, G$ claimed today).
+    {
+        "inputs": [],
+        "name": "dailyCyclePool",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "dailyUbi",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "currentDay",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "getDailyStats",
+        "outputs": [
+            {"internalType": "uint256", "name": "", "type": "uint256"},
+            {"internalType": "uint256", "name": "", "type": "uint256"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [{"internalType": "uint256", "name": "day", "type": "uint256"}],
+        "name": "getClaimerCount",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
     }
 ]
 
@@ -1851,6 +1893,155 @@ def check_ubi_entitlement(wallet_address: str) -> dict:
             "can_claim": False,
             "claimable_gd": 0,
         }
+
+
+# ── UBI pool stats (same figures GoodDapp shows on its Claim screen) ──
+_pool_stats_cache: dict = {}
+_pool_stats_cache_lock = threading.Lock()
+POOL_STATS_CACHE_TTL = 60  # 1 minute — the cycle pool only moves as claims land
+
+
+def get_ubi_pool_stats(force: bool = False) -> dict:
+    """Read the GoodDollar UBIScheme's live distribution figures.
+
+    Mirrors GoodDapp's ``GoodWalletClass.getClaimScreenStats()`` so the app can
+    show the same numbers its users already recognise from GoodDapp:
+
+    * ``daily_cycle_pool`` — GoodDapp's "Today's G$ Distribution": the G$ the
+      scheme has set aside for the current 60-day cycle, distributed evenly
+      across the cycle's days. This is the pool value shown on the claim screen.
+    * ``daily_ubi`` — the per-claimer share of one day (the contract's own
+      ``dailyUbi()`` when readable, otherwise ``dailyCyclePool /
+      max(lastDayClaimers, claimersToday)``).
+    * ``claimers_today`` / ``claimed_today`` — ``getDailyStats()``: how many
+      people claimed today and how much G$ they took.
+    * ``current_day`` / ``period_start`` — drive the next-claim time.
+    * ``pool_balance`` — the scheme contract's total G$ balance (the headline
+      "pool balance" the app already displayed).
+
+    Every read is individually guarded: the UBIScheme's implementation on Celo
+    does not expose ``activeUsersCount()`` (it reverts), and an RPC hiccup must
+    never take the whole panel down. Missing fields come back as ``None`` so the
+    UI can fall back to the value it can still show.
+    """
+    import time
+    now = time.time()
+    if not force:
+        with _pool_stats_cache_lock:
+            entry = _pool_stats_cache.get("celo")
+            if entry and entry["expires_at"] > now:
+                return entry["result"]
+
+    result = {
+        "success": False,
+        "ubi_contract": GOODDOLLAR_CONTRACTS["UBI_PROXY"],
+        "chain_id": CELO_CHAIN_ID,
+    }
+    try:
+        from web3 import Web3
+        w3 = _get_w3()
+        ubi = w3.eth.contract(
+            address=Web3.to_checksum_address(GOODDOLLAR_CONTRACTS["UBI_PROXY"]),
+            abi=UBI_SCHEME_ABI,
+        )
+
+        def _read(fn, *args):
+            # Each stat is best-effort: a single reverted/unknown method must
+            # not blank the rest of the panel.
+            try:
+                return fn(*args).call()
+            except Exception as read_err:
+                logger.debug(f"UBI pool stat read failed ({getattr(fn, 'fn_name', '?')}): {read_err}")
+                return None
+
+        def _gd(value):
+            return None if value is None else float(value) / (10 ** 18)
+
+        cycle_pool_wei = _read(ubi.functions.dailyCyclePool)
+        daily_ubi_wei = _read(ubi.functions.dailyUbi)
+        daily_stats = _read(ubi.functions.getDailyStats)
+        claimers_today = daily_stats[0] if daily_stats else None
+        claimed_today_wei = daily_stats[1] if daily_stats else None
+        current_day = _read(ubi.functions.currentDay)
+        period_start = _read(ubi.functions.periodStart)
+        paused = _read(ubi.functions.paused)
+
+        # activeUsersCount() is absent from the Celo implementation, so derive
+        # the per-claimer share from the previous day's claimer count instead —
+        # the same "at least the last day's claimers" floor GoodDapp applies.
+        active_users = None
+        if current_day is not None and int(current_day) > 0:
+            prev_day_claimers = _read(ubi.functions.getClaimerCount, int(current_day) - 1)
+            candidates = [c for c in (prev_day_claimers, claimers_today) if c is not None]
+            if candidates:
+                active_users = max(int(c) for c in candidates)
+
+        daily_ubi_gd = None
+        if cycle_pool_wei is not None and active_users:
+            daily_ubi_gd = _gd(cycle_pool_wei) / active_users
+        # The contract's own dailyUbi() is authoritative when readable.
+        if daily_ubi_wei is not None:
+            daily_ubi_gd = _gd(daily_ubi_wei)
+
+        # The scheme's whole G$ balance — what the app previously labelled
+        # "Celo UBI Pool Balance".
+        pool_balance_gd = None
+        try:
+            gd_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(GOODDOLLAR_CONTRACTS["GOODDOLLAR_TOKEN"]),
+                abi=_GD_ERC20_ABI,
+            )
+            pool_balance_gd = _gd(
+                gd_contract.functions.balanceOf(
+                    Web3.to_checksum_address(GOODDOLLAR_CONTRACTS["UBI_PROXY"])
+                ).call()
+            )
+        except Exception as bal_err:
+            logger.debug(f"UBI pool balance read failed: {bal_err}")
+
+        # Next claim time = periodStart + (currentDay + 1) days (GoodDapp logic).
+        next_claim_ts = None
+        if period_start and current_day is not None:
+            next_claim_ts = int(period_start) + (int(current_day) + 1) * 86400
+
+        result.update({
+            "success": True,
+            "daily_cycle_pool": _gd(cycle_pool_wei),
+            "daily_cycle_pool_formatted": (
+                f"{_gd(cycle_pool_wei):,.2f} G$" if cycle_pool_wei is not None else None
+            ),
+            "daily_ubi": daily_ubi_gd,
+            "daily_ubi_formatted": (
+                f"{daily_ubi_gd:,.2f} G$" if daily_ubi_gd is not None else None
+            ),
+            "active_users": active_users,
+            "claimers_today": int(claimers_today) if claimers_today is not None else None,
+            "claimed_today": _gd(claimed_today_wei),
+            "claimed_today_formatted": (
+                f"{_gd(claimed_today_wei):,.2f} G$" if claimed_today_wei is not None else None
+            ),
+            "current_day": int(current_day) if current_day is not None else None,
+            "period_start": int(period_start) if period_start is not None else None,
+            "paused": bool(paused) if paused is not None else None,
+            "pool_balance": pool_balance_gd,
+            "pool_balance_formatted": (
+                f"{pool_balance_gd:,.2f} G$" if pool_balance_gd is not None else None
+            ),
+            "next_claim_ts": next_claim_ts,
+        })
+    except Exception as e:
+        logger.error(f"get_ubi_pool_stats error: {e}")
+        result["error"] = str(e)
+        # Serve a stale snapshot rather than an error when we have one.
+        with _pool_stats_cache_lock:
+            stale = _pool_stats_cache.get("celo")
+        if stale:
+            return stale["result"]
+        return result
+
+    with _pool_stats_cache_lock:
+        _pool_stats_cache["celo"] = {"result": result, "expires_at": now + POOL_STATS_CACHE_TTL}
+    return result
 
 
 
