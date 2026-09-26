@@ -4967,11 +4967,71 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 .catch(() => { label.textContent = 'Claim G$'; icon.textContent = '🪙'; btn.disabled = false; });
         }
 
-        // Load UBI pool balance
-        fetch('/api/ubi-pool-balance').then(r => r.json()).then(d => {
-            const el = document.getElementById('ubiPoolBalance');
-            if (el) el.textContent = d.balance_formatted || '—';
-        }).catch(() => { const el = document.getElementById('ubiPoolBalance'); if (el) el.textContent = '—'; });
+        // ── UBI pool stats (the same figures GoodDapp shows on its Claim screen) ──
+        // GoodDapp reads dailyCyclePool() ("Today's G$ Distribution") and
+        // getDailyStats() from the Celo UBIScheme; /api/ubi-pool-balance now
+        // exposes those alongside the scheme's total G$ balance.
+        function _fmtPoolGd(value) {
+            const n = parseFloat(value);
+            if (!isFinite(n)) return null;
+            // Large pool figures (millions of G$) read better abbreviated.
+            if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M G$';
+            if (Math.abs(n) >= 10_000) return (n / 1_000).toFixed(1) + 'K G$';
+            return n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' G$';
+        }
+
+        function _setPoolText(id, text) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = (text === null || text === undefined || text === '') ? '—' : text;
+        }
+
+        function loadUbiPoolStats() {
+            const live = document.getElementById('ubiPoolLive');
+            if (live) live.textContent = 'Loading';
+            fetch('/api/ubi-pool-balance', { cache: 'no-store' })
+                .then(r => r.json())
+                .then(d => {
+                    if (!d || !d.success) {
+                        _setPoolText('ubiDailyDistribution', null);
+                        _setPoolText('ubiDailyPerClaimer', null);
+                        _setPoolText('ubiClaimersToday', null);
+                        _setPoolText('ubiPoolBalance', null);
+                        const note = document.getElementById('ubiPoolNote');
+                        if (note) note.textContent = 'Pool figures are unavailable right now — pull to refresh in a moment.';
+                        if (live) { live.textContent = 'Offline'; live.classList.add('is-stale'); }
+                        return;
+                    }
+                    _setPoolText('ubiDailyDistribution', _fmtPoolGd(d.daily_cycle_pool));
+                    _setPoolText('ubiDailyPerClaimer', _fmtPoolGd(d.daily_ubi));
+                    _setPoolText(
+                        'ubiClaimersToday',
+                        (d.claimers_today === null || d.claimers_today === undefined)
+                            ? null
+                            : Number(d.claimers_today).toLocaleString('en-US')
+                    );
+                    _setPoolText('ubiPoolBalance', _fmtPoolGd(d.balance));
+                    const note = document.getElementById('ubiPoolNote');
+                    if (note) {
+                        note.textContent = d.paused
+                            ? 'The GoodDollar UBI pool is currently paused — figures are the last known values.'
+                            : 'Live figures from the GoodDollar UBI pool — the same ones shown on GoodDapp.';
+                    }
+                    if (live) {
+                        live.textContent = d.paused ? 'Paused' : 'Live';
+                        live.classList.toggle('is-stale', !!d.paused);
+                    }
+                })
+                .catch(() => {
+                    _setPoolText('ubiDailyDistribution', null);
+                    _setPoolText('ubiDailyPerClaimer', null);
+                    _setPoolText('ubiClaimersToday', null);
+                    _setPoolText('ubiPoolBalance', null);
+                    const note = document.getElementById('ubiPoolNote');
+                    if (note) note.textContent = 'Could not reach the UBI pool right now.';
+                    if (live) { live.textContent = 'Offline'; live.classList.add('is-stale'); }
+                });
+        }
+        loadUbiPoolStats();
 
 
         function openSavingsPopupAfterClaim() {
