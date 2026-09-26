@@ -5,6 +5,198 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# PostgREST caps a single response at ~1000 rows, so any platform-wide total
+# must page through `.range()` windows or it silently reports a truncated sum.
+_DISBURSEMENT_PAGE_SIZE = 1000
+
+
+def _disbursement_client():
+    """Supabase client for platform-wide payout reads.
+
+    Prefers the service-role client: these ledgers have RLS enabled, and the
+    anon role can be denied SELECT, which used to make a feature silently
+    report 0 G$ disbursed. Falls back to the anon client so a deployment
+    without ``SUPABASE_SERVICE_ROLE_KEY`` keeps working.
+    """
+    try:
+        from supabase_client import (
+            get_supabase_admin_client,
+            supabase,
+            supabase_enabled,
+        )
+    except Exception as e:
+        logger.error(f"disbursements: supabase import failed: {e}")
+        return None
+
+    if not supabase_enabled:
+        return None
+
+    try:
+        admin_client = get_supabase_admin_client()
+    except Exception as e:
+        logger.warning(f"disbursements: service-role client unavailable: {e}")
+        admin_client = None
+
+    if admin_client is None:
+        logger.warning(
+            "disbursements: SUPABASE_SERVICE_ROLE_KEY not set — reading with "
+            "the anon client; RLS may hide payout rows."
+        )
+    return admin_client or supabase
+
+
+def _apply_disbursement_filters(query, filters):
+    for column, value in filters or []:
+        if isinstance(value, tuple):
+            operator, operand = value
+            if operator == 'in':
+                query = query.in_(column, operand)
+            elif operator == 'gte':
+                query = query.gte(column, operand)
+            elif operator == 'lte':
+                query = query.lte(column, operand)
+            elif operator == 'lt':
+                query = query.lt(column, operand)
+            elif operator == 'neq':
+                query = query.neq(column, operand)
+            else:
+                query = query.eq(column, operand)
+        else:
+            query = query.eq(column, value)
+    return query
+
+
+def _read_all_rows(client, table_name, columns, filters=None,
+                   order_columns=None, page_size=_DISBURSEMENT_PAGE_SIZE):
+    """Read every matching row, paging past the PostgREST response cap.
+
+    ``order_columns`` is a candidate list: a stable order is what makes paging
+    correct, so each candidate is tried in turn (a column may not exist on an
+    older deployment) before falling back to an unordered single pass. Raises
+    when every candidate fails so callers can distinguish "no rows" from
+    "could not read".
+    """
+    if not order_columns:
+        candidates = [None]
+    elif isinstance(order_columns, str):
+        candidates = [order_columns, None]
+    else:
+        candidates = list(order_columns) + [None]
+
+    last_error = None
+    for order_column in candidates:
+        try:
+            rows = []
+            offset = 0
+            while True:
+                query = _apply_disbursement_filters(
+                    client.table(table_name).select(columns), filters
+                )
+                if order_column:
+                    query = query.order(order_column, desc=False)
+                result = query.range(offset, offset + page_size - 1).execute()
+                page = result.data or []
+                rows.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            return rows
+        except Exception as e:
+            last_error = e
+            if order_column is not None:
+                logger.warning(
+                    f"disbursements: {table_name} ordered by {order_column} "
+                    f"failed ({e}); trying next ordering"
+                )
+
+    raise last_error if last_error else RuntimeError(
+        f"disbursements: {table_name} read failed"
+    )
+
+
+def _paginate_disbursement_rows(client, table_name, columns, filters=None,
+                                order_columns=None):
+    """Safe wrapper around :func:`_read_all_rows` — returns [] on failure."""
+    try:
+        return _read_all_rows(
+            client, table_name, columns,
+            filters=filters, order_columns=order_columns,
+        )
+    except Exception as e:
+        logger.warning(f"disbursements: {table_name} read failed: {e}")
+        return []
+
+
+def _paginate_optional_status(client, table_name, columns, filters,
+                              order_columns=None):
+    """Read with a status filter, retrying unfiltered if the column is absent.
+
+    Ledgers like ``minigame_withdrawals_log`` gained their ``status`` column in
+    a later migration, so a strict filter would error (and silently zero the
+    feature) on an older deployment. These rows are only ever written after a
+    confirmed on-chain payout, so falling back to an unfiltered read is still
+    counting real disbursements.
+    """
+    try:
+        return _read_all_rows(
+            client, table_name, columns,
+            filters=filters, order_columns=order_columns,
+        )
+    except Exception as e:
+        logger.warning(
+            f"disbursements: {table_name} status filter unavailable ({e}); "
+            f"reading without it"
+        )
+
+    # The column itself may be missing, so drop it from the projection too.
+    fallback_columns = ', '.join(
+        part.strip() for part in columns.split(',')
+        if part.strip() and part.strip() != 'status'
+    ) or '*'
+
+    try:
+        return _read_all_rows(
+            client, table_name, fallback_columns,
+            filters=None, order_columns=order_columns,
+        )
+    except Exception as e:
+        logger.warning(f"disbursements: {table_name} read failed: {e}")
+        return []
+
+
+def _row_amount(row, *columns):
+    """First numeric value present among ``columns`` on a row (0.0 if none)."""
+    for column in columns:
+        raw = row.get(column)
+        if raw is None or raw == '':
+            continue
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            logger.warning(f"⚠️ Invalid {column} value in disbursement row: {raw}")
+            return 0.0
+    return 0.0
+
+
+def _sum_amount(rows, *columns):
+    return sum(_row_amount(row, *columns) for row in rows or [])
+
+
+def _is_completed_payout(row):
+    """True when a payout-ledger row represents a finished transfer.
+
+    These ledgers are written only after the on-chain transfer succeeds, and
+    legacy rows predate the status column — so a missing status counts as
+    completed while an explicit pending/failed/rejected value does not.
+    """
+    status = str(row.get('status') or '').strip().lower()
+    if not status:
+        return True
+    return status in (
+        'completed', 'complete', 'success', 'successful', 'paid', 'sent',
+    )
+
+
 class AnalyticsService:
     def __init__(self):
         self.user_sessions = {}
@@ -326,14 +518,25 @@ class AnalyticsService:
         return f"{sign}{n:,.0f}"
 
     def _count_active_earners_across_features(self):
-        """Union of unique wallet addresses across every earning feature."""
+        """Union of unique wallet addresses across every earning feature.
+
+        Reads with the service-role client and pages through every row: the
+        anon client can be denied SELECT by RLS, and a single unpaged request
+        stops at PostgREST's ~1000-row cap, so wallets beyond the first page
+        used to be silently missing from the count.
+        """
         try:
-            from supabase_client import supabase, supabase_enabled
+            from supabase_client import supabase_enabled
         except Exception as e:
             logger.error(f"active earners: supabase import failed: {e}")
             return 0
 
         if not supabase_enabled:
+            return 0
+
+        client = _disbursement_client()
+        if client is None:
+            logger.error("active earners: no Supabase client available")
             return 0
 
         unique_wallets = set()
@@ -350,11 +553,11 @@ class AnalyticsService:
         ]
         for table_name, eq_filter in feature_tables:
             try:
-                query = supabase.table(table_name).select("wallet_address")
-                if eq_filter:
-                    query = query.eq(eq_filter[0], eq_filter[1])
-                result = query.execute()
-                for row in (result.data or []):
+                rows = _paginate_disbursement_rows(
+                    client, table_name, "wallet_address",
+                    filters=[eq_filter] if eq_filter else None,
+                )
+                for row in rows:
                     wallet = row.get("wallet_address")
                     if wallet:
                         unique_wallets.add(wallet.lower())
@@ -522,7 +725,7 @@ class AnalyticsService:
     def _get_total_disbursements_stats(self):
         """Get total G$ disbursements across all platform tables"""
         try:
-            from supabase_client import supabase, supabase_enabled
+            from supabase_client import supabase_enabled
             from datetime import datetime, timedelta
             import time
 
@@ -545,7 +748,7 @@ class AnalyticsService:
                     "Telegram Task Rewards": "0.0 G$",
                     "Twitter Task Rewards": "0.0 G$",
                     "Community Stories Rewards": "0.0 G$",
-                    "Minigames Withdrawals": "0.0 G$",
+                    "Play & Earn Payouts": "0.0 G$",
                     "Forum Rewards Disbursed": "0.0 G$",
                     "Task Completion Rewards": "0.0 G$",
                     "NFT Card Sales (G$ OUT)": "0.0 G$",
@@ -633,465 +836,311 @@ class AnalyticsService:
             total_disbursements = 0
             breakdown = {}
 
-            # 1. Learn & Earn disbursements (learnearn_log) - ALL RECORDS (includes old and new)
-            learn_earn_total = 0
-            try:
-                learn_earn_result = supabase.table('learnearn_log')\
-                    .select('amount_g$, status')\
-                    .execute()
+            # Prefer the service-role client: these payout ledgers have RLS
+            # enabled and the anon role can be denied SELECT, which used to make
+            # a feature silently report 0 G$.
+            disbursement_client = _disbursement_client()
+            if disbursement_client is None:
+                logger.warning("⚠️ No Supabase client available for disbursement stats")
 
-                logger.debug(f"📊 Learn & Earn Query: Found {len(learn_earn_result.data) if learn_earn_result.data else 0} records")
-                if learn_earn_result.data:
-                    logger.debug(f"   Sample records: {learn_earn_result.data[:3]}")
+            # Exactly-once rules. Each feature is summed from the ONE ledger that
+            # records its payout:
+            #   * Learn & Earn -> learnearn_log. The Superfluid stream ledger is a
+            #     separate rail for the same reward, so it is NOT summed.
+            #   * Daily tasks  -> *_task_log rows with status 'completed', which is
+            #     set only after admin approval and the on-chain transfer. Pending
+            #     and rejected submissions never paid anything.
+            #   * Play & Earn  -> minigame_rewards_log (direct game payouts) plus
+            #     minigame_withdrawals_log (balance withdrawals). The two ledgers
+            #     are disjoint, so summing both counts each payout exactly once.
+            # Reloadly is G$ IN (users paying the store): reported, never added.
 
-                # Sum ALL records - convert to float safely, handle None values
-                if learn_earn_result.data:
-                    for record in learn_earn_result.data:
-                        amount = record.get('amount_g$', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                learn_earn_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in learnearn_log: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Learn & Earn table query failed: {e}")
+            # 1. Learn & Earn disbursements (learnearn_log) - paid attempts only
+            learn_earn_rows = _paginate_disbursement_rows(
+                disbursement_client, 'learnearn_log',
+                'amount_g$, status',
+                filters=[('status', True)],
+                order_columns=['timestamp', 'created_at'],
+            )
+            learn_earn_total = _sum_amount(learn_earn_rows, 'amount_g$')
+            logger.debug(f"📊 Learn & Earn Query: {len(learn_earn_rows)} paid records")
 
             breakdown['learn_earn'] = learn_earn_total
             total_disbursements += learn_earn_total
             logger.debug(f"   Total: {learn_earn_total} G$")
 
-            # 2. Forum rewards disbursements (forum_reward_transactions) - ALL RECORDS
-            forum_disbursed_total = 0
-            try:
-                forum_disbursed_result = supabase.table('forum_reward_transactions')\
-                    .select('amount_disbursed, status')\
-                    .execute()
-
-                logger.debug(f"📊 Forum Rewards Query: Found {len(forum_disbursed_result.data) if forum_disbursed_result.data else 0} records")
-
-                if forum_disbursed_result.data:
-                    for record in forum_disbursed_result.data:
-                        amount = record.get('amount_disbursed', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                forum_disbursed_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in forum_reward_transactions: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Forum rewards table query failed: {e}")
-
+            # 2. Forum rewards (forum_reward_transactions) - completed payouts only
+            forum_rows = _paginate_optional_status(
+                disbursement_client, 'forum_reward_transactions',
+                'amount_disbursed, status',
+                filters=[('status', 'completed')],
+                order_columns=['created_at'],
+            )
+            forum_disbursed_total = _sum_amount(
+                [row for row in forum_rows if _is_completed_payout(row)],
+                'amount_disbursed',
+            )
             breakdown['forum_disbursed'] = forum_disbursed_total
             total_disbursements += forum_disbursed_total
             logger.debug(f"   Total: {forum_disbursed_total} G$")
 
-            # 3. Task completion disbursements (task_completion_log) - ALL RECORDS
-            # Handle case where table might not exist yet
-            task_completion_total = 0
-            try:
-                task_completion_result = supabase.table('task_completion_log')\
-                    .select('reward_amount, status')\
-                    .execute()
-
-                logger.info(f"📊 Task Completion Query: Found {len(task_completion_result.data) if task_completion_result.data else 0} records")
-
-                if task_completion_result.data:
-                    for record in task_completion_result.data:
-                        amount = record.get('reward_amount', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                task_completion_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in task_completion_log: {amount}")
-            except Exception as e:
-                # Table doesn't exist yet - this is expected if it hasn't been created
-                logger.info(f"ℹ️ Task completion table not available yet (table will be created when first task is completed)")
-
+            # 3. Task completion disbursements (task_completion_log)
+            task_rows = _paginate_optional_status(
+                disbursement_client, 'task_completion_log',
+                'reward_amount, status',
+                filters=[('status', 'completed')],
+                order_columns=['created_at', 'timestamp'],
+            )
+            task_completion_total = _sum_amount(
+                [row for row in task_rows if _is_completed_payout(row)],
+                'reward_amount',
+            )
             breakdown['task_completion'] = task_completion_total
             total_disbursements += task_completion_total
             logger.debug(f"   Total: {task_completion_total} G$")
 
-            # 5. Telegram Task disbursements (telegram_task_log) - ALL RECORDS
-            telegram_task_total = 0
-            try:
-                telegram_task_result = supabase.table('telegram_task_log')\
-                    .select('reward_amount, status')\
-                    .execute()
-
-                logger.debug(f"📊 Telegram Task Query: Found {len(telegram_task_result.data) if telegram_task_result.data else 0} records")
-                if telegram_task_result.data:
-                    logger.debug(f"   Sample records: {telegram_task_result.data[:3]}")
-
-                if telegram_task_result.data:
-                    for record in telegram_task_result.data:
-                        amount = record.get('reward_amount', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                telegram_task_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in telegram_task_log: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Telegram task table query failed: {e}")
+            # 4. Telegram Task disbursements (telegram_task_log) - approved only
+            telegram_rows = _paginate_disbursement_rows(
+                disbursement_client, 'telegram_task_log',
+                'reward_amount, status',
+                filters=[('status', 'completed')],
+                order_columns=['created_at', 'id'],
+            )
+            telegram_task_total = _sum_amount(telegram_rows, 'reward_amount')
+            logger.debug(
+                f"📊 Telegram Task Query: {len(telegram_rows)} completed records"
+            )
 
             breakdown['telegram_task'] = telegram_task_total
             total_disbursements += telegram_task_total
             logger.debug(f"   Total: {telegram_task_total} G$")
 
-            # 5b. Twitter Task disbursements (twitter_task_log) - ALL RECORDS
-            twitter_task_total = 0
-            try:
-                twitter_task_result = supabase.table('twitter_task_log')\
-                    .select('reward_amount, status')\
-                    .execute()
-
-                logger.debug(f"📊 Twitter Task Query: Found {len(twitter_task_result.data) if twitter_task_result.data else 0} records")
-                if twitter_task_result.data:
-                    logger.debug(f"   Sample records: {twitter_task_result.data[:3]}")
-
-                if twitter_task_result.data:
-                    for record in twitter_task_result.data:
-                        amount = record.get('reward_amount', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                twitter_task_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in twitter_task_log: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Twitter task table query failed: {e}")
+            # 4b. Twitter Task disbursements (twitter_task_log) - approved only
+            twitter_rows = _paginate_disbursement_rows(
+                disbursement_client, 'twitter_task_log',
+                'reward_amount, status',
+                filters=[('status', 'completed')],
+                order_columns=['created_at', 'id'],
+            )
+            twitter_task_total = _sum_amount(twitter_rows, 'reward_amount')
+            logger.debug(
+                f"📊 Twitter Task Query: {len(twitter_rows)} completed records"
+            )
 
             breakdown['twitter_task'] = twitter_task_total
             total_disbursements += twitter_task_total
             logger.debug(f"   Total: {twitter_task_total} G$")
 
-            # 5c. Minigames withdrawals (minigame_rewards_log) - ALL token_withdrawal records
-            minigames_total = 0
-            try:
-                minigames_result = supabase.table('minigame_rewards_log')\
-                    .select('reward_amount, reward_type')\
-                    .execute()
+            # 5. Play & Earn: direct game payouts + balance withdrawals.
+            # This used to read minigame_rewards_log while filtering a
+            # `reward_type` column that no writer in this codebase sets, so the
+            # feature always reported 0 G$ no matter how much was paid out.
+            # minigame_rewards_log has no status column — every row is written
+            # only after a confirmed payout, so select just the amount.
+            rewards_rows = _paginate_disbursement_rows(
+                disbursement_client, 'minigame_rewards_log',
+                'reward_amount',
+                order_columns=['created_at'],
+            )
+            minigame_rewards_total = _sum_amount(rewards_rows, 'reward_amount')
 
-                logger.debug(f"📊 Minigames Query: Found {len(minigames_result.data) if minigames_result.data else 0} records")
-                if minigames_result.data:
-                    logger.debug(f"   Sample records: {minigames_result.data[:3]}")
+            withdrawal_rows = _paginate_optional_status(
+                disbursement_client, 'minigame_withdrawals_log',
+                'amount, status',
+                filters=[('status', 'completed')],
+                order_columns=['withdrawal_date', 'created_at'],
+            )
+            minigame_withdrawals_total = _sum_amount(
+                [row for row in withdrawal_rows if _is_completed_payout(row)],
+                'amount',
+            )
 
-                # Only count token_withdrawal records
-                if minigames_result.data:
-                    for record in minigames_result.data:
-                        if record.get('reward_type') == 'token_withdrawal':
-                            amount = record.get('reward_amount', 0)
-                            if amount is not None and amount != '':
-                                try:
-                                    minigames_total += float(amount)
-                                except (ValueError, TypeError):
-                                    logger.warning(f"⚠️ Invalid amount in minigame_rewards_log: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Minigames table query failed: {e}")
+            minigames_total = minigame_rewards_total + minigame_withdrawals_total
+            logger.debug(
+                f"📊 Play & Earn: {len(rewards_rows)} game rewards "
+                f"({minigame_rewards_total} G$) + {len(withdrawal_rows)} withdrawals "
+                f"({minigame_withdrawals_total} G$)"
+            )
 
             breakdown['minigames_withdrawals'] = minigames_total
             total_disbursements += minigames_total
             logger.debug(f"   Total: {minigames_total} G$")
 
-            # 5d. Community Stories disbursements (community_stories_submissions) - ALL approved records
-            community_stories_total = 0
-            try:
-                # Fetch ALL approved Community Stories without date filtering
-                community_stories_result = supabase.table('community_stories_submissions')\
-                    .select('reward_amount, status, reviewed_at, wallet_address')\
-                    .in_('status', ['approved', 'approved_low', 'approved_high'])\
-                    .order('reviewed_at', desc=False)\
-                    .execute()
-
-                logger.debug(f"📊 Community Stories Query (ALL TIME): Found {len(community_stories_result.data) if community_stories_result.data else 0} records")
-                if community_stories_result.data:
-                    logger.debug(f"   Sample records (oldest to newest): {community_stories_result.data[:3]}")
-                    logger.debug(f"   Date range: {community_stories_result.data[0].get('reviewed_at')} (oldest) to {community_stories_result.data[-1].get('reviewed_at')} (newest)")
-
-                if community_stories_result.data:
-                    for record in community_stories_result.data:
-                        amount = record.get('reward_amount', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                community_stories_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in community_stories_submissions: {amount}")
-            except Exception as e:
-                logger.error(f"❌ Community Stories table query failed: {e}")
-                import traceback
-                logger.error(f"🔍 Traceback: {traceback.format_exc()}")
+            # 6. Community Stories disbursements (approved submissions only)
+            community_rows = _paginate_disbursement_rows(
+                disbursement_client, 'community_stories_submissions',
+                'reward_amount, status, reviewed_at',
+                filters=[('status', ('in', ['approved', 'approved_low', 'approved_high']))],
+                order_columns=['reviewed_at', 'submitted_at', 'created_at'],
+            )
+            community_stories_total = _sum_amount(community_rows, 'reward_amount')
+            logger.debug(
+                f"📊 Community Stories Query: {len(community_rows)} approved records"
+            )
 
             breakdown['community_stories'] = community_stories_total
             total_disbursements += community_stories_total
-            logger.debug(f"   Total Community Stories (ALL TIME): {community_stories_total} G$")
+            logger.debug(f"   Total: {community_stories_total} G$")
 
-            # 6. Reloadly orders (G$ received IN from users) - completed orders only
-            reloadly_total = 0
-            try:
-                reloadly_result = supabase.table('reloadly_orders')\
-                    .select('gd_amount, status')\
-                    .eq('status', 'completed')\
-                    .execute()
-
-                logger.debug(f"📊 Reloadly Orders Query: Found {len(reloadly_result.data) if reloadly_result.data else 0} records")
-
-                if reloadly_result.data:
-                    for record in reloadly_result.data:
-                        amount = record.get('gd_amount', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                reloadly_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in reloadly_orders: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Reloadly orders table query failed: {e}")
-
+            # 7. Reloadly orders (G$ received IN from users) - reported, not disbursed
+            reloadly_rows = _paginate_disbursement_rows(
+                disbursement_client, 'reloadly_orders',
+                'gd_amount, status',
+                filters=[('status', 'completed')],
+                order_columns=['created_at'],
+            )
+            reloadly_total = _sum_amount(reloadly_rows, 'gd_amount')
             breakdown['reloadly_orders'] = reloadly_total
             logger.debug(f"   Reloadly Total (G$ IN): {reloadly_total} G$")
 
-            # 8. NFT / Achievement Card Sales (G$ paid to sellers - G$ OUT)
-            nft_sales_total = 0
-            try:
-                nft_result = supabase.table('achievement_card_sales')\
-                    .select('sell_price')\
-                    .execute()
-
-                logger.debug(f"📊 NFT Sales Query: Found {len(nft_result.data) if nft_result.data else 0} records")
-
-                if nft_result.data:
-                    for record in nft_result.data:
-                        amount = record.get('sell_price', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                nft_sales_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in achievement_card_sales: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ Achievement card sales table query failed: {e}")
-
+            # 8. Achievement Card Sales (G$ paid to sellers - G$ OUT)
+            nft_rows = _paginate_disbursement_rows(
+                disbursement_client, 'achievement_card_sales',
+                'sell_price',
+                order_columns=['created_at'],
+            )
+            nft_sales_total = _sum_amount(nft_rows, 'sell_price')
             breakdown['nft_sales'] = nft_sales_total
             total_disbursements += nft_sales_total
             logger.debug(f"   NFT Sales Total (G$ OUT): {nft_sales_total} G$")
 
-            # 8b. NFT Burn Rewards (G$ disbursed to users who burn their NFTs - G$ OUT)
-            nft_burn_total = 0
-            try:
-                nft_burn_result = supabase.table('nft_burn_history')\
-                    .select('burn_amount_g')\
-                    .execute()
-
-                logger.debug(f"📊 NFT Burn History Query: Found {len(nft_burn_result.data) if nft_burn_result.data else 0} records")
-
-                if nft_burn_result.data:
-                    for record in nft_burn_result.data:
-                        amount = record.get('burn_amount_g', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                nft_burn_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"⚠️ Invalid amount in nft_burn_history: {amount}")
-            except Exception as e:
-                logger.warning(f"⚠️ NFT burn history table query failed: {e}")
-
+            # 8b. NFT Burn Rewards (G$ disbursed to users who burn their NFTs)
+            nft_burn_rows = _paginate_disbursement_rows(
+                disbursement_client, 'nft_burn_history',
+                'burn_amount_g',
+                order_columns=['created_at', 'burned_at'],
+            )
+            nft_burn_total = _sum_amount(nft_burn_rows, 'burn_amount_g')
             breakdown['nft_burns'] = nft_burn_total
             total_disbursements += nft_burn_total
             logger.debug(f"   NFT Burn Rewards Total (G$ OUT): {nft_burn_total} G$")
 
-            # 9. Daily Voucher claims count (no G$ amount - URL vouchers)
-            daily_voucher_claims = 0
-            try:
-                voucher_result = supabase.table('daily_voucher')\
-                    .select('id, is_claimed')\
-                    .eq('is_claimed', True)\
-                    .execute()
-
-                logger.debug(f"📊 Daily Voucher Query: Found {len(voucher_result.data) if voucher_result.data else 0} claimed records")
-                daily_voucher_claims = len(voucher_result.data) if voucher_result.data else 0
-            except Exception as e:
-                logger.warning(f"⚠️ Daily voucher table query failed: {e}")
-
+            # 9. Daily Voucher claims count. Vouchers pay G$ out of the
+            # OneTimePayments escrow (a separate rail), so this stays a claim
+            # count and is deliberately NOT added to the disbursed total.
+            voucher_rows = _paginate_disbursement_rows(
+                disbursement_client, 'daily_voucher',
+                'id, is_claimed',
+                filters=[('is_claimed', True)],
+                order_columns=['claimed_at', 'voucher_date'],
+            )
+            daily_voucher_claims = len(voucher_rows)
             breakdown['daily_voucher_claims'] = daily_voucher_claims
             logger.debug(f"   Daily Voucher Claims: {daily_voucher_claims}")
 
-            # Get weekly disbursements (last 7 days)
-            logger.info(f"📅 Calculating weekly disbursements from {start_date_weekly_str} to {end_date_str}...")
+            # ---- Time-windowed breakdowns (same sources and status rules) ----
+            weekly_learn_earn_rows = _paginate_disbursement_rows(
+                disbursement_client, 'learnearn_log',
+                'amount_g$, timestamp, status',
+                filters=[
+                    ('status', True),
+                    ('timestamp', ('gte', start_date_weekly_str)),
+                    ('timestamp', ('lte', end_date_str)),
+                ],
+                order_columns=['timestamp'],
+            )
+            weekly_learn_earn_total = _sum_amount(weekly_learn_earn_rows, 'amount_g$')
 
-            # Weekly Learn & Earn
-            logger.debug(f"🔍 Querying Learn & Earn (weekly) from {start_date_weekly_str} to {end_date_str}")
-            weekly_learn_earn_result = supabase.table('learnearn_log')\
-                .select('amount_g$, timestamp')\
-                .gte('timestamp', start_date_weekly_str)\
-                .lte('timestamp', end_date_str)\
-                .eq('status', True)\
-                .execute()
+            weekly_telegram_rows = _paginate_disbursement_rows(
+                disbursement_client, 'telegram_task_log',
+                'reward_amount, created_at, status',
+                filters=[
+                    ('status', 'completed'),
+                    ('created_at', ('gte', start_date_weekly_str)),
+                    ('created_at', ('lte', end_date_str)),
+                ],
+                order_columns=['created_at', 'id'],
+            )
+            weekly_telegram_total = _sum_amount(weekly_telegram_rows, 'reward_amount')
 
-            weekly_learn_earn_total = 0
-            if weekly_learn_earn_result.data:
-                for record in weekly_learn_earn_result.data:
-                    amount = record.get('amount_g$', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            weekly_learn_earn_total += float(amount)
-                        except (ValueError, TypeError):
-                            pass
+            weekly_twitter_rows = _paginate_disbursement_rows(
+                disbursement_client, 'twitter_task_log',
+                'reward_amount, created_at, status',
+                filters=[
+                    ('status', 'completed'),
+                    ('created_at', ('gte', start_date_weekly_str)),
+                    ('created_at', ('lte', end_date_str)),
+                ],
+                order_columns=['created_at', 'id'],
+            )
+            weekly_twitter_total = _sum_amount(weekly_twitter_rows, 'reward_amount')
 
-            # Weekly Telegram Task
-            logger.debug(f"🔍 Querying Telegram Task (weekly) from {start_date_weekly_str} to {end_date_str}")
-            weekly_telegram_result = supabase.table('telegram_task_log')\
-                .select('reward_amount, created_at')\
-                .gte('created_at', start_date_weekly_str)\
-                .lte('created_at', end_date_str)\
-                .execute()
+            weekly_community_rows = _paginate_disbursement_rows(
+                disbursement_client, 'community_stories_submissions',
+                'reward_amount, reviewed_at, status',
+                filters=[
+                    ('status', ('in', ['approved', 'approved_low', 'approved_high'])),
+                    ('reviewed_at', ('gte', start_date_weekly_str)),
+                    ('reviewed_at', ('lte', end_date_str)),
+                ],
+                order_columns=['reviewed_at', 'submitted_at', 'created_at'],
+            )
+            weekly_community_total = _sum_amount(weekly_community_rows, 'reward_amount')
 
-            weekly_telegram_total = 0
-            if weekly_telegram_result.data:
-                for record in weekly_telegram_result.data:
-                    amount = record.get('reward_amount', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            weekly_telegram_total += float(amount)
-                        except (ValueError, TypeError):
-                            pass
-
-            # Weekly Twitter Task
-            logger.debug(f"🔍 Querying Twitter Task (weekly) from {start_date_weekly_str} to {end_date_str}")
-            weekly_twitter_result = supabase.table('twitter_task_log')\
-                .select('reward_amount, created_at')\
-                .gte('created_at', start_date_weekly_str)\
-                .lte('created_at', end_date_str)\
-                .execute()
-
-            weekly_twitter_total = 0
-            if weekly_twitter_result.data:
-                for record in weekly_twitter_result.data:
-                    amount = record.get('reward_amount', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            weekly_twitter_total += float(amount)
-                        except (ValueError, TypeError):
-                            pass
-
-            # Weekly Community Stories
-            logger.debug(f"🔍 Querying Community Stories (weekly) from {start_date_weekly_str} to {end_date_str}")
-            weekly_community_result = supabase.table('community_stories_submissions')\
-                .select('reward_amount, reviewed_at, status')\
-                .in_('status', ['approved', 'approved_low', 'approved_high'])\
-                .gte('reviewed_at', start_date_weekly_str)\
-                .lte('reviewed_at', end_date_str)\
-                .execute()
-
-            logger.debug(f"📊 Weekly Community Stories Query Result: {len(weekly_community_result.data) if weekly_community_result.data else 0} records")
-            if weekly_community_result.data:
-                logger.debug(f"   Sample records: {weekly_community_result.data[:3]}")
-
-            weekly_community_total = 0
-            if weekly_community_result.data:
-                for record in weekly_community_result.data:
-                    amount = record.get('reward_amount', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            weekly_community_total += float(amount)
-                        except (ValueError, TypeError):
-                            logger.warning(f"   Invalid amount: {amount}")
-
+            logger.info(f"📅 Weekly Learn & Earn: {weekly_learn_earn_total} G$")
             logger.info(f"📅 Weekly Telegram Task: {weekly_telegram_total} G$")
             logger.info(f"📅 Weekly Twitter Task: {weekly_twitter_total} G$")
             logger.info(f"📅 Weekly Community Stories: {weekly_community_total} G$")
 
-            # Get monthly disbursements (last 30 days)
-            logger.info(f"📅 Calculating monthly disbursements from {start_date_monthly_str} to {end_date_str}...")
+            monthly_learn_earn_rows = _paginate_disbursement_rows(
+                disbursement_client, 'learnearn_log',
+                'amount_g$, timestamp, status',
+                filters=[
+                    ('status', True),
+                    ('timestamp', ('gte', start_date_monthly_str)),
+                    ('timestamp', ('lte', end_date_str)),
+                ],
+                order_columns=['timestamp'],
+            )
+            monthly_learn_earn_total = _sum_amount(monthly_learn_earn_rows, 'amount_g$')
 
-            # Monthly Learn & Earn
-            logger.debug(f"🔍 Querying Learn & Earn (monthly) from {start_date_monthly_str} to {end_date_str}")
-            monthly_learn_earn_result = supabase.table('learnearn_log')\
-                .select('amount_g$, timestamp')\
-                .gte('timestamp', start_date_monthly_str)\
-                .lte('timestamp', end_date_str)\
-                .eq('status', True)\
-                .execute()
+            monthly_telegram_rows = _paginate_disbursement_rows(
+                disbursement_client, 'telegram_task_log',
+                'reward_amount, created_at, status',
+                filters=[
+                    ('status', 'completed'),
+                    ('created_at', ('gte', start_date_monthly_str)),
+                    ('created_at', ('lte', end_date_str)),
+                ],
+                order_columns=['created_at', 'id'],
+            )
+            monthly_telegram_total = _sum_amount(monthly_telegram_rows, 'reward_amount')
 
-            monthly_learn_earn_total = 0
-            if monthly_learn_earn_result.data:
-                for record in monthly_learn_earn_result.data:
-                    amount = record.get('amount_g$', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            monthly_learn_earn_total += float(amount)
-                        except (ValueError, TypeError):
-                            pass
+            monthly_twitter_rows = _paginate_disbursement_rows(
+                disbursement_client, 'twitter_task_log',
+                'reward_amount, created_at, status',
+                filters=[
+                    ('status', 'completed'),
+                    ('created_at', ('gte', start_date_monthly_str)),
+                    ('created_at', ('lte', end_date_str)),
+                ],
+                order_columns=['created_at', 'id'],
+            )
+            monthly_twitter_total = _sum_amount(monthly_twitter_rows, 'reward_amount')
 
-            # Monthly Telegram Task
-            logger.debug(f"🔍 Querying Telegram Task (monthly) from {start_date_monthly_str} to {end_date_str}")
-            monthly_telegram_result = supabase.table('telegram_task_log')\
-                .select('reward_amount, created_at')\
-                .gte('created_at', start_date_monthly_str)\
-                .lte('created_at', end_date_str)\
-                .execute()
-
-            monthly_telegram_total = 0
-            if monthly_telegram_result.data:
-                for record in monthly_telegram_result.data:
-                    amount = record.get('reward_amount', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            monthly_telegram_total += float(amount)
-                        except (ValueError, TypeError):
-                            pass
-
-            # Monthly Twitter Task
-            logger.debug(f"🔍 Querying Twitter Task (monthly) from {start_date_monthly_str} to {end_date_str}")
-            monthly_twitter_result = supabase.table('twitter_task_log')\
-                .select('reward_amount, created_at')\
-                .gte('created_at', start_date_monthly_str)\
-                .lte('created_at', end_date_str)\
-                .execute()
-
-            monthly_twitter_total = 0
-            if monthly_twitter_result.data:
-                for record in monthly_twitter_result.data:
-                    amount = record.get('reward_amount', 0)
-                    if amount is not None and amount != '':
-                        try:
-                            monthly_twitter_total += float(amount)
-                        except (ValueError, TypeError):
-                            pass
-
-            # Monthly Community Stories
-            logger.debug(f"🔍 Querying Community Stories (monthly) from {start_date_monthly_str} to {end_date_str}")
-            try:
-                monthly_community_result = supabase.table('community_stories_submissions')\
-                    .select('reward_amount, reviewed_at, status')\
-                    .in_('status', ['approved', 'approved_low', 'approved_high'])\
-                    .gte('reviewed_at', start_date_monthly_str)\
-                    .lte('reviewed_at', end_date_str)\
-                    .execute()
-
-                logger.debug(f"📊 Monthly Community Stories Query Result: {len(monthly_community_result.data) if monthly_community_result.data else 0} records")
-                if monthly_community_result.data:
-                    logger.debug(f"   Sample records: {monthly_community_result.data[:3]}")
-
-                monthly_community_total = 0
-                if monthly_community_result.data:
-                    for record in monthly_community_result.data:
-                        amount = record.get('reward_amount', 0)
-                        if amount is not None and amount != '':
-                            try:
-                                monthly_community_total += float(amount)
-                            except (ValueError, TypeError):
-                                logger.warning(f"   Invalid amount: {amount}")
-            except Exception as e:
-                logger.error(f"❌ Error querying monthly Community Stories: {e}")
-                monthly_community_total = 0
+            monthly_community_rows = _paginate_disbursement_rows(
+                disbursement_client, 'community_stories_submissions',
+                'reward_amount, reviewed_at, status',
+                filters=[
+                    ('status', ('in', ['approved', 'approved_low', 'approved_high'])),
+                    ('reviewed_at', ('gte', start_date_monthly_str)),
+                    ('reviewed_at', ('lte', end_date_str)),
+                ],
+                order_columns=['reviewed_at', 'submitted_at', 'created_at'],
+            )
+            monthly_community_total = _sum_amount(monthly_community_rows, 'reward_amount')
 
             logger.info(f"📅 Monthly Learn & Earn: {monthly_learn_earn_total} G$")
             logger.info(f"📅 Monthly Telegram Task: {monthly_telegram_total} G$")
             logger.info(f"📅 Monthly Twitter Task: {monthly_twitter_total} G$")
             logger.info(f"📅 Monthly Community Stories: {monthly_community_total} G$")
-
             # Format breakdown for display
             breakdown_formatted = {
                 "Learn & Earn Rewards": f"{learn_earn_total:,.1f} G$",
                 "Telegram Task Rewards": f"{telegram_task_total:,.1f} G$",
                 "Twitter Task Rewards": f"{twitter_task_total:,.1f} G$",
                 "Community Stories Rewards": f"{community_stories_total:,.1f} G$",
-                "Minigames Withdrawals": f"{minigames_total:,.1f} G$",
+                "Play & Earn Payouts": f"{minigames_total:,.1f} G$",
                 "Forum Rewards Disbursed": f"{forum_disbursed_total:,.1f} G$",
                 "Task Completion Rewards": f"{task_completion_total:,.1f} G$",
                 "NFT Card Sales (G$ OUT)": f"{nft_sales_total:,.1f} G$",
@@ -1142,12 +1191,12 @@ class AnalyticsService:
 
             logger.debug(f"📊 Formatted breakdown: {breakdown_formatted}")
 
-            logger.debug(f"📊 Total G$ Disbursements Analysis:")
+            logger.debug("📊 Total G$ Disbursements Analysis:")
             logger.debug(f"   Learn & Earn: {learn_earn_total:,.1f} G$")
             logger.debug(f"   Telegram Task: {telegram_task_total:,.1f} G$")
             logger.debug(f"   Twitter Task: {twitter_task_total:,.1f} G$")
             logger.debug(f"   Community Stories: {community_stories_total:,.1f} G$")
-            logger.debug(f"   Minigames Withdrawals: {minigames_total:,.1f} G$")
+            logger.debug(f"   Play & Earn Payouts: {minigames_total:,.1f} G$")
             logger.debug(f"   Forum Disbursed: {forum_disbursed_total:,.1f} G$")
             logger.debug(f"   Task Completion: {task_completion_total:,.1f} G$")
             logger.debug(f"   TOTAL DISBURSED: {total_disbursements:,.1f} G$")
@@ -1199,7 +1248,7 @@ class AnalyticsService:
                 "Telegram Task Rewards": "0.0 G$",
                 "Twitter Task Rewards": "0.0 G$",
                 "Community Stories Rewards": "0.0 G$",
-                "Minigames Withdrawals": "0.0 G$",
+                "Play & Earn Payouts": "0.0 G$",
                 "Forum Rewards Disbursed": "0.0 G$",
                 "Task Completion Rewards": "0.0 G$",
                 "NFT Card Sales (G$ OUT)": "0.0 G$",
