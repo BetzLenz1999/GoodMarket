@@ -1164,6 +1164,27 @@
         }
         .countdown-note { font-size: 0.68rem; color: var(--text-muted); margin-top: 0.2rem; }
 
+        /* Private key warning */
+        .pk-warning {
+            border: 1px solid rgba(255,82,82,0.25);
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            font-size: 0.82rem;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+        .pk-warning strong { color: var(--red); }
+        .pk-box {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 0.9rem 1rem;
+            font-family: monospace;
+            font-size: 0.78rem;
+            word-break: break-all;
+            line-height: 1.6;
+            margin-bottom: 1rem;
+            display: none;
+        }
 
         /* Alert */
         .alert {
@@ -1837,6 +1858,11 @@
         .countdown-display { background: linear-gradient(90deg, #a78bfa, #22d3ee); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 
         /* ── Warnings / alerts ── */
+        .pk-warning { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.28); color: #fca5a5; }
+        .pk-box { background: rgba(255,255,255,0.04); border-color: var(--card-border); color: var(--text-dim); }
+        /* The legacy base rule hides .pk-box (it was a toggle target); the
+           private-key reveal needs it visible, so opt back in here. */
+        #pkModal .pk-box { display: block; color: var(--text); user-select: all; }
         .alert-success { background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.32); color: #6ee7b7; }
         .alert-error   { background: rgba(248,113,113,0.12); border-color: rgba(248,113,113,0.3); color: #fca5a5; }
         .alert-info    { background: rgba(var(--accent-rgb),0.14); border-color: rgba(var(--accent-rgb),0.34); color: #c4b5fd; }
@@ -2768,6 +2794,18 @@
                 <div style="font-size:0.88rem;color:var(--text);">{{ 'GoodMarket' if login_method == 'walletconnect' else (login_method | replace('_', ' ') | title) }}</div>
             </div>
 
+            {% if (login_method or '')|lower == 'local' %}
+            {# Private-key reveal is only meaningful for the in-app wallet — the
+               key is generated in the browser and never leaves the device. #}
+            <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);">
+                <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">🔑 Private Key</div>
+                <div class="pk-warning" style="margin-bottom:0.75rem;">
+                    <strong>Never share your private key.</strong> Anyone who sees it can take <strong>all</strong> the funds in this wallet. GoodMarket support will <strong>never</strong> ask you for it.
+                </div>
+                <button type="button" class="btn-secondary" style="width:100%;" onclick="openPkModal()">Reveal private key</button>
+            </div>
+            {% endif %}
+
             <div style="margin-top:1rem;display:flex;gap:0.75rem;">
                 <a href="/overview" class="btn-secondary" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(255,255,255,0.06);color:var(--text-dim);font-size:0.9rem;font-weight:600;border:1px solid var(--card-border);">Overview</a>
                 <a href="/logout" class="btn-secondary btn-danger" style="flex:1;text-align:center;text-decoration:none;display:block;padding:0.8rem;border-radius:14px;background:rgba(248,113,113,0.06);color:#f87171;font-size:0.9rem;font-weight:600;border:1px solid rgba(248,113,113,0.22);">Logout</a>
@@ -2777,6 +2815,45 @@
         </div>
     </div>
 
+    {% if (login_method or '')|lower == 'local' %}
+    <!-- Private-key reveal for the in-app wallet. The key is decrypted locally
+         and shown only after an explicit warning acknowledgement + PIN
+         re-entry; it is never sent to the server. DOM-ordered AFTER
+         settingsModal so it stacks above it (shared z-index 200). -->
+    <div class="modal-overlay" id="pkModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">🔑 Private Key</div>
+
+            <div id="pkStepWarn">
+                <div class="pk-warning">
+                    <strong>Read this before revealing.</strong> This private key is <strong>full control</strong> of your wallet.
+                    Anyone who sees it — a friend, "support", an admin, or anyone who messages you — can <strong>take all the
+                    G$ and other funds</strong> in this wallet, and it <strong>cannot be reversed</strong>.
+                    <br><br>
+                    <strong>Never share it with anyone.</strong> GoodMarket support will never ask for your private key or your
+                    recovery words. Do not screenshot it, do not send it in chat or email, and do not paste it into any website.
+                </div>
+                <label style="display:flex;gap:0.6rem;align-items:flex-start;font-size:0.85rem;line-height:1.5;color:var(--text-dim);margin:0.25rem 0 1rem;">
+                    <input type="checkbox" id="pkAck" style="margin-top:0.2rem;flex:0 0 auto;" onchange="document.getElementById('pkContinueBtn').disabled = !this.checked">
+                    <span>I understand that my private key must be <strong>shared with no one</strong>, and that if it is shared, all my funds can be taken with no way to get them back.</span>
+                </label>
+                <button id="pkContinueBtn" type="button" class="btn-primary" style="width:100%;" disabled onclick="pkContinue()">Continue</button>
+                <button type="button" class="btn-secondary" style="width:100%;margin-top:0.5rem;" onclick="closeModal('pkModal')">Cancel</button>
+            </div>
+
+            <div id="pkStepKey" style="display:none;">
+                <div class="pk-warning" style="margin-bottom:0.75rem;">
+                    <strong>Do not share this.</strong> Copy-paste it only into your own backup — never into chat, email, or any website.
+                </div>
+                <div class="pk-box" id="pkValue"></div>
+                <button type="button" class="btn-secondary" style="width:100%;" onclick="copyPrivateKey()">Copy private key</button>
+                <div id="pkStatus" style="display:none;font-size:0.8rem;text-align:center;margin-top:0.6rem;"></div>
+                <button type="button" class="btn-secondary" style="width:100%;margin-top:0.5rem;" onclick="closePkModal()">Close</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     <!-- De-verify Face Verification confirmation.
          DOM-ordered AFTER settingsModal because all overlays share z-index
          200 and stack by DOM order — an earlier position would open it
