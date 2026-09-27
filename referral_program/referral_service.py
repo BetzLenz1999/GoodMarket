@@ -1215,6 +1215,21 @@ class ReferralService:
                         f"⛔ Referral reward {reward_id} ({reward_type}) not paid: referee "
                         f"not on-chain verified ({gate.get('reason')})"
                     )
+                    # Reflect WHY it is queued. A row parked earlier during a
+                    # balance/gas shortfall keeps saying "Queued (low G$/gas)"
+                    # and an admin tops up a wallet that was never the blocker —
+                    # the real blocker is the referee's missing verification.
+                    if referral_id is not None:
+                        self.update_referral_status_by_id(
+                            referral_id, 'pending_face_verification',
+                            f"Referee not on-chain verified ({gate.get('reason')})"
+                        )
+                    elif gate.get('referee'):
+                        self.update_referral_status(
+                            gate.get('referee'), 'pending_face_verification',
+                            f"Referee not on-chain verified ({gate.get('reason')})",
+                            referral_id=None,
+                        )
                     continue
 
             # A 'failed' leg is only retried after a cooldown so a row that keeps
@@ -1364,7 +1379,7 @@ class ReferralService:
             "still_waiting_face_verification": reconcile_summary.get("still_waiting_face_verification", 0)
         }
 
-    def update_referral_status_by_id(self, referral_id: int, status: str) -> None:
+    def update_referral_status_by_id(self, referral_id: int, status: str, error_message: str = None) -> None:
         """Update one exact referral status by primary key."""
         supabase = _get_supabase()
         if not supabase:
@@ -1372,6 +1387,8 @@ class ReferralService:
         update_data = {'status': status}
         if status == 'completed':
             update_data['completed_at'] = datetime.now(timezone.utc).isoformat()
+        if error_message:
+            update_data['error_message'] = error_message
         _safe(
             lambda: supabase.table('referrals').update(update_data).eq('id', referral_id).execute(),
             op="update referral status by id"
@@ -1391,7 +1408,15 @@ class ReferralService:
         )
 
     def get_pending_disbursement_summary(self) -> dict:
-        """Get summary of pending disbursements waiting for REFERRAL_KEY balance."""
+        """Get summary of pending disbursements waiting for REFERRAL_KEY balance.
+
+        Only rows that would ACTUALLY pay once funds arrive are counted — i.e.
+        whose referee is on-chain verified. A 'pending_disbursed' row parked
+        during an earlier shortfall but whose referee was never verified is
+        blocked by verification, not by funds, so counting it would tell an
+        admin to top up a wallet that was never the bottleneck. Those rows are
+        reported separately under ``blocked_by_verification``.
+        """
         supabase = _get_supabase()
         if not supabase:
             return {"success": False, "error": "Database not available"}
@@ -1410,16 +1435,28 @@ class ReferralService:
                 "success": True,
                 "total_pending": 0,
                 "total_amount": 0.0,
+                "blocked_by_verification": 0,
+                "blocked_by_verification_amount": 0.0,
                 "rewards": []
             }
 
         rewards = pending_result.data
-        total_amount = sum(float(r.get('reward_amount', 0)) for r in rewards)
+        fund_blocked = []
+        verification_blocked = []
+        for r in rewards:
+            if self._reward_referee_verified(r).get('verified'):
+                fund_blocked.append(r)
+            else:
+                verification_blocked.append(r)
 
         return {
             "success": True,
-            "total_pending": len(rewards),
-            "total_amount": total_amount,
+            "total_pending": len(fund_blocked),
+            "total_amount": sum(float(r.get('reward_amount', 0)) for r in fund_blocked),
+            "blocked_by_verification": len(verification_blocked),
+            "blocked_by_verification_amount": sum(
+                float(r.get('reward_amount', 0)) for r in verification_blocked
+            ),
             "rewards": [
                 {
                     "wallet": r.get('wallet_address'),
@@ -1428,7 +1465,7 @@ class ReferralService:
                     "created_at": r.get('created_at'),
                     "status": r.get('status')
                 }
-                for r in rewards
+                for r in fund_blocked
             ]
         }
 
