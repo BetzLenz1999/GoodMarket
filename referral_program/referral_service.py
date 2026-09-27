@@ -540,6 +540,87 @@ class ReferralService:
                 op="set verified_after_goodmarket for completed referral"
             )
 
+    def _resolve_reward_referral(self, reward: dict) -> dict | None:
+        """Resolve the referral a ``referral_rewards_log`` row belongs to.
+
+        A reward row's ``wallet_address`` is the PAYEE. For the ``referrer``
+        leg that is the (usually already-verified) inviter — NOT the referee
+        whose face verification the program actually requires. Resolving the
+        referral lets the gate check the REFEREE regardless of which leg is
+        being paid.
+
+        Returns the referral row, or None when it cannot be determined
+        unambiguously (missing referral_id + reused code matching several
+        referrals). Callers must treat None as "cannot prove" (fail closed).
+        """
+        supabase = _get_supabase()
+        if not supabase:
+            return None
+
+        referral_id = reward.get('referral_id')
+        code = reward.get('referral_code')
+        wallet = reward.get('wallet_address')
+        reward_type = reward.get('reward_type')
+
+        def _query():
+            query = supabase.table('referrals').select('*')
+            if referral_id is not None:
+                return query.eq('id', referral_id).limit(1).execute()
+            if not code or not wallet:
+                return None
+            query = query.eq('referral_code', code)
+            # Referral codes are reused by every invite, so the opposite
+            # wallet disambiguates which referral this leg belongs to.
+            if reward_type == 'referrer':
+                query = query.ilike('referrer_wallet', wallet)
+            else:
+                query = query.ilike('referee_wallet', wallet)
+            return query.execute()
+
+        result = _safe(_query, op="resolve referral for reward row")
+        rows = result.data if result and getattr(result, 'data', None) else []
+        if len(rows) != 1:
+            return None
+        return rows[0]
+
+    def _reward_referee_verified(self, reward: dict) -> dict:
+        """Check the REFEREE of a reward row's referral is on-chain verified.
+
+        This is the payout authority for the background disburser: the reward
+        is released only when the NEW user (referee) is whitelisted on the
+        GoodDollar Identity contract. Gating on the payee instead would let a
+        referrer leg through on the OLD user's verification while the referee
+        was never verified.
+
+        Admin-review override: a referral explicitly marked
+        ``onchain_verified`` by the admin endpoint (Celoscan checked by a human)
+        is honoured. Returns ``{"verified", "reason", "referee"}``.
+        """
+        referral = self._resolve_reward_referral(reward)
+
+        if referral is None:
+            # No referral row to prove against. A referee leg's payee IS the
+            # referee, so it can still be checked directly; a referrer leg
+            # cannot be attributed safely.
+            if reward.get('reward_type') == 'referee' and reward.get('wallet_address'):
+                gate = self.is_referee_onchain_verified(reward.get('wallet_address'))
+                return {"verified": gate.get('verified', False),
+                        "reason": gate.get('reason', 'unresolved_referral'),
+                        "referee": reward.get('wallet_address')}
+            return {"verified": False, "reason": "referral_unresolved", "referee": None}
+
+        referee = referral.get('referee_wallet')
+        if not referee:
+            return {"verified": False, "reason": "no_referee_wallet", "referee": None}
+
+        if referral.get('onchain_verified'):
+            return {"verified": True, "reason": "admin_onchain_verified", "referee": referee}
+
+        gate = self.is_referee_onchain_verified(referee)
+        return {"verified": gate.get('verified', False),
+                "reason": gate.get('reason', 'onchain_check_error'),
+                "referee": referee}
+
     def _get_referral_id(self, referral_code: str, referee_wallet: str = None, referrer_wallet: str = None):
         """Return the exact referrals.id for a reward log when available."""
         supabase = _get_supabase()
@@ -1114,15 +1195,26 @@ class ReferralService:
             
             referral_id = reward.get('referral_id')
 
-            # A row still in the legacy 'pending' state means "awaiting face
-            # verification" (only post-verification writes use
-            # 'pending_disbursed'). Never pay one without an on-chain proof —
-            # the referee's user_data flags are not sufficient. Leave it queued
-            # so a later verified trigger pays it.
-            if reward.get('status') == 'pending':
-                if not wallet or not self.is_referee_onchain_verified(wallet).get('verified'):
+            # THE REFEREE MUST BE ON-CHAIN VERIFIED — for BOTH legs.
+            # A reward row's `wallet_address` is the PAYEE: for the 'referrer'
+            # leg that is the OLD (already-verified) inviter. Checking the payee
+            # would let the referrer's 1000 G$ through while the NEW user this
+            # referral is about was never verified. So resolve the referral and
+            # gate on its REFEREE.
+            #
+            # This applies to every retryable state ('pending' — the legacy
+            # awaiting-verification marker — and 'pending_disbursed', which a
+            # balance/gas shortfall can queue BEFORE the referee verifies).
+            # Only the admin-reviewed override (referrals.onchain_verified)
+            # bypasses the chain read.
+            if reward.get('status') in ('pending', 'pending_disbursed'):
+                gate = self._reward_referee_verified(reward)
+                if not gate.get('verified'):
                     still_pending += 1
-                    logger.info(f"⛔ Legacy pending reward skipped (no on-chain verification): {wallet}")
+                    logger.info(
+                        f"⛔ Referral reward {reward_id} ({reward_type}) not paid: referee "
+                        f"not on-chain verified ({gate.get('reason')})"
+                    )
                     continue
 
             # A 'failed' leg is only retried after a cooldown so a row that keeps
