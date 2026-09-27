@@ -4627,26 +4627,24 @@ def get_referral_key_balance():
         # Check referral rewards contract balance
         balance_result = referral_blockchain_service.get_referral_wallet_balance()
         
-        # Count pending disbursements waiting for balance
-        supabase = get_supabase_client()
+        # Count pending disbursements that will ACTUALLY pay once funded — a
+        # 'pending_disbursed' row whose referee is not on-chain verified is
+        # blocked by verification, not by the REFERRAL_KEY balance, so counting
+        # it would tell the admin to top up a wallet that is not the bottleneck.
         pending_count = 0
         total_pending_amount = 0.0
-        
-        if supabase:
-            try:
-                pending_rewards = safe_supabase_operation(
-                    lambda: supabase.table('referral_rewards_log')
-                        .select('reward_amount')
-                        .eq('status', 'pending_disbursed')
-                        .execute(),
-                    fallback_result=type('obj', (object,), {'data': []})(),
-                    operation_name="get pending disbursed count"
-                )
-                if pending_rewards and pending_rewards.data:
-                    pending_count = len(pending_rewards.data)
-                    total_pending_amount = sum(float(r.get('reward_amount', 0)) for r in pending_rewards.data)
-            except Exception as e:
-                logger.warning(f"Could not fetch pending disbursements count: {e}")
+        blocked_by_verification = 0
+        blocked_by_verification_amount = 0.0
+        try:
+            summary = referral_service.get_pending_disbursement_summary()
+            if summary.get("success"):
+                pending_count = summary.get("total_pending", 0)
+                total_pending_amount = summary.get("total_amount", 0.0)
+                blocked_by_verification = summary.get("blocked_by_verification", 0)
+                blocked_by_verification_amount = summary.get(
+                    "blocked_by_verification_amount", 0.0)
+        except Exception as e:
+            logger.warning(f"Could not fetch pending disbursements count: {e}")
         
         celo_balance = balance_result.get("celo_balance")
         has_gas = celo_balance is None or celo_balance >= 0.001
@@ -4662,6 +4660,8 @@ def get_referral_key_balance():
             "operator": balance_result.get("operator"),
             "pending_disbursements_count": pending_count,
             "total_pending_amount_g": total_pending_amount,
+            "blocked_by_verification_count": blocked_by_verification,
+            "blocked_by_verification_amount_g": blocked_by_verification_amount,
             "can_process": (
                 balance_result.get("balance", 0) >= total_pending_amount and has_gas
             ) if balance_result.get("success") else False,
