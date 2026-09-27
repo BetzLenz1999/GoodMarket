@@ -286,12 +286,12 @@ def confirm_goodmarket_claim():
             logger.warning(f"[gm-claim-confirm] attribution backfill skipped: {e_attr}")
 
     # REFERRAL PROGRAM auto-disbursement trigger.
-    # A confirmed UBI claim through the GoodMarket UI is definitive proof the
-    # referee is face-verified (the UBI contract rejects non-whitelisted
-    # callers), so any pending referral for this wallet pays out right now.
-    # Runs on a daemon thread — disbursement waits on two on-chain receipts
-    # and must not block the claim confirmation response. The helper
-    # CAS-claims the referral row, so fv-callback / verify-identity /
+    # A claim confirmation is a useful signal that the referee just verified,
+    # but the payload is client-supplied and not proof of ownership, so the
+    # helper's own ON-CHAIN face-verification gate decides whether the reward
+    # is actually released. Runs on a daemon thread — disbursement waits on two
+    # on-chain receipts and must not block the claim confirmation response. The
+    # helper CAS-claims the referral row, so fv-callback / verify-identity /
     # verify-ubi firing at the same time can never double-pay.
     if status == "confirmed":
         try:
@@ -1749,8 +1749,10 @@ def verify_ubi():
                     )
 
                 if fv_result.get('verified', False):
+                    # fv_result came from is_identity_verified() above, so the
+                    # on-chain proof is already in hand — skip the duplicate read.
                     referral_service.auto_disburse_pending_referral(
-                        wallet_address, source="verify_ubi"
+                        wallet_address, source="verify_ubi", onchain_confirmed=True
                     )
 
             except Exception as ref_error:
@@ -7525,29 +7527,53 @@ def wallet_page():
     if not wallet or not session.get("verified"):
         return redirect(url_for("routes.index"))
 
-    # ��─ FV-CALLBACK ATTRIBUTION ──────────────────────────────────────────
+    # ── FV-CALLBACK ATTRIBUTION ──────────────────────────────────────────
     # GoodDollar redirects back here (via the rdu param) after face
     # verification with src=goodmarket.  Record the attribution NOW while
     # the on-chain lastAuthenticated is still within the strict timing
     # window, so verified_after_goodmarket is set immediately instead of
     # relying on a later claim or re-login to pick it up.
+    #
+    # IMPORTANT: these query params are just a URL — they are NOT proof the
+    # face verification succeeded. Writing `face_verified = True` from them
+    # unconditionally let a failed/cancelled verification (or a hand-typed
+    # URL) mark a wallet as verified, and referral payout used to trust that
+    # flag. We now require the wallet to actually be whitelisted on-chain
+    # before stamping anything; `verified_after_goodmarket` remains the
+    # on-chain-gated attribution (the strict attribution helper reads
+    # `face_verified_at`, so we only set it once the chain confirms).
     fv_pending = request.args.get("fv_pending") == "1"
     fv_src_goodmarket = request.args.get("src", "") == "goodmarket"
     if fv_pending and fv_src_goodmarket and wallet:
         try:
-            analytics.track_verification_attempt(wallet, True, face_verified=True)
-        except Exception as fv_attr_err:
-            logger.warning(f"[wallet-fv-attr] track_verification_attempt error: {fv_attr_err}")
-        try:
-            from goodmarket_attribution_backfill import mark_verified_via_goodmarket
-            mark_verified_via_goodmarket(
-                wallet,
-                source="wallet_fv_redirect:goodmarket",
-                require_on_chain_check=False,
-                background=True,
+            from blockchain import is_identity_verified
+            fv_onchain = is_identity_verified(wallet) or {}
+            fv_confirmed = bool(fv_onchain.get("verified", False)) and not fv_onchain.get("error")
+        except Exception as fv_check_err:
+            logger.warning(f"[wallet-fv-attr] on-chain FV check failed for {wallet[:8]}…: {fv_check_err}")
+            fv_confirmed = False
+
+        if fv_confirmed:
+            try:
+                analytics.track_verification_attempt(wallet, True, face_verified=True)
+            except Exception as fv_attr_err:
+                logger.warning(f"[wallet-fv-attr] track_verification_attempt error: {fv_attr_err}")
+            try:
+                from goodmarket_attribution_backfill import mark_verified_via_goodmarket
+                mark_verified_via_goodmarket(
+                    wallet,
+                    source="wallet_fv_redirect:goodmarket",
+                    require_on_chain_check=False,
+                    background=True,
+                )
+            except Exception as fv_attr_err:
+                logger.warning(f"[wallet-fv-attr] mark_verified_via_goodmarket error: {fv_attr_err}")
+        else:
+            logger.info(
+                f"ℹ️ [wallet-fv-attr] fv_pending redirect for {wallet[:8]}… but the wallet is "
+                f"not whitelisted on-chain yet — attribution NOT stamped "
+                f"(face_verified left untouched)"
             )
-        except Exception as fv_attr_err:
-            logger.warning(f"[wallet-fv-attr] mark_verified_via_goodmarket error: {fv_attr_err}")
 
     buy_eth_visible = True
     try:
