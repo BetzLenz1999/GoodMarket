@@ -2593,8 +2593,10 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                            rewards send automatically (Referrer <strong>1,000 G$</strong> | Referee <strong>500 G$</strong>)<br>
                         3. A background reconciler re-checks stuck referrals every few minutes<br><br>
                         <strong>Manual recovery:</strong> if a referral is stuck (<em>failed</em> / <em>disbursing</em> /
-                        <em>pending_disbursed</em>), first make sure the <strong>REFERRAL_KEY wallet has enough G$ AND CELO gas</strong>
-                        (see status above), then click <strong>👁️ View → ✅ Approve & Disburse</strong>. Retrying is safe —
+                        <em>pending_disbursed</em>), first check the <strong>REFERRAL_KEY wallet has enough G$ AND CELO gas</strong>
+                        (see status above). If the queue is instead <strong>blocked on the referee's face verification</strong>,
+                        top-ups won't help — the rewards release automatically once the new user verifies on-chain.
+                        Then click <strong>👁️ View → ✅ Approve & Disburse</strong> to retry. Retrying is safe —
                         already-paid legs are never sent twice.
                     </p>
                 </div>
@@ -7544,7 +7546,7 @@ async function loadMinigamesMaintenance() {
             const map = {
                 'completed': { label: '✅ Completed', color: '#10b981', bg: 'rgba(16,185,129,0.15)' },
                 'pending_face_verification': { label: '⏳ Awaiting FV / UBI claim', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
-                'pending_disbursed': { label: '💸 Queued (low G$/gas)', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
+                'pending_disbursed': { label: '💸 Queued (funds or referee FV)', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
                 'disbursing': { label: '⏳ Disbursing (stuck? retry)', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
                 'failed': { label: '❌ Failed (retry)', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' }
             };
@@ -7631,6 +7633,8 @@ async function loadMinigamesMaintenance() {
                 const hasGas = data.has_gas !== false;
                 const pendingCount = data.pending_disbursements_count || 0;
                 const pendingAmount = Number(data.total_pending_amount_g || 0);
+                const blockedByFv = data.blocked_by_verification_count || 0;
+                const blockedByFvAmount = Number(data.blocked_by_verification_amount_g || 0);
                 const canProcess = data.can_process || false;
 
                 // Determine color based on balance status
@@ -7679,6 +7683,16 @@ async function loadMinigamesMaintenance() {
                 }
                 if (!hasGas) {
                     referralKeyAlerts.push('⛽ <strong>No CELO Gas:</strong> the REFERRAL_KEY wallet has no CELO for gas — referral payouts stay queued until you send a small amount of CELO to it.');
+                }
+                if (blockedByFv > 0) {
+                    alertBox.style.display = 'block';
+                    alertBox.style.background = 'rgba(99,102,241,0.15)';
+                    alertBox.style.color = '#a5b4fc';
+                    alertBox.style.borderLeft = '4px solid #6366f1';
+                    alertBox.innerHTML = referralKeyAlerts.join('<br>') +
+                        (referralKeyAlerts.length ? '<br>' : '') +
+                        `ℹ️ <strong>${blockedByFv} reward${blockedByFv > 1 ? 's' : ''} (${blockedByFvAmount.toFixed(2)} G$) waiting on the REFEREE's face verification</strong> — not a funds problem. These pay automatically once the new user is verified on-chain.`;
+                    return;
                 }
                 if (referralKeyAlerts.length) {
                     alertBox.style.display = 'block';
