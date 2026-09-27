@@ -57,6 +57,11 @@ class ReferralService:
 
         This uses the same strict attribution helper as overview analytics so
         referral + user_data stay consistent.
+
+        Attribution is a TIMING claim (the on-chain auth happened during a
+        GoodMarket session), NOT proof the wallet is currently whitelisted. It
+        is used as a secondary signal only — the payout authority is
+        ``is_referee_onchain_verified``.
         """
         supabase = _get_supabase()
         if not supabase:
@@ -351,6 +356,14 @@ class ReferralService:
         pending = self.get_pending_face_verification_referral(referee_wallet)
         if not pending.get("found"):
             return {"success": False, "reason": "no_pending_referral"}
+
+        # Authoritative gate: the referee must currently be whitelisted on the
+        # GoodDollar Identity contract. Attribution alone is timing-based and a
+        # wallet can be attributable yet no longer whitelisted (expired), so it
+        # is a secondary signal, never the payout authority.
+        gate = self.is_referee_onchain_verified(referee_wallet)
+        if not gate.get("verified"):
+            return {"success": False, "reason": gate.get("reason", "not_onchain_verified")}
 
         attribution = self.is_wallet_verified_via_goodmarket(referee_wallet)
         if not attribution.get("verified_via_goodmarket"):
@@ -1101,6 +1114,17 @@ class ReferralService:
             
             referral_id = reward.get('referral_id')
 
+            # A row still in the legacy 'pending' state means "awaiting face
+            # verification" (only post-verification writes use
+            # 'pending_disbursed'). Never pay one without an on-chain proof —
+            # the referee's user_data flags are not sufficient. Leave it queued
+            # so a later verified trigger pays it.
+            if reward.get('status') == 'pending':
+                if not wallet or not self.is_referee_onchain_verified(wallet).get('verified'):
+                    still_pending += 1
+                    logger.info(f"⛔ Legacy pending reward skipped (no on-chain verification): {wallet}")
+                    continue
+
             # A 'failed' leg is only retried after a cooldown so a row that keeps
             # failing (e.g. a genuinely reverted tx) isn't hammered every 15-min
             # reconciler tick. The cooldown is measured from the last attempt
@@ -1321,7 +1345,34 @@ class ReferralService:
     # PHASE 2: Auto-trigger referral after verification/UBI claim
     # =========================================================================
 
-    def auto_disburse_pending_referral(self, referee_wallet: str, source: str = "auto") -> dict:
+    def is_referee_onchain_verified(self, referee_wallet: str) -> dict:
+        """Authoritative face-verification gate for referral payouts.
+
+        Referral rewards may only be paid once the REFEREE is whitelisted on
+        the GoodDollar Identity contract. `user_data.face_verified` /
+        `verified_after_goodmarket` are display/attribution flags that can be
+        written optimistically (e.g. the /wallet?fv_pending=1&src=goodmarket
+        redirect, which is just a URL), so they must never be the sole reason a
+        payout happens. This checks the chain directly and FAILS CLOSED — an RPC
+        error means "not verified" so a flaky node can never release a reward.
+
+        Returns ``{"verified": bool, "reason": str}``.
+        """
+        try:
+            from blockchain import is_identity_verified
+            result = is_identity_verified(referee_wallet) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Referral on-chain verification check failed for {referee_wallet[:8]}...: {exc}")
+            return {"verified": False, "reason": "onchain_check_error"}
+
+        if result.get("error"):
+            return {"verified": False, "reason": "onchain_check_error"}
+        if result.get("verified", False):
+            return {"verified": True, "reason": "onchain_verified"}
+        return {"verified": False, "reason": "not_onchain_verified"}
+
+    def auto_disburse_pending_referral(self, referee_wallet: str, source: str = "auto",
+                                       onchain_confirmed: bool = False) -> dict:
         """CAS-claim any pending referral for this referee and disburse it.
 
         Single entry point for every automatic trigger (fv-callback,
@@ -1329,9 +1380,29 @@ class ReferralService:
         The claim is atomic, so concurrent triggers can never double-disburse;
         the duplicate checks inside process_referral_disbursement are the
         second layer of protection.
+
+        Verification gate: the referee must be face-verified on the GoodDollar
+        Identity contract. ``onchain_confirmed`` lets a caller that has ALREADY
+        proven the referee is verified on-chain (e.g. /verify-ubi, which only
+        reaches this code after its own is_identity_verified check passed) skip
+        the duplicate RPC read. Every other caller (fv-callback, claim confirm)
+        must pass False so the check actually runs — their trigger conditions
+        come from client-supplied query params / payloads and are NOT proof.
         """
         if not referee_wallet:
             return {"success": False, "reason": "no_wallet"}
+
+        # Authoritative gate BEFORE claiming: a DB-only flag must never pay out.
+        if not onchain_confirmed:
+            gate = self.is_referee_onchain_verified(referee_wallet)
+            if not gate.get("verified"):
+                logger.info(
+                    f"⛔ [{source}] Referral not disbursed for {referee_wallet[:8]}...: "
+                    f"{gate.get('reason')}"
+                )
+                return {"success": False, "reason": "referee_not_onchain_verified",
+                        "verification_reason": gate.get("reason")}
+
         try:
             claimed = self.claim_pending_referral_for_disbursement(referee_wallet)
             if not claimed.get('claimed'):
@@ -1342,6 +1413,11 @@ class ReferralService:
             ref_code = referral_row.get('referral_code')
             if not referrer_wallet or not ref_code:
                 logger.warning(f"⚠️ [{source}] Claimed referral missing data for {referee_wallet[:8]}...")
+                self.update_referral_status(
+                    referee_wallet, 'pending_face_verification',
+                    "Claimed referral missing referrer/referral code",
+                    referral_row.get('id'),
+                )
                 return {"success": False, "reason": "incomplete_referral_row"}
             logger.info(f"🎁 [{source}] Auto-disbursing referral {ref_code} for {referee_wallet[:8]}...")
             result = self.process_referral_disbursement(
@@ -1362,12 +1438,13 @@ class ReferralService:
             logger.warning(f"⚠️ [{source}] Auto referral disbursement error for {referee_wallet[:8]}...: {e}")
             return {"success": False, "reason": "error", "error": str(e)}
 
-    def auto_disburse_pending_referral_async(self, referee_wallet: str, source: str = "auto") -> None:
+    def auto_disburse_pending_referral_async(self, referee_wallet: str, source: str = "auto",
+                                             onchain_confirmed: bool = False) -> None:
         """Fire-and-forget variant for latency-sensitive request paths."""
         import threading
         threading.Thread(
             target=self.auto_disburse_pending_referral,
-            args=(referee_wallet, source),
+            args=(referee_wallet, source, onchain_confirmed),
             daemon=True,
         ).start()
 
@@ -1459,65 +1536,36 @@ class ReferralService:
                 referral_id=referral.get('id')
             )
 
-        # Step 1: Check verification status - SIMPLE logic
-        user = _safe(
-            lambda: _get_supabase().table('user_data')
-                .select('face_verified, verified_after_goodmarket, face_verified_at')
-                .ilike('wallet_address', wallet_address)
-                .limit(1)
-                .execute(),
-            op="get user verification status"
-        )
-        
-        is_verified = False
-        verification_reason = "unknown"
-        
-        if user and user.data:
-            row = user.data[0]
-            # Simple check: if either flag is true, user is verified
-            if row.get('face_verified') == True or row.get('verified_after_goodmarket') == True:
-                is_verified = True
-                verification_reason = "database_flag"
-                logger.info(f"User {wallet_address[:8]} verified via database flag")
+        # Step 1 (AUTHORITATIVE): face verification must be proven ON-CHAIN.
+        # `user_data.face_verified` / `verified_after_goodmarket` are
+        # attribution/display flags that can be written optimistically (the
+        # /wallet?fv_pending=1&src=goodmarket redirect is just a URL), so they
+        # are recorded below but never authorize a payout on their own. This is
+        # the rule the program promises: the NEW user must actually be verified
+        # before any reward is released.
+        gate = self.is_referee_onchain_verified(wallet_address)
+        is_verified = gate.get('verified', False)
+        verification_reason = gate.get('reason', 'onchain_check_error')
+        if is_verified:
+            logger.info(f"User {wallet_address[:8]} verified on-chain (authoritative)")
+        else:
+            logger.info(f"User {wallet_address[:8]} NOT verified on-chain: {verification_reason}")
 
-        # Step 2: If not verified in DB, try GoodMarket attribution
-        if not is_verified:
-            attribution = self.is_wallet_verified_via_goodmarket(wallet_address)
-            is_verified = attribution.get('verified_via_goodmarket', False)
-            verification_reason = attribution.get('reason', 'attribution_failed')
-            if is_verified:
-                logger.info(f"User {wallet_address[:8]} verified via GoodMarket attribution: {verification_reason}")
-            else:
-                logger.info(f"User {wallet_address[:8]} NOT verified: {verification_reason}")
-
-        # Step 3: If still not verified, try on-chain check
-        if not is_verified:
-            try:
-                from blockchain import is_identity_verified
-                onchain_check = is_identity_verified(wallet_address)
-                is_verified = onchain_check.get('verified', False)
-                verification_reason = "on_chain_check"
-                if is_verified:
-                    logger.info(f"User {wallet_address[:8]} verified via on-chain check")
-            except Exception as e:
-                logger.warning(f"On-chain verification check failed for {wallet_address[:8]}...: {e}")
-
-        # Step 4: If verified, trigger disbursement
+        # Step 2: If verified, trigger disbursement
         if is_verified:
             logger.info(f"✅ User {wallet_address[:8]} verified! Triggering referral disbursement...")
             
-            # Mark user as verified in database if not already
-            if verification_reason != "database_flag":
-                _safe(
-                    lambda: _get_supabase().table('user_data')
-                        .update({
-                            'verified_after_goodmarket': True,
-                            'face_verified': True
-                        })
-                        .ilike('wallet_address', wallet_address)
-                        .execute(),
-                    op="mark user as verified"
-                )
+            # Record attribution/display flags now that the chain confirms it.
+            _safe(
+                lambda: _get_supabase().table('user_data')
+                    .update({
+                        'verified_after_goodmarket': True,
+                        'face_verified': True
+                    })
+                    .ilike('wallet_address', wallet_address)
+                    .execute(),
+                op="mark user as verified"
+            )
             
             # Process the disbursement
             result = self.process_referral_disbursement(
