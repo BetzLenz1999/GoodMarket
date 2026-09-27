@@ -1885,12 +1885,16 @@ def verify_identity():
                 "MiniPay, or MetaMask — is not eligible."
             )
         if is_face_verified:
-            # User is face-verified — check for a previously recorded pending
-            # referral and disburse the reward now. The helper CAS-claims the
-            # row, so concurrent triggers (fv-callback etc.) never double-pay.
+            # User is face-verified (proven on-chain above) — check for a
+            # previously recorded pending referral and disburse the reward now.
+            # The helper CAS-claims the row, so concurrent triggers (fv-callback
+            # etc.) never double-pay. onchain_confirmed=True skips the helper's
+            # duplicate RPC read since fv_status already proved it.
             try:
                 from referral_program.referral_service import referral_service as ref_svc
-                ref_svc.auto_disburse_pending_referral(wallet_address, source="verify_identity")
+                ref_svc.auto_disburse_pending_referral(
+                    wallet_address, source="verify_identity", onchain_confirmed=True
+                )
             except Exception as ref_err:
                 logger.warning(f"⚠️ Pending referral check error in verify-identity: {ref_err}")
 
