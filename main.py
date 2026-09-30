@@ -541,6 +541,18 @@ logger.info("✅ Routes blueprint registered with API endpoints")
 init_ai_agent(app)
 logger.info("✅ AI agent blueprint registered")
 
+# Community Chatroom (public room, HIDDEN by default via chatroom_feature).
+# Registered unconditionally so an admin can turn it on at runtime; every route
+# enforces the flag server-side (fail-closed) — see chatroom/service.is_enabled.
+try:
+    from chatroom import init_chatroom
+    if init_chatroom(app):
+        logger.info("✅ Community Chatroom blueprint registered")
+    else:
+        logger.error("❌ Community Chatroom initialization failed")
+except Exception as e:
+    logger.error(f"❌ Community Chatroom initialization failed: {e}")
+
 
 # Context processor: inject feature visibility into all templates (server-side, no flicker)
 _feature_visibility_cache = {"data": None, "expires_at": 0}
@@ -558,11 +570,12 @@ def inject_feature_visibility():
         swap_visible = True
         wallet_visible = True
         savings_visible = True
+        chatroom_visible = False
         if supabase:
             result = safe_supabase_operation(
                 lambda: supabase.table('maintenance_settings')
                     .select('feature_name,is_maintenance')
-                    .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_utility'])
+                    .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_utility', 'chatroom_feature'])
                     .execute(),
                 operation_name="context processor feature visibility"
             )
@@ -585,16 +598,20 @@ def inject_feature_visibility():
                         giftcard_visible = val
                     elif fn == 'store_utility':
                         utility_visible = val
+                    elif fn == 'chatroom_feature':
+                        chatroom_visible = val
         flags = {"swap_visible": swap_visible, "wallet_visible": wallet_visible,
                  "savings_visible": savings_visible,
                  "topup_visible": topup_visible, "giftcard_visible": giftcard_visible,
-                 "utility_visible": utility_visible}
+                 "utility_visible": utility_visible,
+                 "chatroom_visible": chatroom_visible}
         _feature_visibility_cache["data"] = flags
         _feature_visibility_cache["expires_at"] = now + 15
         return flags
     except Exception:
         return {"swap_visible": True, "wallet_visible": True, "savings_visible": True,
-                "topup_visible": True, "giftcard_visible": True, "utility_visible": True}
+                "topup_visible": True, "giftcard_visible": True, "utility_visible": True,
+                "chatroom_visible": False}
 
 # Initialize Telegram Task
 from telegram_task import init_telegram_task
