@@ -54,20 +54,366 @@
     });
   }
 
+  // ── Tipping ───────────────────────────────────────────────────────────
+  // A tip is a REAL on-chain transfer signed by the sender's own wallet. The
+  // widget resolves the recipient, hands the unsigned tx to the wallet, then
+  // posts the hash back for the backend to verify before it is announced.
+  var TIP_BOOT = {
+    wallet: '',
+    loginMethod: '',
+    tokens: [],
+    wcProjectId: '',
+    assetVersion: '',
+    celoChainId: 42220,
+    xdcChainId: 50,
+    celoRpc: 'https://forno.celo.org',
+    xdcRpc: 'https://earpc.xinfin.network'
+  };
+  var CHAIN_META = {
+    celo: { hex: '0xa4ec', id: 42220, name: 'Celo Mainnet', symbol: 'CELO',
+            rpc: 'https://forno.celo.org', explorer: 'https://celoscan.io/tx/' },
+    xdc: { hex: '0x32', id: 50, name: 'XDC Network', symbol: 'XDC',
+           rpc: 'https://earpc.xinfin.network', explorer: 'https://xdcscan.io/tx/' }
+  };
+  var tipBusy = false;
+
+  function configureTip(opts) {
+    opts = opts || {};
+    for (var k in opts) {
+      if (Object.prototype.hasOwnProperty.call(opts, k)) TIP_BOOT[k] = opts[k];
+    }
+    if (!TIP_BOOT.wallet && window.GM_CHAT_BOOT && window.GM_CHAT_BOOT.wallet) {
+      TIP_BOOT.wallet = window.GM_CHAT_BOOT.wallet;
+    }
+    if (!TIP_BOOT.loginMethod && window.GM_WALLET_BOOT && window.GM_WALLET_BOOT.wallet) {
+      TIP_BOOT.loginMethod = window.GM_WALLET_BOOT.loginMethod;
+    }
+    if (!TIP_BOOT.wallet && window.WALLET_ADDRESS) TIP_BOOT.wallet = window.WALLET_ADDRESS;
+  }
+
+  function _isLocalLogin() {
+    return (TIP_BOOT.loginMethod || '').toLowerCase() === 'local';
+  }
+
+  function _prefersWc() {
+    try {
+      return typeof GMWalletConnect !== 'undefined'
+        && typeof GMWalletConnect.prefersWcSigning === 'function'
+        && GMWalletConnect.prefersWcSigning();
+    } catch (_) { return false; }
+  }
+
+  function _tokenMeta(key) {
+    var list = TIP_BOOT.tokens || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].key === key) return list[i];
+    }
+    return null;
+  }
+
+  function _tipTokenLabel(key) {
+    var meta = _tokenMeta(key);
+    if (meta && meta.label) return meta.label;
+    return { GD: 'G$', CELO: 'CELO', XDC_GD: 'XDC G$', XDC: 'XDC' }[key] || key;
+  }
+
+  function _tipTokenNetwork(key) {
+    var meta = _tokenMeta(key);
+    return (meta && meta.network) || 'celo';
+  }
+
+  function _explorerUrl(key, hash) {
+    var net = _tipTokenNetwork(key);
+    var base = (CHAIN_META[net] && CHAIN_META[net].explorer) || 'https://celoscan.io/tx/';
+    return hash ? base + hash : '';
+  }
+
+  function _shortHash(hash) {
+    if (!hash || hash.length < 14) return hash || '';
+    return hash.slice(0, 10) + '…' + hash.slice(-6);
+  }
+
+  // GMLocalWallet decrypts + signs with ethers; the standalone chatroom page
+  // has no other reason to load it, so pull it in on demand. (No-op elsewhere.)
+  var ETHER_CANDIDATES = [
+    { src: 'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js',
+      integrity: 'sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM' },
+    { src: 'https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js' }
+  ];
+
+  function _ensureEthers() {
+    if (typeof ethers !== 'undefined') return Promise.resolve(true);
+    return new Promise(function (resolve) {
+      var index = 0;
+      function attempt() {
+        if (typeof ethers !== 'undefined') { resolve(true); return; }
+        if (index >= ETHER_CANDIDATES.length) { resolve(false); return; }
+        var cand = ETHER_CANDIDATES[index++];
+        var s = document.createElement('script');
+        s.src = cand.src;
+        if (cand.integrity) { s.integrity = cand.integrity; s.crossOrigin = 'anonymous'; }
+        s.referrerPolicy = 'no-referrer';
+        s.onload = function () { resolve(typeof ethers !== 'undefined'); };
+        s.onerror = attempt;
+        document.head.appendChild(s);
+      }
+      attempt();
+    });
+  }
+
+  // Resolve an EIP-1193 provider for THIS login method. Local logins must never
+  // fall through to an injected extension (a different account entirely).
+  async function _tipProvider() {
+    if (_isLocalLogin()) {
+      if (typeof GMLocalWallet === 'undefined') {
+        throw new Error('Your in-app wallet is still loading. Please try again.');
+      }
+      if (typeof ethers === 'undefined') {
+        var loaded = await _ensureEthers();
+        if (!loaded) throw new Error('Could not load the wallet library. Please check your connection and try again.');
+      }
+      if (!GMLocalWallet.isUnlocked() && typeof window._lwOpenUnlockModal === 'function') {
+        await window._lwOpenUnlockModal({
+          title: 'Sign this tip',
+          subtitle: 'Enter your PIN to send your tip',
+          submitLabel: 'Sign & Send',
+          busyLabel: 'Signing…'
+        });
+      }
+      if (!GMLocalWallet.isUnlocked()) {
+        throw new Error('Your wallet is still locked. Please enter your PIN to send the tip.');
+      }
+      return GMLocalWallet.getProvider();
+    }
+    if (_prefersWc() && typeof GMWalletConnect !== 'undefined') {
+      return await GMWalletConnect.getProvider();
+    }
+    // Privy wallets are exposed by wallet-main.js as GMPrivyWallets.
+    var privy = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
+    for (var i = 0; i < privy.length; i++) {
+      if (privy[i] && privy[i].provider && typeof privy[i].provider.request === 'function') {
+        return privy[i].provider;
+      }
+    }
+    if (typeof window.ethereum !== 'undefined') return window.ethereum;
+    if (typeof GMWalletConnect !== 'undefined' && GMWalletConnect.isPreferred()) {
+      return await GMWalletConnect.getProvider();
+    }
+    throw new Error('No wallet detected. Please open GoodMarket in MetaMask, Trust Wallet or another Celo wallet.');
+  }
+
+  async function _tipEnsureChain(provider, netKey) {
+    var chain = CHAIN_META[netKey] || CHAIN_META.celo;
+    var current = null;
+    try { current = await provider.request({ method: 'eth_chainId' }); } catch (_) {}
+    if (String(current || '').toLowerCase() === chain.hex) return;
+    try {
+      await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chain.hex }] });
+    } catch (err) {
+      var msg = (err && err.message) || '';
+      if (err && (err.code === 4902 || /Unrecognized chain|not added/i.test(msg))) {
+        await provider.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: chain.hex,
+            chainName: chain.name,
+            nativeCurrency: { name: chain.symbol, symbol: chain.symbol, decimals: 18 },
+            rpcUrls: [chain.rpc],
+            blockExplorerUrls: [chain.explorer.replace('/tx/', '')]
+          }]
+        });
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  async function _tipSendTransaction(provider, prep) {
+    if (_isLocalLogin()) {
+      // The in-app wallet signs locally and pays its own gas — no chain
+      // switch prompt is needed (it routes by the tx's chainId).
+      return await provider.request({
+        method: 'eth_sendTransaction',
+        params: [{ from: TIP_BOOT.wallet, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0', chainId: prep.chain_id }]
+      });
+    }
+    await _tipEnsureChain(provider, prep.network);
+    var accounts = [];
+    try { accounts = await provider.request({ method: 'eth_requestAccounts' }) || []; } catch (_) {}
+    if (!accounts.length) {
+      try { accounts = await provider.request({ method: 'eth_accounts' }) || []; } catch (_) {}
+    }
+    var wanted = (TIP_BOOT.wallet || '').toLowerCase();
+    var from = null;
+    for (var i = 0; i < accounts.length; i++) {
+      if (String(accounts[i]).toLowerCase() === wanted) { from = accounts[i]; break; }
+    }
+    if (!from) {
+      throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet before tipping.');
+    }
+    return await provider.request({
+      method: 'eth_sendTransaction',
+      params: [{ from: from, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0' }]
+    });
+  }
+
+  async function sendTip(username, token, amount, onStatus) {
+    var say = typeof onStatus === 'function' ? onStatus : function () {};
+    if (tipBusy) return null;
+    tipBusy = true;
+    try {
+      say('Preparing tip…');
+      var prepRes = await fetch('/chatroom/api/tip/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, token: token, amount: amount })
+      });
+      var prep = await prepRes.json();
+      if (!prep || !prep.success) {
+        throw new Error((prep && prep.error) || 'Could not prepare the tip.');
+      }
+
+      say('Confirm in your wallet…');
+      var provider = await _tipProvider();
+      var txHash = await _tipSendTransaction(provider, prep);
+      if (!txHash) throw new Error('Your wallet did not return a transaction hash.');
+
+      say('Verifying on-chain…');
+      var confRes = await fetch('/chatroom/api/tip/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, token: token, amount: amount, tx_hash: txHash })
+      });
+      var confirmed = await confRes.json();
+      if (!confirmed || !confirmed.success) {
+        // The transfer is already broadcast at this point, so the hash must
+        // reach the user — a retry with the same hash is idempotent server-side
+        // and support can trace it. Never imply the money did not move.
+        var err = new Error(((confirmed && confirmed.error) || 'The tip could not be verified yet.')
+          + ' Transaction: ' + txHash + ' (do not send again — this one may still confirm).');
+        err.txHash = txHash;
+        throw err;
+      }
+      return confirmed;
+    } finally {
+      tipBusy = false;
+    }
+  }
+
+  function _tipModal() {
+    return document.querySelector('[data-gm-tip-modal]');
+  }
+
+  function _tipSetStatus(text, isError) {
+    var node = document.querySelector('[data-gm-tip-status]');
+    if (!node) return;
+    node.textContent = text || '';
+    node.classList.toggle('is-error', !!isError);
+  }
+
+  function closeTipModal() {
+    var modal = _tipModal();
+    if (modal) modal.hidden = true;
+  }
+
+  function openTipModal(username) {
+    var modal = _tipModal();
+    if (!modal) return;
+    var name = (username || '').replace(/^@/, '');
+    var title = modal.querySelector('[data-gm-tip-title]');
+    if (title) title.textContent = 'Tip @' + name;
+    modal.setAttribute('data-gm-tip-user', name);
+    var amount = modal.querySelector('[data-gm-tip-amount]');
+    if (amount) amount.value = '';
+    _tipSetStatus('');
+    modal.hidden = false;
+    var first = modal.querySelector('[data-gm-tip-amount]');
+    if (first) setTimeout(function () { try { first.focus(); } catch (_) {} }, 0);
+  }
+
+  async function _submitTipFromModal(modal, list, status, renderMessage) {
+    var username = modal.getAttribute('data-gm-tip-user') || '';
+    var amountEl = modal.querySelector('[data-gm-tip-amount]');
+    var select = modal.querySelector('[data-gm-tip-token]');
+    var amount = amountEl ? amountEl.value.trim() : '';
+    var token = select ? select.value : 'GD';
+    if (!amount || parseFloat(amount) <= 0) {
+      _tipSetStatus('Enter a valid amount.', true);
+      return;
+    }
+    try {
+      var result = await sendTip(username, token, amount, function (msg) { _tipSetStatus(msg); });
+      _tipSetStatus('');
+      closeTipModal();
+      if (result && result.message && typeof renderMessage === 'function') {
+        renderMessage(result.message);
+        if (list) list.scrollTop = list.scrollHeight;
+      }
+      var tip = (result && result.tip) || {};
+      if (status) {
+        status.textContent = '✅ Tip sent! ' + (tip.amount || amount) + ' ' + (tip.token_label || _tipTokenLabel(token))
+          + ' to @' + username + (tip.tx_hash ? ' — tx ' + _shortHash(tip.tx_hash) : '');
+      }
+    } catch (err) {
+      _tipSetStatus((err && err.message) || 'Tip failed.', true);
+    }
+  }
+
   // Every value is written with textContent (never innerHTML) — the message
   // body is untrusted user input.
   function buildChatRow(msg) {
     var row = el('div', 'gm-chat-row' + (msg.is_me ? ' is-me' : ''));
     var meta = el('div', 'gm-chat-meta');
-    meta.appendChild(el('span', 'gm-chat-name', '@' + (msg.username || 'anonymous')));
+    var name = el('span', 'gm-chat-name', '@' + (msg.username || 'anonymous'));
+    // Tapping someone's @username opens the tip sheet — the primary, most
+    // discoverable way to tip (the 💸 button below is the second one).
+    if (!msg.is_me && msg.username) {
+      name.classList.add('is-tippable');
+      name.setAttribute('role', 'button');
+      name.setAttribute('tabindex', '0');
+      name.setAttribute('title', 'Tip @' + msg.username);
+      name.addEventListener('click', function () { openTipModal(msg.username); });
+      name.addEventListener('keydown', function (ev) {
+        if (ev && (ev.key === 'Enter' || ev.key === ' ')) openTipModal(msg.username);
+      });
+    }
+    meta.appendChild(name);
     meta.appendChild(el('span', 'gm-chat-time', formatChatTime(msg.created_at)));
     row.appendChild(meta);
-    row.appendChild(el('div', 'gm-chat-bubble', msg.message));
+
+    var isTip = msg.message_type === 'tip' && msg.tip;
+    if (isTip) {
+      row.classList.add('is-tip');
+      var card = el('div', 'gm-chat-tip-card');
+      card.appendChild(el('div', 'gm-chat-tip-head',
+        '🎁 ' + (msg.tip.amount || '') + ' ' + _tipTokenLabel(msg.tip.token)));
+      card.appendChild(el('div', 'gm-chat-tip-body', msg.message));
+      var url = _explorerUrl(msg.tip.token, msg.tip.tx_hash);
+      if (url) {
+        var link = el('a', 'gm-chat-tip-link', 'View tx ↗');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        card.appendChild(link);
+      }
+      row.appendChild(card);
+    } else {
+      row.appendChild(el('div', 'gm-chat-bubble', msg.message));
+    }
+
     if (!msg.is_me && msg.id) {
+      var actions = el('div', 'gm-chat-actions');
+      if (msg.username) {
+        var tipBtn = el('button', 'gm-chat-tip', '💸 Tip');
+        tipBtn.type = 'button';
+        tipBtn.addEventListener('click', function () { openTipModal(msg.username); });
+        actions.appendChild(tipBtn);
+      }
       var report = el('button', 'gm-chat-report', 'Report');
       report.type = 'button';
       report.addEventListener('click', function () { reportChatMessage(msg.id, report); });
-      row.appendChild(report);
+      actions.appendChild(report);
+      row.appendChild(actions);
     }
     return row;
   }
@@ -120,14 +466,24 @@
       restart();
     }
 
-    function appendMessages(messages) {
-      if (!messages || !messages.length) return;
+    // Dedupe by id: a tip is rendered the instant it is confirmed AND will also
+    // arrive on the next after_id poll, so without this it would show twice.
+    var renderedIds = {};
+
+    function appendMessage(m) {
+      if (!m || m.id == null) return false;
+      if (renderedIds[m.id]) return false;
+      renderedIds[m.id] = true;
       var empty = list.querySelector('.gm-chat-empty');
       if (empty) empty.remove();
-      messages.forEach(function (m) {
-        list.appendChild(buildChatRow(m));
-        if (m.id > lastId) lastId = m.id;
-      });
+      list.appendChild(buildChatRow(m));
+      if (m.id > lastId) lastId = m.id;
+      return true;
+    }
+
+    function appendMessages(messages) {
+      if (!messages || !messages.length) return;
+      messages.forEach(appendMessage);
       list.scrollTop = list.scrollHeight;
     }
 
@@ -137,8 +493,11 @@
         if (!res.ok) return;
         var data = await res.json();
         retryUntil = data.retry_after ? Date.now() + data.retry_after * 1000 : 0;
+        // The server is the source of truth for the tip tokens on offer.
+        if (data.tip_tokens && data.tip_tokens.length) TIP_BOOT.tokens = data.tip_tokens;
+        if (data.wallet) TIP_BOOT.wallet = data.wallet;
         if (data.has_username === false) {
-          setStatus('Tip: set a username on the wallet page so people know who you are.');
+          setStatus('Tip: set a username on the wallet page so people can tip you.');
         }
       } catch (_) { /* next poll retries */ }
     }
@@ -267,6 +626,24 @@
       closeBtn.addEventListener('click', function () { setOpen(false); });
     }
 
+    // Tip modal — lives in the page (not the widget root) so it can overlay
+    // everything. Handled globally by this mount.
+    var tipModal = _tipModal();
+    if (tipModal) {
+      var tipForm = tipModal.querySelector('[data-gm-tip-form]');
+      if (tipForm) {
+        tipForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          _submitTipFromModal(tipModal, list, status, appendMessage);
+        });
+      }
+      var tipClose = tipModal.querySelector('[data-gm-tip-close]');
+      if (tipClose) tipClose.addEventListener('click', closeTipModal);
+      tipModal.addEventListener('click', function (event) {
+        if (event.target === tipModal) closeTipModal();
+      });
+    }
+
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden && !stopped) restart();
     });
@@ -284,7 +661,15 @@
     };
   }
 
-  window.GMChatroom = { mount: mount, buildChatRow: buildChatRow };
+  window.GMChatroom = {
+    mount: mount,
+    buildChatRow: buildChatRow,
+    configure: configureTip,
+    sendTip: sendTip,
+    openTipModal: openTipModal,
+    closeTipModal: closeTipModal,
+    tipTokens: function () { return (TIP_BOOT.tokens || []).slice(); }
+  };
 
   // The launcher must sit above the wallet bottom nav, whose height changes
   // when it re-wraps on this page.
@@ -305,6 +690,9 @@
   }
 
   document.addEventListener('DOMContentLoaded', function () {
+    // Pick up the per-request boot values (wallet / login method) so tipping
+    // knows which signer to use even before /api/state answers.
+    configureTip();
     document.querySelectorAll('[data-gm-chatroom-root]').forEach(function (root) {
       // The standalone /chatroom page mounts explicitly so it can control
       // auto-open; only in-page widgets self-mount here.
