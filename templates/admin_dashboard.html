@@ -840,6 +840,12 @@
                         <span>Daily Lotto</span>
                     </a>
                 </li>
+                <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('chatroom-moderation-section')">
+                        <span class="menu-icon">💬</span>
+                        <span>Chatroom Moderation</span>
+                    </a>
+                </li>
             </ul>
         </aside>
 
@@ -2402,6 +2408,13 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                                 <span id="utility-status-badge" style="padding: 0.3rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem;"></span>
                             </div>
                         </div>
+                        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 10px; flex: 1; min-width: 200px;">
+                            <span style="font-size: 1.5rem;">💬</span>
+                            <div>
+                                <div style="font-weight: 600; color: #f1f5f9; margin-bottom: 0.25rem;">Community Chatroom</div>
+                                <span id="chatroom-status-badge" style="padding: 0.3rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem;"></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2548,6 +2561,24 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         💾 Save Utility Setting
                     </button>
                     <div id="utility-visibility-result" style="margin-top: 1rem; display: none;"></div>
+                </div>
+
+                <div class="content-box">
+                    <h2 style="margin-bottom: 1rem;">💬 Community Chatroom</h2>
+                    <div style="margin-bottom: 0.75rem; padding: 0.75rem 1rem; background: rgba(34,197,94,0.10); border-radius: 8px; border-left: 3px solid #22c55e; font-size: 0.88rem; color: rgba(241,245,249,0.85);">
+                        A public room where every signed-in user can chat and everyone sees the messages, shown with each poster's username. <strong>Off by default</strong> — turn it on only after running <code>sql/community_chat.sql</code> in Supabase.
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Visibility</label>
+                        <select id="chatroom-visibility-select" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #f1f5f9; font-size: 1rem;">
+                            <option value="true">✅ Visible — /chatroom and the Chatroom tab are live</option>
+                            <option value="false" selected>🚫 Hidden — nobody can reach the chatroom</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveFeatureVisibility('chatroom_feature', 'chatroom-visibility-select', 'chatroom-visibility-result')" style="width: 100%; padding: 0.9rem; font-size: 1rem;">
+                        💾 Save Chatroom Setting
+                    </button>
+                    <div id="chatroom-visibility-result" style="margin-top: 1rem; display: none;"></div>
                 </div>
             </section>
 
@@ -3072,6 +3103,44 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
+            <!-- Chatroom Moderation -->
+            <section id="chatroom-moderation-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">💬 Chatroom Moderation</h1>
+                    <p style="color: rgba(241,245,249,0.7);">Review reported messages, delete posts, and block abusive wallets. The room itself is toggled from <strong>Feature Visibility → Community Chatroom</strong>.</p>
+                </div>
+
+                <div class="admin-card" style="margin-bottom:1rem;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.8rem;margin-bottom:0.8rem;">
+                        <h3 style="margin:0;color:#f1f5f9;">🚩 Reported Messages</h3>
+                        <button class="btn" onclick="loadChatroomReports()"
+                                style="background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.5);color:#86efac;padding:0.4rem 0.9rem;border-radius:8px;cursor:pointer;font-weight:700;">
+                            🔄 Refresh
+                        </button>
+                    </div>
+                    <div id="chatroomReportsList" style="display:flex;flex-direction:column;gap:0.6rem;">
+                        <p style="color:rgba(241,245,249,0.6);">Loading…</p>
+                    </div>
+                </div>
+
+                <div class="admin-card">
+                    <h3 style="margin:0 0 0.8rem;color:#f1f5f9;">🚫 Banned Wallets</h3>
+                    <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+                        <input id="chatroomBanWallet" type="text" placeholder="0x wallet address"
+                               style="flex:1;min-width:240px;background:#1e293b;border:1px solid #334155;color:#f1f5f9;padding:0.6rem 0.8rem;border-radius:8px;" />
+                        <input id="chatroomBanReason" type="text" placeholder="Reason (optional)"
+                               style="flex:1;min-width:180px;background:#1e293b;border:1px solid #334155;color:#f1f5f9;padding:0.6rem 0.8rem;border-radius:8px;" />
+                        <button class="btn" onclick="banChatroomWallet()"
+                                style="background:#ef4444;color:#fff;padding:0.6rem 1.1rem;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
+                            Ban Wallet
+                        </button>
+                    </div>
+                    <div id="chatroomBansList" style="display:flex;flex-direction:column;gap:0.5rem;">
+                        <p style="color:rgba(241,245,249,0.6);">Loading…</p>
+                    </div>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -3291,6 +3360,124 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 case 'daily-lotto':
                     loadLottoAdmin();
                     break;
+                case 'chatroom-moderation':
+                    loadChatroomReports();
+                    loadChatroomBans();
+                    break;
+            }
+        }
+
+        // ── Chatroom Moderation ────────────────────────────────────────
+        function _escChat(value) {
+            const d = document.createElement('div');
+            d.textContent = value == null ? '' : String(value);
+            return d.innerHTML;
+        }
+
+        async function loadChatroomReports() {
+            const box = document.getElementById('chatroomReportsList');
+            if (!box) return;
+            box.innerHTML = '<p style="color:rgba(241,245,249,0.6);">Loading…</p>';
+            try {
+                const res = await fetch('/chatroom/api/admin/reports?status=open');
+                const data = await res.json();
+                if (!data.success || !data.reports || !data.reports.length) {
+                    box.innerHTML = '<p style="color:rgba(241,245,249,0.6);">✅ No open reports.</p>';
+                    return;
+                }
+                box.innerHTML = data.reports.map(function (r) {
+                    return '<div style="border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:0.7rem 0.9rem;background:rgba(255,255,255,0.04);">' +
+                        '<div style="font-size:0.82rem;color:#f1f5f9;">Message #' + _escChat(r.message_id) +
+                        ' · reported by <span style="font-family:monospace;">' + _escChat(r.reporter_wallet) + '</span></div>' +
+                        (r.reason ? '<div style="font-size:0.8rem;color:rgba(241,245,249,0.6);margin-top:0.25rem;">Reason: ' + _escChat(r.reason) + '</div>' : '') +
+                        '<div style="display:flex;gap:0.5rem;margin-top:0.5rem;">' +
+                        '<button onclick="deleteChatroomMessage(' + r.message_id + ')" style="background:#ef4444;color:#fff;border:none;border-radius:8px;padding:0.35rem 0.8rem;cursor:pointer;font-weight:700;font-size:0.78rem;">🗑 Delete message</button>' +
+                        '<button onclick="resolveChatroomReport(' + r.id + ',\'dismissed\')" style="background:rgba(255,255,255,0.1);color:#f1f5f9;border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:0.35rem 0.8rem;cursor:pointer;font-weight:700;font-size:0.78rem;">Dismiss</button>' +
+                        '</div></div>';
+                }).join('');
+            } catch (e) {
+                box.innerHTML = '<p style="color:#ef4444;">❌ Failed to load reports.</p>';
+            }
+        }
+
+        async function deleteChatroomMessage(messageId) {
+            if (!confirm('Delete this message for everyone?')) return;
+            try {
+                const res = await fetch('/chatroom/api/admin/messages/' + messageId, { method: 'DELETE' });
+                const data = await res.json();
+                if (!data.success) alert('❌ ' + (data.error || 'Failed to delete'));
+                loadChatroomReports();
+            } catch (e) {
+                alert('❌ ' + e.message);
+            }
+        }
+
+        async function resolveChatroomReport(reportId, status) {
+            try {
+                await fetch('/chatroom/api/admin/reports/' + reportId, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ status: status })
+                });
+                loadChatroomReports();
+            } catch (e) {
+                alert('❌ ' + e.message);
+            }
+        }
+
+        async function loadChatroomBans() {
+            const box = document.getElementById('chatroomBansList');
+            if (!box) return;
+            box.innerHTML = '<p style="color:rgba(241,245,249,0.6);">Loading…</p>';
+            try {
+                const res = await fetch('/chatroom/api/admin/bans');
+                const data = await res.json();
+                if (!data.success || !data.bans || !data.bans.length) {
+                    box.innerHTML = '<p style="color:rgba(241,245,249,0.6);">No banned wallets.</p>';
+                    return;
+                }
+                box.innerHTML = data.bans.map(function (b) {
+                    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:0.5rem 0.9rem;background:rgba(255,255,255,0.04);">' +
+                        '<div style="font-size:0.8rem;color:#f1f5f9;font-family:monospace;">' + _escChat(b.wallet_address) +
+                        (b.reason ? ' <span style="font-family:inherit;color:rgba(241,245,249,0.6);">— ' + _escChat(b.reason) + '</span>' : '') + '</div>' +
+                        '<button onclick="unbanChatroomWallet(\'' + _escChat(b.wallet_address) + '\')" style="background:rgba(34,197,94,0.2);color:#86efac;border:1px solid rgba(34,197,94,0.5);border-radius:8px;padding:0.3rem 0.7rem;cursor:pointer;font-weight:700;font-size:0.75rem;">Unban</button>' +
+                        '</div>';
+                }).join('');
+            } catch (e) {
+                box.innerHTML = '<p style="color:#ef4444;">❌ Failed to load bans.</p>';
+            }
+        }
+
+        async function banChatroomWallet() {
+            const walletEl = document.getElementById('chatroomBanWallet');
+            const reasonEl = document.getElementById('chatroomBanReason');
+            const wallet = (walletEl.value || '').trim();
+            if (!wallet) { alert('Enter a wallet address to ban.'); return; }
+            try {
+                const res = await fetch('/chatroom/api/admin/bans', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ wallet: wallet, reason: (reasonEl.value || '').trim() })
+                });
+                const data = await res.json();
+                if (!data.success) { alert('❌ ' + (data.error || 'Failed to ban')); return; }
+                walletEl.value = ''; reasonEl.value = '';
+                loadChatroomBans();
+            } catch (e) {
+                alert('❌ ' + e.message);
+            }
+        }
+
+        async function unbanChatroomWallet(wallet) {
+            try {
+                await fetch('/chatroom/api/admin/bans', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ wallet: wallet })
+                });
+                loadChatroomBans();
+            } catch (e) {
+                alert('❌ ' + e.message);
             }
         }
 
@@ -3546,6 +3733,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 _applyVisibilityBadge('utility-status-badge', data.utility_visible);
                 _applyVisibilityBadge('reserve-swap-status-badge', data.reserve_swap_visible);
                 _applyVisibilityBadge('buy-eth-status-badge', data.buy_eth_visible);
+                _applyVisibilityBadge('chatroom-status-badge', data.chatroom_visible);
 
                 document.getElementById('swap-visibility-select').value = data.swap_visible !== false ? 'true' : 'false';
                 document.getElementById('wallet-visibility-select').value = data.wallet_visible !== false ? 'true' : 'false';
@@ -3556,6 +3744,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 document.getElementById('utility-visibility-select').value = data.utility_visible !== false ? 'true' : 'false';
                 document.getElementById('reserve-swap-visibility-select').value = data.reserve_swap_visible === true ? 'true' : 'false';
                 document.getElementById('buy-eth-visibility-select').value = data.buy_eth_visible !== false ? 'true' : 'false';
+                document.getElementById('chatroom-visibility-select').value = data.chatroom_visible === true ? 'true' : 'false';
             } catch (e) {
                 statusDiv.innerHTML = '<p style="color:#ef4444;">❌ Failed to load settings</p>';
             }
@@ -3587,7 +3776,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         store_topup: 'Mobile Top-Up tab', store_giftcard: 'Gift Cards tab',
                         store_virtualcard: 'Virtual Card tab', store_utility: 'Utility tab',
                         reserve_swap_feature: 'GoodReserve tab',
-                        wallet_buy_eth: 'Buy Crypto wallet button'
+                        wallet_buy_eth: 'Buy Crypto wallet button',
+                        chatroom_feature: 'Community Chatroom'
                     };
                     const featureLabel = labelMap[feature] || feature;
                     resultDiv.textContent = visible
