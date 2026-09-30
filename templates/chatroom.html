@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/goodmarket-icon.png', v=ASSET_VERSION) }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GoodMarket Community Chatroom</title>
+    <meta name="theme-color" content="#0B0F2A">
+    <meta name="description" content="Chat with the GoodMarket community — every message is public and shown with the poster's username.">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&display=swap');
+        :root {
+            --bg: #0B0F2A;
+            --card: rgba(255,255,255,0.05);
+            --border: rgba(255,255,255,0.1);
+            --ink: #f1f5f9;
+            --ink-dim: rgba(226,232,240,0.6);
+            --accent: #7c3aed;
+            --accent-soft: rgba(124,58,237,0.16);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            font-family: 'Sora', sans-serif;
+            background: radial-gradient(circle at 12% 8%, rgba(124,58,237,0.18), transparent 42%),
+                        radial-gradient(circle at 88% 18%, rgba(34,197,94,0.12), transparent 40%),
+                        var(--bg);
+            min-height: 100vh;
+            color: var(--ink);
+        }
+        .navbar {
+            background: rgba(11, 15, 42, 0.9);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            padding: 0.85rem 1.25rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 800; font-size: 1.05rem; color: var(--ink); }
+        .nav-brand .bubble {
+            width: 30px; height: 30px; border-radius: 50%;
+            display: inline-flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; font-size: 0.85rem;
+        }
+        .back-btn {
+            background: linear-gradient(135deg, #7c3aed, #5b21b6);
+            color: #fff; text-decoration: none; padding: 0.45rem 1rem; border-radius: 10px;
+            font-weight: 600; font-size: 0.85rem;
+        }
+        .container { max-width: 720px; margin: 0 auto; padding: 1.2rem 1.2rem 3rem; }
+        .hero { text-align: center; padding: 0.4rem 0.25rem 1rem; }
+        .hero h1 { font-size: clamp(1.5rem, 5vw, 2.1rem); font-weight: 800; letter-spacing: -0.02em;
+            background: linear-gradient(120deg, #a78bfa, #22c55e); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { color: var(--ink-dim); margin-top: 0.5rem; font-size: 0.92rem; }
+        .chat-shell {
+            background: #07130d;
+            border: 1px solid rgba(134, 239, 172, .25);
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 18px 60px rgba(0, 0, 0, .42);
+        }
+        .chat-shell .gm-chat-messages { height: min(560px, calc(100dvh - 300px)); }
+        /* The shared widget styles size `.gm-chat-panel` for the floating
+           card; on this page the shell already provides that frame. */
+        .chat-shell .gm-chat-panel {
+            width: 100%;
+            max-height: none;
+            border: 0;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent;
+        }
+    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='js/chatroom-widget.css', v=ASSET_VERSION) }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand"><span class="bubble">💬</span> GoodMarket Community</div>
+        <a class="back-btn" href="/wallet">← Wallet</a>
+    </nav>
+
+    <div class="container">
+        <div class="hero">
+            <h1>Community Chatroom</h1>
+            <p>Public room — everyone can read and post. You appear as
+               <strong>@{{ display_name }}</strong>.
+               {% if not has_username %}Set a username on the wallet page so people know who you are.{% endif %}</p>
+        </div>
+
+        <div class="chat-shell" data-gm-chatroom-root data-gm-chat-manual>
+            <div class="gm-chat-pane" data-gm-chat-panel>
+                <div class="gm-chat-messages" role="log" aria-live="polite" data-gm-chat-messages></div>
+                <div class="gm-chat-status" data-gm-chat-status></div>
+                <form class="gm-chat-form" data-gm-chat-form>
+                    <input class="gm-chat-input" name="message" type="text" autocomplete="off"
+                           maxlength="500" placeholder="Message the community…" data-gm-chat-input />
+                    <button type="submit">Send</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/chatroom-widget.js', v=ASSET_VERSION) }}" defer></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            if (typeof window.GMChatroom === 'object' && typeof window.GMChatroom.mount === 'function') {
+                var room = window.GMChatroom.mount(
+                    document.querySelector('[data-gm-chatroom-root]'),
+                    { autoOpen: true }
+                );
+                if (room) room.start();
+            }
+        });
+    </script>
+</body>
+</html>
