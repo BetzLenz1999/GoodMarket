@@ -1489,7 +1489,7 @@ def get_feature_visibility():
         result = safe_supabase_operation(
             lambda: supabase.table('maintenance_settings')
                 .select('feature_name,is_maintenance')
-                .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_virtualcard', 'store_utility', 'reserve_swap_feature', 'wallet_buy_eth', 'chatroom_feature'])
+                .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_virtualcard', 'store_utility', 'reserve_swap_feature', 'wallet_buy_eth', 'chatroom_feature', 'goodmarket_agent_feature'])
                 .execute(),
             operation_name="get feature visibility admin"
         )
@@ -1503,6 +1503,7 @@ def get_feature_visibility():
         reserve_swap_visible = False
         buy_eth_visible = True
         chatroom_visible = False
+        goodmarket_agent_visible = False
         if result and result.data:
             for row in result.data:
                 fn = row['feature_name']
@@ -1527,13 +1528,16 @@ def get_feature_visibility():
                     buy_eth_visible = val
                 elif fn == 'chatroom_feature':
                     chatroom_visible = val
+                elif fn == 'goodmarket_agent_feature':
+                    goodmarket_agent_visible = val
         return jsonify({"success": True, "swap_visible": swap_visible, "wallet_visible": wallet_visible,
                         "savings_visible": savings_visible,
                         "topup_visible": topup_visible, "giftcard_visible": giftcard_visible,
                         "virtualcard_visible": virtualcard_visible, "utility_visible": utility_visible,
                         "reserve_swap_visible": reserve_swap_visible,
                         "buy_eth_visible": buy_eth_visible,
-                        "chatroom_visible": chatroom_visible})
+                        "chatroom_visible": chatroom_visible,
+                        "goodmarket_agent_visible": goodmarket_agent_visible})
     except Exception as e:
         logger.error(f"Admin feature visibility fetch error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -1553,7 +1557,7 @@ def set_feature_visibility():
         is_hidden = not visible
         admin_wallet = session.get('wallet')
 
-        if feature not in ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_virtualcard', 'store_utility', 'reserve_swap_feature', 'wallet_buy_eth', 'chatroom_feature']:
+        if feature not in ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_virtualcard', 'store_utility', 'reserve_swap_feature', 'wallet_buy_eth', 'chatroom_feature', 'goodmarket_agent_feature']:
             return jsonify({"success": False, "error": "Invalid feature name"}), 400
 
         existing = safe_supabase_operation(
