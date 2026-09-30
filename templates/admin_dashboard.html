@@ -2566,12 +2566,12 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 <div class="content-box">
                     <h2 style="margin-bottom: 1rem;">💬 Community Chatroom</h2>
                     <div style="margin-bottom: 0.75rem; padding: 0.75rem 1rem; background: rgba(34,197,94,0.10); border-radius: 8px; border-left: 3px solid #22c55e; font-size: 0.88rem; color: rgba(241,245,249,0.85);">
-                        A public room where every signed-in user can chat and everyone sees the messages, shown with each poster's username. <strong>Off by default</strong> — turn it on only after running <code>sql/community_chat.sql</code> in Supabase.
+                        A public room where every signed-in user can chat and everyone sees the messages, shown with each poster's username. It has its own widget (<strong>separate</strong> from the GoodMarket Agent), opens automatically, and shows new messages within about a second. <strong>Off by default</strong> — turn it on only after running <code>sql/community_chat.sql</code> in Supabase.
                     </div>
                     <div style="margin-bottom: 1rem;">
                         <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Visibility</label>
                         <select id="chatroom-visibility-select" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #f1f5f9; font-size: 1rem;">
-                            <option value="true">✅ Visible — /chatroom and the Chatroom tab are live</option>
+                            <option value="true">✅ Visible — the chatroom widget is live on the wallet page + /chatroom</option>
                             <option value="false" selected>🚫 Hidden — nobody can reach the chatroom</option>
                         </select>
                     </div>
@@ -2579,6 +2579,24 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         💾 Save Chatroom Setting
                     </button>
                     <div id="chatroom-visibility-result" style="margin-top: 1rem; display: none;"></div>
+                </div>
+
+                <div class="content-box">
+                    <h2 style="margin-bottom: 1rem;">✨ GoodMarket Agent</h2>
+                    <div style="margin-bottom: 0.75rem; padding: 0.75rem 1rem; background: rgba(251,191,36,0.10); border-radius: 8px; border-left: 3px solid #fbbf24; font-size: 0.88rem; color: rgba(241,245,249,0.85);">
+                        The floating AI assistant (send / stream / swap / cashout / bridge). It is <strong>hidden by default</strong> so the community chatroom is what users see first. Turn it back ON when the agent is ready to be public again.
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Visibility</label>
+                        <select id="agent-visibility-select" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #f1f5f9; font-size: 1rem;">
+                            <option value="true">✅ Visible — the GoodMarket Agent launcher is shown on the wallet page</option>
+                            <option value="false" selected>🚫 Hidden — the agent is not rendered at all</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveFeatureVisibility('goodmarket_agent_feature', 'agent-visibility-select', 'agent-visibility-result')" style="width: 100%; padding: 0.9rem; font-size: 1rem;">
+                        💾 Save GoodMarket Agent Setting
+                    </button>
+                    <div id="agent-visibility-result" style="margin-top: 1rem; display: none;"></div>
                 </div>
             </section>
 
@@ -3745,6 +3763,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 document.getElementById('reserve-swap-visibility-select').value = data.reserve_swap_visible === true ? 'true' : 'false';
                 document.getElementById('buy-eth-visibility-select').value = data.buy_eth_visible !== false ? 'true' : 'false';
                 document.getElementById('chatroom-visibility-select').value = data.chatroom_visible === true ? 'true' : 'false';
+                document.getElementById('agent-visibility-select').value = data.goodmarket_agent_visible === true ? 'true' : 'false';
             } catch (e) {
                 statusDiv.innerHTML = '<p style="color:#ef4444;">❌ Failed to load settings</p>';
             }
@@ -3777,7 +3796,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         store_virtualcard: 'Virtual Card tab', store_utility: 'Utility tab',
                         reserve_swap_feature: 'GoodReserve tab',
                         wallet_buy_eth: 'Buy Crypto wallet button',
-                        chatroom_feature: 'Community Chatroom'
+                        chatroom_feature: 'Community Chatroom',
+                        goodmarket_agent_feature: 'GoodMarket Agent'
                     };
                     const featureLabel = labelMap[feature] || feature;
                     resultDiv.textContent = visible
