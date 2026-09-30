@@ -804,13 +804,16 @@
         @media (max-width: 640px) {
             .modal-sheet { max-height: calc(100dvh - 76px); }
         }
-        /* The floating GoodMarket Agent launcher (z-index 9999) outranks the
-           modal overlay (200) and lands right on top of the submit button.
-           Hide it while any modal OR bottom navigation sheet is open. The
-           :has() selector covers both the modal-overlay modals (gm-modal-open
-           body class) and the bn-sheet bottom sheets (their own .open class). */
+        /* The floating GoodMarket Agent launcher (z-index 9999) and the
+           Community Chatroom widget (z-index 9998) outrank the modal overlay
+           (200) and land right on top of the submit button. Hide both while
+           any modal OR bottom navigation sheet is open. The :has() selector
+           covers both the modal-overlay modals (gm-modal-open body class) and
+           the bn-sheet bottom sheets (their own .open class). */
         body.gm-modal-open .gm-ai-agent,
-        body:has(.bn-sheet-overlay.open) .gm-ai-agent { display: none; }
+        body:has(.bn-sheet-overlay.open) .gm-ai-agent,
+        body.gm-modal-open .gm-chat-widget,
+        body:has(.bn-sheet-overlay.open) .gm-chat-widget { display: none; }
         @keyframes slideUp {
             from { transform: translateY(100%); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
@@ -3617,7 +3620,16 @@
         <!-- Bottom navigation sheets (extracted). -->
     <script src="{{ url_for('static', filename='js/wallet-bottomnav.js', v=ASSET_VERSION) }}"></script>
 
+    {# The GoodMarket Agent is HIDDEN by default (goodmarket_agent_visible) so
+       the community room is what users land on. Flip it ON from the admin
+       dashboard when the agent is ready to be public again. #}
+    {% if goodmarket_agent_visible %}
     {% include "_ai_agent.html" %}
+    {% endif %}
+
+    {# Public Community Chatroom — its OWN widget, separate from the agent.
+       Auto-opens on load; hidden entirely while chatroom_feature is OFF. #}
+    {% include "_chatroom.html" %}
 
     {% if wallet_maintenance_mode %}
     <!-- Celo protocol-update maintenance (admin-toggled via the dashboard).
