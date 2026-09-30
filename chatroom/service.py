@@ -205,15 +205,30 @@ def sanitize_message(raw: str | None) -> str:
 
 def _public_row(row: dict, viewer_wallet: str | None) -> dict:
     """Shape a DB row for the browser — wallet address is dropped, ownership
-    is reduced to a boolean ``is_me`` flag."""
+    is reduced to a boolean ``is_me`` flag.
+
+    Tip messages carry the token/amount/tx hash so the UI can render them as a
+    gold card with a block-explorer link. The addresses behind them are still
+    never included.
+    """
     owner = (row.get("wallet_address") or "").lower()
-    return {
+    message_type = row.get("message_type") or "text"
+    public = {
         "id": row.get("id"),
         "username": row.get("username") or short_wallet(owner),
         "message": row.get("message"),
         "created_at": row.get("created_at"),
         "is_me": bool(viewer_wallet) and owner == viewer_wallet.lower(),
+        "message_type": message_type,
     }
+    if message_type == "tip":
+        tx_hash = row.get("tip_tx_hash") or ""
+        public["tip"] = {
+            "token": row.get("tip_token"),
+            "amount": row.get("tip_amount"),
+            "tx_hash": tx_hash,
+        }
+    return public
 
 
 def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
@@ -227,7 +242,7 @@ def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
         size = max(1, min(int(limit or DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
         query = (
             supabase.table("community_chat_messages")
-            .select("id, username, wallet_address, message, created_at")
+            .select("id, username, wallet_address, message, created_at, message_type, tip_token, tip_amount, tip_tx_hash")
             .eq("room", ROOM)
             .eq("is_deleted", False)
         )
