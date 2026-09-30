@@ -104,9 +104,31 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/chatroom-widget.js', v=ASSET_VERSION) }}" defer></script>
+    {# Tipping: the tip is a real on-chain transfer signed by the user's own
+       wallet. Local (in-app) logins need ethers + the PIN-decrypted wallet;
+       WalletConnect logins need the shared bridge. Loaded here because this
+       standalone page has no wallet bundle of its own. #}
+    <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+    <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script>
+        window.GM_CHAT_BOOT = {
+            wallet: {{ wallet|tojson }},
+            loginMethod: {{ login_method|tojson }},
+            assetVersion: {{ ASSET_VERSION|tojson }}
+        };
+        window.WALLET_ADDRESS = {{ wallet|tojson }};
         document.addEventListener('DOMContentLoaded', function () {
+            if (typeof GMWalletConnect !== 'undefined') {
+                GMWalletConnect.configure({
+                    walletAddress: {{ wallet|tojson }},
+                    loginMethod: {{ login_method|tojson }},
+                    projectId: {{ (walletconnect_project_id or '')|tojson }},
+                    sidecarEnabled: {{ 'true' if walletconnect_sidecar_enabled else 'false' }},
+                    dappName: "GoodMarket — Community Chatroom",
+                    dappDescription: "Tip other community members with G$, CELO or XDC",
+                    assetVersion: {{ ASSET_VERSION|tojson }}
+                });
+            }
             if (typeof window.GMChatroom === 'object' && typeof window.GMChatroom.mount === 'function') {
                 var room = window.GMChatroom.mount(
                     document.querySelector('[data-gm-chatroom-root]'),
@@ -116,5 +138,7 @@
             }
         });
     </script>
+    {% include "_chatroom_tip_modal.html" %}
+    <script src="{{ url_for('static', filename='js/chatroom-widget.js', v=ASSET_VERSION) }}" defer></script>
 </body>
 </html>
