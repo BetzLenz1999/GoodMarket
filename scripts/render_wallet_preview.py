@@ -27,7 +27,7 @@ def main():
     env = Environment(loader=FileSystemLoader(TEMPLATES), autoescape=True)
     env.globals["url_for"] = _stub_url_for
     # The real page includes these; render them as empty so the layout is visible.
-    for name in ("_security_banner.html", "_claim_celebration.html", "_ai_agent.html"):
+    for name in ("_security_banner.html", "_claim_celebration.html", "_ai_agent.html", "_chatroom.html"):
         path = os.path.join(TEMPLATES, name)
         if not os.path.exists(path):
             env.loader = ChoiceLoader([env.loader, DictLoader({name: ""})])
@@ -40,6 +40,10 @@ def main():
         raffle_contract_address="0x0000000000000000000000000000000000000000",
         walletconnect_project_id="demo",
         ASSET_VERSION="dev",
+        # QA renders both widgets so the floating launchers can be inspected;
+        # the live app hides the agent by default and the room while OFF.
+        goodmarket_agent_visible=True,
+        chatroom_visible=True,
     )
     out = os.path.join(OUT, "wallet.html")
     with open(out, "w", encoding="utf-8") as fh:
