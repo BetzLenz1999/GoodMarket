@@ -571,11 +571,12 @@ def inject_feature_visibility():
         wallet_visible = True
         savings_visible = True
         chatroom_visible = False
+        goodmarket_agent_visible = False
         if supabase:
             result = safe_supabase_operation(
                 lambda: supabase.table('maintenance_settings')
                     .select('feature_name,is_maintenance')
-                    .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_utility', 'chatroom_feature'])
+                    .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_utility', 'chatroom_feature', 'goodmarket_agent_feature'])
                     .execute(),
                 operation_name="context processor feature visibility"
             )
@@ -600,18 +601,22 @@ def inject_feature_visibility():
                         utility_visible = val
                     elif fn == 'chatroom_feature':
                         chatroom_visible = val
+                    elif fn == 'goodmarket_agent_feature':
+                        goodmarket_agent_visible = val
         flags = {"swap_visible": swap_visible, "wallet_visible": wallet_visible,
                  "savings_visible": savings_visible,
                  "topup_visible": topup_visible, "giftcard_visible": giftcard_visible,
                  "utility_visible": utility_visible,
-                 "chatroom_visible": chatroom_visible}
+                 "chatroom_visible": chatroom_visible,
+                 "goodmarket_agent_visible": goodmarket_agent_visible}
         _feature_visibility_cache["data"] = flags
         _feature_visibility_cache["expires_at"] = now + 15
         return flags
     except Exception:
         return {"swap_visible": True, "wallet_visible": True, "savings_visible": True,
                 "topup_visible": True, "giftcard_visible": True, "utility_visible": True,
-                "chatroom_visible": False}
+                "chatroom_visible": False,
+                "goodmarket_agent_visible": False}
 
 # Initialize Telegram Task
 from telegram_task import init_telegram_task
