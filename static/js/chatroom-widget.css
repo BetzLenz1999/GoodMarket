@@ -1,0 +1,238 @@
+/* Public Community Chatroom widget — SEPARATE from the GoodMarket Agent.
+   Own floating launcher + panel; auto-opens on load. Shares only the
+   `gm-chat-*` message styles (messages look identical to the agent's room). */
+
+.gm-chat-widget {
+  position: fixed;
+  right: 18px;
+  bottom: calc(var(--gm-chat-bottom, 24px) + env(safe-area-inset-bottom, 0px));
+  z-index: 9998; /* one below the agent launcher so they never fight */
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.gm-chat-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: #fff;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, .28);
+  cursor: pointer;
+}
+
+.gm-chat-toggle[hidden] { display: none; }
+
+.gm-chat-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fbbf24;
+  color: #1f1300;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 22px;
+  text-align: center;
+}
+
+.gm-chat-badge[hidden] { display: none; }
+
+.gm-chat-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100vw - 28px));
+  max-height: min(620px, calc(100dvh - 120px));
+  background: #07130d;
+  color: #f8fafc;
+  border: 1px solid rgba(134, 239, 172, .25);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .42);
+}
+
+.gm-chat-panel[hidden] { display: none; }
+
+.gm-chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(124, 58, 237, .18);
+  border-bottom: 1px solid rgba(134, 239, 172, .18);
+}
+
+.gm-chat-header small {
+  display: block;
+  color: #c4b5fd;
+  margin-top: 3px;
+}
+
+.gm-chat-close {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gm-chat-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #86efac;
+}
+
+.gm-chat-live::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: gmChatPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes gmChatPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gm-chat-live::before { animation: none; }
+}
+
+/* ── Messages (shared look with the agent's room) ─────────────────────── */
+.gm-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  flex: 1 1 auto;
+  height: min(340px, calc(100dvh - 278px));
+  overflow: auto;
+}
+
+.gm-chat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 92%;
+}
+
+.gm-chat-row.is-me {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.gm-chat-meta {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 3px;
+  font-size: 11px;
+}
+
+.gm-chat-name { color: #86efac; font-weight: 700; }
+.gm-chat-time { color: #94a3b8; }
+
+.gm-chat-bubble {
+  border-radius: 14px;
+  padding: 9px 12px;
+  font-size: 14px;
+  line-height: 1.35;
+  background: rgba(255, 255, 255, .08);
+  color: #f8fafc;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gm-chat-row.is-me .gm-chat-bubble {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.gm-chat-report {
+  margin-top: 3px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.gm-chat-report:hover { color: #fca5a5; }
+
+.gm-chat-status {
+  padding: 0 14px 8px;
+  color: #c4b5fd;
+  font-size: 12px;
+  min-height: 16px;
+}
+
+.gm-chat-empty {
+  color: #94a3b8;
+  font-size: 13px;
+  text-align: center;
+  margin: auto;
+}
+
+.gm-chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(134, 239, 172, .18);
+  background: rgba(34, 197, 94, .06);
+}
+
+.gm-chat-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(134, 239, 172, .22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .06);
+  color: #f8fafc;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.gm-chat-input::placeholder { color: #94a3b8; }
+
+.gm-chat-form button {
+  border: 0;
+  border-radius: 12px;
+  padding: 0 16px;
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .gm-chat-widget {
+    right: 10px;
+    /* The launcher must never cover the wallet bottom nav. The exact nav
+       height is set at runtime from the nav's measured height (see
+       positionChatroomLauncher in chatroom-widget.js). */
+    bottom: calc(var(--gm-chat-bottom, 92px) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .gm-chat-panel {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 112px - env(safe-area-inset-bottom, 0px));
+  }
+
+  .gm-chat-messages {
+    height: min(300px, calc(100dvh - 318px - env(safe-area-inset-bottom, 0px)));
+  }
+}
