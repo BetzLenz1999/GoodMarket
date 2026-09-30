@@ -142,6 +142,12 @@
 }
 
 .gm-chat-name { color: #86efac; font-weight: 700; }
+
+/* A username is tappable: it opens the tip sheet for that member. */
+.gm-chat-name.is-tippable { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.gm-chat-name.is-tippable:hover { color: #fbbf24; }
+.gm-chat-name.is-tippable:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; border-radius: 4px; }
+
 .gm-chat-time { color: #94a3b8; }
 
 .gm-chat-bubble {
@@ -160,8 +166,14 @@
   color: #fff;
 }
 
-.gm-chat-report {
+.gm-chat-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
   margin-top: 3px;
+}
+
+.gm-chat-report {
   border: 0;
   background: transparent;
   color: #94a3b8;
@@ -171,6 +183,134 @@
 }
 
 .gm-chat-report:hover { color: #fca5a5; }
+
+/* ── Tipping ─────────────────────────────────────────────────────────── */
+.gm-chat-tip {
+  border: 0;
+  background: transparent;
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.gm-chat-tip:hover { color: #fde68a; }
+
+.gm-chat-tip-card {
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(251, 191, 36, .18), rgba(124, 58, 237, .18));
+  border: 1px solid rgba(251, 191, 36, .45);
+  color: #f8fafc;
+  max-width: 100%;
+}
+
+.gm-chat-tip-head {
+  font-weight: 800;
+  color: #fde68a;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.gm-chat-tip-body {
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.gm-chat-tip-link {
+  display: inline-block;
+  margin-top: 5px;
+  color: #a78bfa;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.gm-chat-tip-link:hover { text-decoration: underline; }
+
+/* The tip modal lives on the page (not inside the widget root) so it can
+   overlay the wallet bottom nav. Kept theme-consistent with the panel. */
+.gm-chat-tip-modal {
+  position: fixed;
+  inset: 0;
+  /* Below both PIN prompts (99999 injected / 100000 wallet page) — the local
+     wallet's unlock sheet must always stack above the tip it is signing. */
+  z-index: 99990;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(3, 7, 18, .72);
+}
+
+.gm-chat-tip-modal[hidden] { display: none; }
+
+.gm-chat-tip-sheet {
+  width: min(360px, 100%);
+  background: #07130d;
+  color: #f8fafc;
+  border: 1px solid rgba(134, 239, 172, .25);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .5);
+}
+
+.gm-chat-tip-sheet h3 { font-size: 16px; margin-bottom: 4px; }
+
+.gm-chat-tip-hint {
+  color: #c4b5fd;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.gm-chat-tip-row { display: flex; gap: 8px; margin-bottom: 10px; }
+
+.gm-chat-tip-row select,
+.gm-chat-tip-row input {
+  border: 1px solid rgba(134, 239, 172, .22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .06);
+  color: #f8fafc;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.gm-chat-tip-row select { flex: 0 0 42%; }
+.gm-chat-tip-row input { flex: 1; min-width: 0; }
+
+.gm-chat-tip-status {
+  min-height: 16px;
+  color: #c4b5fd;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.gm-chat-tip-status.is-error { color: #fca5a5; }
+
+.gm-chat-tip-actions { display: flex; gap: 8px; }
+
+.gm-chat-tip-actions button {
+  flex: 1;
+  border: 0;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  font: inherit;
+}
+
+.gm-chat-tip-send {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #1f1300;
+}
+
+.gm-chat-tip-cancel {
+  background: rgba(255, 255, 255, .08);
+  color: #f8fafc;
+}
 
 .gm-chat-status {
   padding: 0 14px 8px;
