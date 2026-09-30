@@ -27,6 +27,19 @@
     </form>
   </section>
 </div>
+
+{# Per-request values for the tip flow (which signer to use). The wallet
+   address is the viewer's OWN and is only used to sign in their browser. #}
+<script>
+  window.GM_CHAT_BOOT = {
+    wallet: {{ (wallet or '')|tojson }},
+    loginMethod: {{ (login_method or '')|tojson }},
+    assetVersion: {{ ASSET_VERSION|tojson }}
+  };
+</script>
+
+{% include "_chatroom_tip_modal.html" %}
+
 <link rel="stylesheet" href="{{ url_for('static', filename='js/chatroom-widget.css', v=ASSET_VERSION) }}">
 <script src="{{ url_for('static', filename='js/chatroom-widget.js', v=ASSET_VERSION) }}" defer></script>
 {% endif %}
