@@ -11,21 +11,48 @@
       </div>
       <button type="button" class="gm-ai-close" aria-label="Close GoodMarket Agent">×</button>
     </header>
-    <div class="gm-ai-messages" role="log" aria-live="polite">
-      <div class="gm-ai-msg gm-ai-msg-bot">
-        <div>Hi! Tap a command below or type your own message. Username at wallet address, parehong pwede for send/stream.</div>
-        <div class="gm-ai-command-grid" aria-label="GoodMarket Agent quick commands">
-        <button type="button" class="gm-ai-command" data-gm-ai-command="cashout">💸 Cashout</button>
-        <button type="button" class="gm-ai-command" data-gm-ai-command="Send Money">💰 Send Money</button>
-        <button type="button" class="gm-ai-command" data-gm-ai-command="Swap">🔄 Swap</button>
-        <button type="button" class="gm-ai-command" data-gm-ai-command="Bridge">🌉 Bridge</button>
+
+    <!-- Agent / Chatroom share the same floating panel. The Chatroom tab is
+         only rendered when the admin has turned the public room ON
+         (chatroom_visible), so the UI stays hidden by default too. -->
+    <nav class="gm-ai-tabs" role="tablist" aria-label="GoodMarket Agent sections">
+      <button type="button" class="gm-ai-tab is-active" role="tab" data-gm-tab="agent"
+              aria-selected="true" aria-controls="gm-ai-pane-agent">🤖 Agent</button>
+      {% if chatroom_visible %}
+      <button type="button" class="gm-ai-tab" role="tab" data-gm-tab="chatroom"
+              aria-selected="false" aria-controls="gm-ai-pane-chatroom">💬 Chatroom</button>
+      {% endif %}
+    </nav>
+
+    <div class="gm-ai-pane" id="gm-ai-pane-agent" data-gm-pane="agent" role="tabpanel">
+      <div class="gm-ai-messages" role="log" aria-live="polite">
+        <div class="gm-ai-msg gm-ai-msg-bot">
+          <div>Hi! Tap a command below or type your own message. Username at wallet address, parehong pwede for send/stream.</div>
+          <div class="gm-ai-command-grid" aria-label="GoodMarket Agent quick commands">
+          <button type="button" class="gm-ai-command" data-gm-ai-command="cashout">💸 Cashout</button>
+          <button type="button" class="gm-ai-command" data-gm-ai-command="Send Money">💰 Send Money</button>
+          <button type="button" class="gm-ai-command" data-gm-ai-command="Swap">🔄 Swap</button>
+          <button type="button" class="gm-ai-command" data-gm-ai-command="Bridge">🌉 Bridge</button>
+          </div>
         </div>
       </div>
+      <form class="gm-ai-form">
+        <input class="gm-ai-input" name="message" type="text" autocomplete="off" placeholder="Ask GoodMarket Agent…" />
+        <button type="submit">Send</button>
+      </form>
     </div>
-    <form class="gm-ai-form">
-      <input class="gm-ai-input" name="message" type="text" autocomplete="off" placeholder="Ask GoodMarket Agent…" />
-      <button type="submit">Send</button>
-    </form>
+
+    {% if chatroom_visible %}
+    <div class="gm-ai-pane" id="gm-ai-pane-chatroom" data-gm-pane="chatroom" role="tabpanel" hidden>
+      <div class="gm-chat-messages" role="log" aria-live="polite" data-gm-chat-messages></div>
+      <div class="gm-chat-status" data-gm-chat-status></div>
+      <form class="gm-ai-form gm-chat-form" data-gm-chat-form>
+        <input class="gm-ai-input" name="message" type="text" autocomplete="off"
+               maxlength="500" placeholder="Message the community…" data-gm-chat-input />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+    {% endif %}
   </section>
 </div>
 <link rel="stylesheet" href="{{ url_for('static', filename='js/ai-agent.css', v=ASSET_VERSION) }}">
