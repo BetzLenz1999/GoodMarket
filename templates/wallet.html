@@ -3492,6 +3492,12 @@
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;">🎰</div>
                 <div class="bn-sheet-name">Daily Lotto</div>
             </div>
+            {% if chatroom_visible %}
+            <div class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/chatroom', 'Opening Community Chat…'); })">
+                <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#22c55e,#166534);color:#fff;">💬</div>
+                <div class="bn-sheet-name">Community Chat</div>
+            </div>
+            {% endif %}
             <div class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/savings', 'Opening Savings…'); })">
                 <div class="bn-sheet-circle">🏦</div>
                 <div class="bn-sheet-name">Savings</div>
