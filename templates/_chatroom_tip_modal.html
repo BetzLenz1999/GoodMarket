@@ -1,0 +1,33 @@
+{# Shared "Tip" modal for the public Community Chatroom.
+
+   A tip is a REAL on-chain transfer signed by the SENDER's own wallet — this
+   sheet only collects the token + amount and drives the signing/verify flow in
+   chatroom-widget.js (window.GMChatroom.sendTip). It is DOM-ordered outside the
+   widget root so it overlays the wallet bottom nav.
+
+   Included by BOTH `_chatroom.html` (floating widget) and `chatroom.html`
+   (standalone page) — keep the `data-gm-tip-*` hooks in sync with the JS. #}
+<div class="gm-chat-tip-modal" data-gm-tip-modal hidden>
+  <div class="gm-chat-tip-sheet" role="dialog" aria-modal="true" aria-labelledby="gmTipTitle">
+    <h3 id="gmTipTitle" data-gm-tip-title>Tip</h3>
+    <p class="gm-chat-tip-hint">Send tokens straight from your wallet. The tip is confirmed on-chain and announced in the room.</p>
+
+    <form data-gm-tip-form>
+      <div class="gm-chat-tip-row">
+        <select data-gm-tip-token aria-label="Token to tip">
+          <option value="GD">G$ (Celo)</option>
+          <option value="CELO">CELO</option>
+          <option value="XDC_GD">G$ (XDC)</option>
+          <option value="XDC">XDC</option>
+        </select>
+        <input data-gm-tip-amount type="text" inputmode="decimal" autocomplete="off"
+               placeholder="Amount" aria-label="Tip amount" />
+      </div>
+      <div class="gm-chat-tip-status" data-gm-tip-status></div>
+      <div class="gm-chat-tip-actions">
+        <button type="submit" class="gm-chat-tip-send">Send tip</button>
+        <button type="button" class="gm-chat-tip-cancel" data-gm-tip-close>Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
