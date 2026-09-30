@@ -1,0 +1,424 @@
+"""Community Chatroom — business logic.
+
+A single PUBLIC room where every signed-in user sees every message. Messages
+are attributed to the poster's USERNAME; the wallet address is the ownership
+key only and is never returned to the browser.
+
+Design notes (mirroring the rest of this codebase):
+- Reads go through the service-role client first so RLS cannot silently hide
+  rows (the lotto/gcash lesson).
+- The feature is HIDDEN by default: ``is_enabled()`` reads the
+  ``chatroom_feature`` row from ``maintenance_settings`` and fails CLOSED, so a
+  database hiccup can never leak the room before an admin turns it on.
+- Every public function returns a plain dict and never raises — the routes
+  translate the dict into a JSON response.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
+
+ROOM = "general"
+MAX_MESSAGE_LENGTH = int(os.getenv("CHATROOM_MAX_MESSAGE_LENGTH", "500"))
+MIN_MESSAGE_LENGTH = 1
+RATE_LIMIT_SECONDS = int(os.getenv("CHATROOM_RATE_LIMIT_SECONDS", "3"))
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 100
+FEATURE_NAME = "chatroom_feature"
+
+# Strip control characters (including zero-width/line-separator tricks) so a
+# message can never smuggle invisible content into the rendered log.
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029]")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _get_supabase():
+    """Service-role client first (RLS-safe reads), falling back to anon."""
+    try:
+        from supabase_client import get_supabase_admin_client, get_supabase_client
+
+        return get_supabase_admin_client() or get_supabase_client()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: supabase client unavailable: %s", exc)
+        return None
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_dt(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        text = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ── Identity ─────────────────────────────────────────────────────────────────
+
+def short_wallet(wallet: str | None) -> str:
+    """Public fallback label when a user has no username yet."""
+    wallet = (wallet or "").strip()
+    if len(wallet) >= 10:
+        return f"{wallet[:6]}…{wallet[-4:]}"
+    return wallet or "anonymous"
+
+
+def get_username(wallet: str | None) -> str | None:
+    if not wallet:
+        return None
+    supabase = _get_supabase()
+    if not supabase:
+        return None
+    try:
+        result = (
+            supabase.table("user_data")
+            .select("username")
+            .ilike("wallet_address", wallet)
+            .limit(1)
+            .execute()
+        )
+        if result and result.data:
+            username = (result.data[0].get("username") or "").strip()
+            return username or None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: username lookup failed: %s", exc)
+    return None
+
+
+def display_name(wallet: str | None) -> str:
+    """Username when set, otherwise a shortened wallet address."""
+    return get_username(wallet) or short_wallet(wallet)
+
+
+# ── Feature flag ─────────────────────────────────────────────────────────────
+
+def is_enabled() -> bool:
+    """True only when the admin has turned the chatroom ON.
+
+    Fails CLOSED: a missing row, a DB error or an unreadable value all mean
+    "not enabled", so the room stays hidden until explicitly switched on.
+    """
+    supabase = _get_supabase()
+    if not supabase:
+        return False
+    try:
+        result = (
+            supabase.table("maintenance_settings")
+            .select("is_maintenance")
+            .eq("feature_name", FEATURE_NAME)
+            .limit(1)
+            .execute()
+        )
+        if not result or not result.data:
+            return False
+        return not bool(result.data[0].get("is_maintenance", True))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: feature flag read failed: %s", exc)
+        return False
+
+
+# ── Moderation state ─────────────────────────────────────────────────────────
+
+def is_banned(wallet: str | None) -> bool:
+    if not wallet:
+        return False
+    supabase = _get_supabase()
+    if not supabase:
+        return False
+    try:
+        result = (
+            supabase.table("community_chat_bans")
+            .select("wallet_address")
+            .ilike("wallet_address", wallet)
+            .limit(1)
+            .execute()
+        )
+        return bool(result and result.data)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: ban lookup failed: %s", exc)
+        return False
+
+
+def _seconds_until_allowed(wallet: str) -> int:
+    """Remaining cooldown for this wallet (0 when allowed to post now)."""
+    supabase = _get_supabase()
+    if not supabase:
+        return 0
+    try:
+        result = (
+            supabase.table("community_chat_messages")
+            .select("created_at")
+            .ilike("wallet_address", wallet)
+            .order("id", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not result or not result.data:
+            return 0
+        last = _parse_dt(result.data[0].get("created_at"))
+        if not last:
+            return 0
+        elapsed = (_now() - last).total_seconds()
+        if elapsed >= RATE_LIMIT_SECONDS:
+            return 0
+        return max(1, int(RATE_LIMIT_SECONDS - elapsed))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: rate-limit lookup failed: %s", exc)
+        return 0
+
+
+def can_post(wallet: str | None) -> dict:
+    """Pre-flight for the UI so the send button reflects the real rules."""
+    if not wallet:
+        return {"allowed": False, "reason": "not_authenticated", "retry_after": 0}
+    if not is_enabled():
+        return {"allowed": False, "reason": "disabled", "retry_after": 0}
+    if is_banned(wallet):
+        return {"allowed": False, "reason": "banned", "retry_after": 0}
+    wait = _seconds_until_allowed(wallet)
+    if wait > 0:
+        return {"allowed": False, "reason": "rate_limited", "retry_after": wait}
+    return {"allowed": True, "reason": "ok", "retry_after": 0}
+
+
+# ── Messages ─────────────────────────────────────────────────────────────────
+
+def sanitize_message(raw: str | None) -> str:
+    """Collapse whitespace and strip control characters. Length is validated
+    by the caller so the two rules stay independently testable."""
+    text = _CONTROL_CHARS.sub("", str(raw or ""))
+    text = _WHITESPACE.sub(" ", text).strip()
+    return text
+
+
+def _public_row(row: dict, viewer_wallet: str | None) -> dict:
+    """Shape a DB row for the browser — wallet address is dropped, ownership
+    is reduced to a boolean ``is_me`` flag."""
+    owner = (row.get("wallet_address") or "").lower()
+    return {
+        "id": row.get("id"),
+        "username": row.get("username") or short_wallet(owner),
+        "message": row.get("message"),
+        "created_at": row.get("created_at"),
+        "is_me": bool(viewer_wallet) and owner == viewer_wallet.lower(),
+    }
+
+
+def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
+                 viewer_wallet: str | None = None) -> dict:
+    """Messages in chronological order. With ``after_id`` only newer messages
+    are returned (polling cursor)."""
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable", "messages": []}
+    try:
+        size = max(1, min(int(limit or DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
+        query = (
+            supabase.table("community_chat_messages")
+            .select("id, username, wallet_address, message, created_at")
+            .eq("room", ROOM)
+            .eq("is_deleted", False)
+        )
+        if after_id:
+            query = query.gt("id", int(after_id)).order("id")
+        else:
+            query = query.order("id", desc=True)
+        result = query.limit(size).execute()
+        rows = list(result.data or [])
+        if not after_id:
+            rows.reverse()  # newest-first fetch → chronological for the UI
+        messages = [_public_row(r, viewer_wallet) for r in rows]
+        latest_id = max([m["id"] for m in messages], default=after_id or 0)
+        return {
+            "success": True,
+            "messages": messages,
+            "latest_id": latest_id,
+            "has_more": len(rows) >= size,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: get_messages failed: %s", exc)
+        return {"success": False, "error": "Failed to load messages", "messages": []}
+
+
+def post_message(wallet: str, raw_message: str) -> dict:
+    text = sanitize_message(raw_message)
+    if len(text) < MIN_MESSAGE_LENGTH:
+        return {"success": False, "error": "Message cannot be empty", "code": "empty"}
+    if len(text) > MAX_MESSAGE_LENGTH:
+        return {
+            "success": False,
+            "error": f"Message is too long (max {MAX_MESSAGE_LENGTH} characters)",
+            "code": "too_long",
+        }
+
+    gate = can_post(wallet)
+    if not gate["allowed"]:
+        return {"success": False, "error": gate["reason"], "code": gate["reason"],
+                "retry_after": gate["retry_after"]}
+
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable", "code": "db"}
+
+    username = get_username(wallet)
+    try:
+        result = (
+            supabase.table("community_chat_messages")
+            .insert({
+                "room": ROOM,
+                "wallet_address": wallet,
+                "username": username,
+                "message": text,
+            })
+            .execute()
+        )
+        if not result or not result.data:
+            return {"success": False, "error": "Failed to post message", "code": "insert"}
+        return {"success": True, "message": _public_row(result.data[0], wallet)}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: post_message failed: %s", exc)
+        return {"success": False, "error": "Failed to post message", "code": "insert"}
+
+
+# ── Admin: moderation ────────────────────────────────────────────────────────
+
+def delete_message(message_id: int, admin_wallet: str) -> dict:
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        result = (
+            supabase.table("community_chat_messages")
+            .update({
+                "is_deleted": True,
+                "deleted_by": admin_wallet,
+                "deleted_at": _now().isoformat(),
+            })
+            .eq("id", int(message_id))
+            .execute()
+        )
+        if not result:
+            return {"success": False, "error": "Failed to delete message"}
+        return {"success": True, "message_id": int(message_id)}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: delete_message failed: %s", exc)
+        return {"success": False, "error": "Failed to delete message"}
+
+
+def report_message(message_id: int, reporter_wallet: str, reason: str = "") -> dict:
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        result = (
+            supabase.table("community_chat_reports")
+            .insert({
+                "message_id": int(message_id),
+                "reporter_wallet": reporter_wallet,
+                "reason": sanitize_message(reason)[:300],
+            })
+            .execute()
+        )
+        return {"success": bool(result and result.data), "message_id": int(message_id)}
+    except Exception as exc:  # noqa: BLE001
+        # A duplicate report hits the UNIQUE constraint — treat as success
+        # (the report already exists, the user's intent is satisfied).
+        logger.info("chatroom: report_message handled: %s", exc)
+        return {"success": True, "message_id": int(message_id), "duplicate": True}
+
+
+def ban_wallet(target_wallet: str, admin_wallet: str, reason: str = "") -> dict:
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        supabase.table("community_chat_bans").upsert({
+            "wallet_address": target_wallet,
+            "reason": sanitize_message(reason)[:300],
+            "banned_by": admin_wallet,
+        }).execute()
+        return {"success": True, "wallet": target_wallet}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: ban_wallet failed: %s", exc)
+        return {"success": False, "error": "Failed to ban wallet"}
+
+
+def unban_wallet(target_wallet: str) -> dict:
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        supabase.table("community_chat_bans").delete().ilike(
+            "wallet_address", target_wallet
+        ).execute()
+        return {"success": True, "wallet": target_wallet}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: unban_wallet failed: %s", exc)
+        return {"success": False, "error": "Failed to unban wallet"}
+
+
+def list_bans(limit: int = 100) -> dict:
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable", "bans": []}
+    try:
+        result = (
+            supabase.table("community_chat_bans")
+            .select("wallet_address, reason, banned_by, created_at")
+            .order("created_at", desc=True)
+            .limit(int(limit))
+            .execute()
+        )
+        return {"success": True, "bans": list(result.data or [])}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: list_bans failed: %s", exc)
+        return {"success": False, "error": "Failed to load bans", "bans": []}
+
+
+def get_reports(status: str = "open", limit: int = 100) -> dict:
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable", "reports": []}
+    try:
+        result = (
+            supabase.table("community_chat_reports")
+            .select("id, message_id, reporter_wallet, reason, status, created_at")
+            .eq("status", status)
+            .order("created_at", desc=True)
+            .limit(int(limit))
+            .execute()
+        )
+        return {"success": True, "reports": list(result.data or [])}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: get_reports failed: %s", exc)
+        return {"success": False, "error": "Failed to load reports", "reports": []}
+
+
+def resolve_report(report_id: int, admin_wallet: str, status: str = "resolved") -> dict:
+    if status not in ("resolved", "dismissed"):
+        return {"success": False, "error": "Invalid status"}
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        supabase.table("community_chat_reports").update({
+            "status": status,
+            "reviewed_by": admin_wallet,
+            "reviewed_at": _now().isoformat(),
+        }).eq("id", int(report_id)).execute()
+        return {"success": True, "report_id": int(report_id)}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: resolve_report failed: %s", exc)
+        return {"success": False, "error": "Failed to update report"}
