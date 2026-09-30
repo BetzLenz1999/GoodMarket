@@ -276,6 +276,182 @@
     launcher.style.setProperty('--gm-ai-bottom', (nav.getBoundingClientRect().height + gap) + 'px');
   }
 
+  // ── Chatroom (public room, same floating panel) ───────────────────────
+  const CHAT_POLL_MS = 5000;
+
+  function formatChatTime(iso) {
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function reportChatMessage(id, btn) {
+    btn.disabled = true;
+    fetch('/chatroom/api/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_id: id })
+    }).then(function (res) { return res.json(); }).then(function (data) {
+      if (data && data.success) {
+        btn.textContent = 'Reported';
+      } else {
+        btn.textContent = 'Report failed';
+        btn.disabled = false;
+      }
+    }).catch(function () {
+      btn.textContent = 'Report failed';
+      btn.disabled = false;
+    });
+  }
+
+  // Every value is written with textContent (never innerHTML) — the message
+  // body is untrusted user input.
+  function buildChatRow(msg) {
+    const row = el('div', 'gm-chat-row' + (msg.is_me ? ' is-me' : ''));
+    const meta = el('div', 'gm-chat-meta');
+    meta.appendChild(el('span', 'gm-chat-name', '@' + (msg.username || 'anonymous')));
+    meta.appendChild(el('span', 'gm-chat-time', formatChatTime(msg.created_at)));
+    row.appendChild(meta);
+    row.appendChild(el('div', 'gm-chat-bubble', msg.message));
+    if (!msg.is_me && msg.id) {
+      const report = el('button', 'gm-chat-report', 'Report');
+      report.type = 'button';
+      report.addEventListener('click', function () { reportChatMessage(msg.id, report); });
+      row.appendChild(report);
+    }
+    return row;
+  }
+
+  function initChatroom(root) {
+    const pane = root.querySelector('[data-gm-pane="chatroom"]');
+    if (!pane) return null;
+    const list = pane.querySelector('[data-gm-chat-messages]');
+    const status = pane.querySelector('[data-gm-chat-status]');
+    const form = pane.querySelector('[data-gm-chat-form]');
+    const input = pane.querySelector('[data-gm-chat-input]');
+    if (!list || !form) return null;
+
+    let lastId = 0;
+    let timer = null;
+    let loading = false;
+    let retryUntil = 0;
+
+    function setStatus(text) { status.textContent = text || ''; }
+
+    function appendMessages(messages) {
+      if (!messages || !messages.length) return;
+      const empty = list.querySelector('.gm-chat-empty');
+      if (empty) empty.remove();
+      messages.forEach(function (m) {
+        list.appendChild(buildChatRow(m));
+        if (m.id > lastId) lastId = m.id;
+      });
+      list.scrollTop = list.scrollHeight;
+    }
+
+    async function loadState() {
+      try {
+        const res = await fetch('/chatroom/api/state');
+        if (!res.ok) return;
+        const data = await res.json();
+        retryUntil = data.retry_after ? Date.now() + data.retry_after * 1000 : 0;
+        if (data.has_username === false) {
+          setStatus('Tip: set a username on the wallet page so people know who you are.');
+        }
+      } catch (_) { /* next poll retries */ }
+    }
+
+    async function loadMessages(initial) {
+      if (loading) return;
+      loading = true;
+      try {
+        const url = (initial || !lastId)
+          ? '/chatroom/api/messages?limit=50'
+          : '/chatroom/api/messages?after_id=' + encodeURIComponent(lastId);
+        const res = await fetch(url);
+        if (res.status === 403) {
+          stop();
+          setStatus('Chatroom is currently unavailable.');
+          return;
+        }
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.success) {
+          if (initial && !lastId && (!data.messages || !data.messages.length)
+              && !list.querySelector('.gm-chat-empty')) {
+            list.appendChild(el('div', 'gm-chat-empty', 'No messages yet — say hi! 👋'));
+          }
+          appendMessages(data.messages);
+        }
+      } catch (_) {
+        // network hiccup — the next poll retries
+      } finally {
+        loading = false;
+      }
+    }
+
+    function start() {
+      if (timer) return;
+      loadState().then(function () { return loadMessages(!lastId); });
+      timer = setInterval(function () {
+        // A phone left in the background must not poll all night.
+        if (document.hidden) return;
+        loadMessages(false);
+      }, CHAT_POLL_MS);
+    }
+
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+    }
+
+    async function send(text) {
+      const clean = (text || '').trim();
+      if (!clean) return;
+      if (retryUntil && Date.now() < retryUntil) {
+        setStatus('Please wait a moment before posting again.');
+        return;
+      }
+      input.value = '';
+      setStatus('Sending…');
+      try {
+        const res = await fetch('/chatroom/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: clean })
+        });
+        const data = await res.json();
+        if (data && data.success && data.message) {
+          setStatus('');
+          appendMessages([data.message]);
+        } else if (res.status === 429) {
+          retryUntil = Date.now() + (data.retry_after || 3) * 1000;
+          setStatus('You are posting too fast — wait ' + (data.retry_after || 3) + 's.');
+        } else if (res.status === 403) {
+          setStatus('You cannot post in the chatroom.');
+        } else {
+          setStatus((data && data.error) || 'Failed to send message.');
+        }
+      } catch (_) {
+        setStatus('Failed to send message.');
+      }
+    }
+
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      send(input.value);
+    });
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && timer) loadMessages(false);
+    });
+
+    return { start: start, stop: stop };
+  }
+
   function initAgent(root) {
     const toggle = root.querySelector('.gm-ai-toggle');
     const panel = root.querySelector('.gm-ai-panel');
@@ -283,11 +459,40 @@
     const form = root.querySelector('.gm-ai-form');
     const input = root.querySelector('.gm-ai-input');
     const messages = root.querySelector('.gm-ai-messages');
+    const tabs = root.querySelectorAll('.gm-ai-tab');
+    const panes = root.querySelectorAll('.gm-ai-pane');
+    const chatroom = initChatroom(root);
+    let activeTab = 'agent';
+
+    function setTab(name) {
+      activeTab = name;
+      tabs.forEach(function (tab) {
+        const active = tab.getAttribute('data-gm-tab') === name;
+        tab.classList.toggle('is-active', active);
+        tab.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      panes.forEach(function (pane) {
+        pane.hidden = pane.getAttribute('data-gm-pane') !== name;
+      });
+      if (!chatroom) return;
+      if (name === 'chatroom') chatroom.start();
+      else chatroom.stop();
+    }
+
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        setTab(tab.getAttribute('data-gm-tab'));
+      });
+    });
 
     function setOpen(open) {
       panel.hidden = !open;
       toggle.style.display = open ? 'none' : 'flex';
       toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (chatroom) {
+        if (open && activeTab === 'chatroom') chatroom.start();
+        if (!open) chatroom.stop();
+      }
       if (open) setTimeout(function () { input.focus(); }, 0);
     }
 
@@ -367,6 +572,10 @@
   window.addEventListener('goodmarket:ai-tx-failed', handleAiTxFailed);
 
   document.addEventListener('DOMContentLoaded', _ensureAiActionBeacon);
+
+  // The standalone /chatroom page reuses the exact same pane markup and logic
+  // as the floating widget's Chatroom tab.
+  window.GMInitChatroom = function (root) { return initChatroom(root || document); };
 
   document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('[data-ai-agent]').forEach(initAgent);
