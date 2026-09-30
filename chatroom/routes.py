@@ -11,10 +11,12 @@ from the dashboard. The gate is enforced server-side, not just by hiding the UI.
 from __future__ import annotations
 
 import logging
+import os
 
 from flask import Blueprint, jsonify, redirect, render_template, request, session
 
 from . import service as svc
+from . import tips
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,11 @@ def chatroom_home():
         login_method=session.get("login_method", ""),
         display_name=svc.display_name(wallet),
         has_username=bool(svc.get_username(wallet)),
+        # WalletConnect bridge context so WC-login users can sign a tip here.
+        # Same sidecar rule as routes.py `_is_walletconnect_sidecar_enabled`.
+        walletconnect_project_id=os.environ.get("WALLETCONNECT_PROJECT_ID", ""),
+        walletconnect_sidecar_enabled=bool(os.getenv("WC_SERVICE_URL"))
+        or not bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME")),
     )
 
 
@@ -94,6 +101,12 @@ def api_state():
         "retry_after": gate["retry_after"],
         "rate_limit_seconds": svc.RATE_LIMIT_SECONDS,
         "max_length": svc.MAX_MESSAGE_LENGTH,
+        # Tipping: the tokens on offer + this viewer's own wallet address (used
+        # only to sign the transfer in their browser — never echoed to the room).
+        "can_tip": bool(username) and not svc.is_banned(wallet),
+        "tip_tokens": tips.list_tip_tokens(),
+        "tip_rate_limit_seconds": tips.TIP_RATE_LIMIT_SECONDS,
+        "wallet": wallet,
     })
 
 
@@ -145,6 +158,58 @@ def api_report_message():
         return jsonify({"success": False, "error": "message_id is required"}), 400
     result = svc.report_message(int(message_id), wallet, data.get("reason", ""))
     return jsonify(result), (200 if result.get("success") else 400)
+
+
+# ── Tipping ───────────────────────────────────────────────────────────────────
+# A tip is a real on-chain transfer signed by the sender's own wallet; these
+# endpoints only resolve the recipient, hand back unsigned calldata, and verify
+# the resulting hash. No server key, no custody.
+
+@chatroom_bp.route("/api/tip/prepare", methods=["POST"])
+def api_tip_prepare():
+    if not svc.is_enabled():
+        return _disabled_response()
+
+    wallet = _session_wallet()
+    if not wallet:
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    data = request.get_json(silent=True) or {}
+    result = tips.prepare_tip(
+        wallet,
+        data.get("username") or data.get("to") or "",
+        data.get("token") or "GD",
+        data.get("amount"),
+    )
+    status = 200 if result.get("success") else 400
+    if result.get("code") == "banned":
+        status = 403
+    return jsonify(result), status
+
+
+@chatroom_bp.route("/api/tip/confirm", methods=["POST"])
+def api_tip_confirm():
+    if not svc.is_enabled():
+        return _disabled_response()
+
+    wallet = _session_wallet()
+    if not wallet:
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+
+    data = request.get_json(silent=True) or {}
+    result = tips.record_tip(
+        wallet,
+        data.get("username") or data.get("to") or "",
+        data.get("token") or "GD",
+        data.get("amount"),
+        data.get("tx_hash") or "",
+    )
+    status = 200 if result.get("success") else 400
+    if result.get("code") == "rate_limited":
+        status = 429
+    if result.get("code") == "banned":
+        status = 403
+    return jsonify(result), status
 
 
 # ── Admin API ─────────────────────────────────────────────────────────────────
