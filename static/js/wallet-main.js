@@ -1351,13 +1351,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     function handleFvReverifyClick() {
         closeModal('settingsModal');
+        // Claims and verification live in their own flow. Do not scroll to a
+        // hidden wallet-page UBI widget: open the claim entry point instead.
+        openClaimOrVerify();
         if (typeof window._triggerReVerify === 'function') {
             window._triggerReVerify();
-        }
-        // Scroll to the Claim area so the re-verify button is visible.
-        const claimEl = document.getElementById('ubiEntitlementBox') || document.getElementById('ubiClaimHero');
-        if (claimEl && claimEl.scrollIntoView) {
-            claimEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
 
@@ -1502,8 +1500,8 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             // so the user sees the card flip to Unverified and the note below
             // the button, in the same place they started.
             closeModal('fvDeVerifyModal');
-            // Flip the page out of the verified state immediately: the claim
-            // orb must go back to "Verify to start earning".
+            // Flip the claim availability state immediately so the next Claim
+            // G$ entry presents the re-verification flow.
             window._walletNeedsFV = true;
             window._walletFvReason = 'not_verified';
             if (typeof window._triggerReVerify === 'function') window._triggerReVerify();
@@ -1529,7 +1527,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     window.confirmFvDeVerify = confirmFvDeVerify;
 
     // ── Face Verification onboarding (unverified users) ──────────────
-    // The claim hero is the only route to face verification, so it must lead
+    // The Claim G$ navigation entry is the route to face verification, so it must lead
     // an unverified user somewhere that explains WHY (KYC / one account per
     // person) and what they unlock — not straight into a claim sheet that
     // cannot pay out yet. Verified / already-claimed users keep the plain
@@ -1554,6 +1552,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             return;
         }
         openModal('claimModal');
+        if (window._claimEntryMessage) {
+            const status = document.getElementById('ubiClaimStatus');
+            if (status) {
+                status.textContent = window._claimEntryMessage.text;
+                status.style.color = window._claimEntryMessage.color;
+            }
+            window._claimEntryMessage = null;
+        }
     }
 
     function continueFvIntro() {
@@ -4476,20 +4482,12 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         function startCountdown() {
             const box = document.getElementById('ubiCountdownBox');
             const display = document.getElementById('ubiCountdownDisplay');
-            const heroTimer = document.getElementById('heroClaimTimer');
             box.style.display = 'block';
             if (_countdownInterval) clearInterval(_countdownInterval);
             function tick() {
                 const remaining = getNextResetMs();
                 const formatted = formatCountdown(remaining);
                 display.textContent = formatted;
-                // Also update the claim hero timer if the hero is in the already-claimed state
-                if (heroTimer) {
-                    const hero = document.getElementById('ubiClaimHero');
-                    if (hero && hero.classList.contains('is-claimed')) {
-                        heroTimer.textContent = 'Next claim in ' + formatted;
-                    }
-                }
                 if (remaining <= 0) {
                     clearInterval(_countdownInterval);
                     setStatus('🎉 Claim window is now open! Refresh to claim.', 'var(--green)');
@@ -4643,106 +4641,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             return caps.isMiniPay ? 'celo' : null;
         }
 
-        // Update the claim button box with total claimable G$ from all networks
+        // Keep claim/Face Verification availability state in sync for the
+        // modal-only Claim G$ entry point. The wallet dashboard deliberately
+        // has no UBI hero or claim button in its content area.
         function updateClaimButtonBox(data) {
             const claims = data.claims || {};
-            const caps = getClaimWalletCapabilities();
 
-            const hero = document.getElementById('ubiClaimHero');
-            const heroEyebrow = document.getElementById('heroClaimEyebrow');
-            const heroAmount = document.getElementById('heroClaimAmount');
-            const heroSub = document.getElementById('heroClaimSub');
-            const heroTimer = document.getElementById('heroClaimTimer');
-            const heroCta = document.getElementById('heroClaimCta');
-
-            if (!hero) return;
-
-            // Calculate total claimable G$ from all available networks
-            let totalClaimable = 0;
-            let claimableNetworks = [];
-
-            if (claims.celo && claims.celo.can_claim && claims.celo.is_available !== false) {
-                const celoAmt = parseFloat(claims.celo.claimable) || parseFloat(claims.celo.entitlement) || 0;
-                totalClaimable += celoAmt;
-                claimableNetworks.push('Celo');
-            }
-
-            if (claims.xdc && claims.xdc.can_claim && claims.xdc.is_available !== false) {
-                if (!caps.isMiniPay && caps.supportsXdc) {
-                    const xdcAmt = parseFloat(claims.xdc.claimable) || parseFloat(claims.xdc.entitlement) || 0;
-                    totalClaimable += xdcAmt;
-                    claimableNetworks.push('XDC');
-                }
-            }
-
-            // Check for face verification needed
+            // The dispatcher uses these flags when the user explicitly taps
+            // Claim G$ in navigation.
             const needsVerification = claims.celo && (
                 claims.celo.reason === 'not_verified' ||
                 claims.celo.reason === 're_verification_needed' ||
                 claims.celo.is_verified === false
             );
 
-            // Keep the module-level flag in sync so the top-level hero
-            // dispatcher (openClaimOrVerify) can route to the FV intro using
-            // the same condition that chose the hero copy above.
             window._walletNeedsFV = !!needsVerification;
             window._walletFvReason = needsVerification ? (claims.celo && claims.celo.reason) || 'not_verified' : null;
-
-            // Check if any network has claimable balance
-            const hasClaimable = totalClaimable > 0 && !needsVerification;
-
-            // Update hero state
-            hero.classList.remove('is-disabled', 'is-claimed');
-            heroTimer.textContent = '';
-
-            if (needsVerification) {
-                heroEyebrow.textContent = 'Verify to start earning';
-                heroAmount.innerHTML = '🪪';
-                heroSub.textContent = 'Tap to verify your account so you can start earning money';
-                heroCta.textContent = 'Verify my account';
-                hero.classList.add('is-disabled');
-            } else if (hasClaimable) {
-                const formattedAmount = totalClaimable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-                const networkLabel = claimableNetworks.length > 1
-                    ? claimableNetworks.join(' + ')
-                    : claimableNetworks[0] || 'Celo';
-                heroEyebrow.textContent = 'Claimable UBI';
-                heroAmount.innerHTML = `${formattedAmount} <span class="unit">G$</span>`;
-                heroSub.textContent = `available to claim${claimableNetworks.length ? ` on ${networkLabel}` : ''}`;
-                heroCta.textContent = 'Claim UBI G$';
-            } else if (claims.celo && claims.celo.reason === 'ubi_paused') {
-                heroEyebrow.textContent = 'UBI paused';
-                heroAmount.innerHTML = '⏸️';
-                heroSub.textContent = 'The GoodDollar UBI pool is paused — check back later';
-                heroCta.textContent = 'View claim details';
-                hero.classList.add('is-disabled');
-            } else if (claims.celo && claims.celo.reason === 'ubi_not_started') {
-                heroEyebrow.textContent = 'Claim not started';
-                heroAmount.innerHTML = '⏳';
-                heroSub.textContent = 'The GoodDollar UBI claim period has not started yet';
-                heroCta.textContent = 'View claim details';
-                hero.classList.add('is-disabled');
-            } else {
-                heroEyebrow.textContent = 'Claimable UBI';
-                heroAmount.innerHTML = `0.00 <span class="unit">G$</span>`;
-                heroSub.textContent = 'Already claimed — come back soon';
-                heroCta.textContent = 'View claim details';
-                hero.classList.add('is-claimed');
-
-                // Show countdown if available
-                const countdown = document.getElementById('ubiCountdownDisplay');
-                if (countdown && countdown.textContent && countdown.textContent !== '--:--:--') {
-                    heroTimer.textContent = 'Next claim in ' + countdown.textContent;
-                }
-            }
-
-            if (heroCta) {
-                // Mirror the orb's semantic state onto the CTA so the pill is
-                // muted whenever it is not an actual claim.
-                heroCta.classList.toggle('is-disabled', hero.classList.contains('is-disabled'));
-                heroCta.classList.toggle('is-claimed', hero.classList.contains('is-claimed'));
-                heroCta.setAttribute('aria-disabled', hasClaimable ? 'false' : 'true');
-            }
         }
 
         function _ubiBlockedReason(data) {
@@ -6817,13 +6731,17 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         (function() {
             const p = new URLSearchParams(window.location.search);
             if (p.get('fv_pending') === '1') {
-                openModal('claimModal');
-                setStatus('✅ Face verification submitted! Re-checking your eligibility…', '#fcd34d');
+                window._claimEntryMessage = {
+                    text: '✅ Face verification submitted! Re-checking your eligibility…',
+                    color: '#fcd34d'
+                };
                 history.replaceState(null, '', window.location.pathname);
             } else if (p.get('fv_failed') === '1') {
-                openModal('claimModal');
                 const r = p.get('reason') || '';
-                setStatus('Face verification not completed' + (r ? ' (' + r + ')' : '') + '. Please try again.', 'var(--red)');
+                window._claimEntryMessage = {
+                    text: 'Face verification not completed' + (r ? ' (' + r + ')' : '') + '. Please try again.',
+                    color: 'var(--red)'
+                };
                 history.replaceState(null, '', window.location.pathname);
             }
         })();
