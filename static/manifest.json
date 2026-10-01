@@ -4,11 +4,12 @@
   "description": "GoodMarket — community wallet for the G$ token (GoodDollar protocol) on Celo",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0B0F2A",
-  "theme_color": "#7c3aed",
+  "background_color": "#f7f1e8",
+  "theme_color": "#e8720a",
   "icons": [
     {
-      "src": "/static/icons/goodmarket-icon.png",
+      "src": "/static/icons/goodmarket
+      -icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
