@@ -811,8 +811,8 @@
            covers both the modal-overlay modals (gm-modal-open body class) and
            the bn-sheet bottom sheets (their own .open class). */
         body.gm-modal-open .gm-ai-agent,
-        body:has(.bn-sheet-overlay.open) .gm-ai-agent,
-        body.gm-modal-open .gm-chat-widget,
+        body.gm-modal-open .gm-chat-widget { display: none; }
+        body:has(.bn-sheet-overlay.open) .gm-ai-agent { display: none; }
         body:has(.bn-sheet-overlay.open) .gm-chat-widget { display: none; }
         @keyframes slideUp {
             from { transform: translateY(100%); opacity: 0; }
@@ -2021,6 +2021,110 @@
         .bn-sheet-item:hover { border-color: rgba(var(--accent-rgb),0.5); background: rgba(var(--accent-rgb),0.16); }
         .bn-sheet-item .bn-sheet-circle { background: rgba(255,255,255,0.07); border-color: var(--card-border); }
         .bn-sheet-item .bn-sheet-name { color: var(--text-dim); }
+
+        /* ── Wallet side navigation ──
+           Desktop shows icon + label. On narrow screens it becomes an
+           icon rail, retaining labels as accessible names and native tooltips
+           while keeping the wallet content usable. */
+        .wallet-side-nav {
+            position: fixed;
+            top: 50%;
+            left: max(0.8rem, calc(50% - 690px));
+            bottom: auto;
+            transform: translateY(-50%);
+            width: 156px;
+            max-height: calc(100dvh - 1.5rem);
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            overflow-y: auto;
+            padding: 0.5rem;
+            border: 1px solid var(--card-border);
+            border-radius: 18px;
+            background: rgba(11,15,42,0.96);
+            box-shadow: 0 12px 32px rgba(0,0,0,0.38);
+            z-index: 1200;
+            scrollbar-width: thin;
+        }
+        .wallet-side-nav .bn-item {
+            width: 100%;
+            min-height: 40px;
+            flex-direction: row;
+            justify-content: flex-start;
+            gap: 0.55rem;
+            padding: 0.42rem 0.5rem;
+            color: var(--text-dim);
+            text-decoration: none;
+            border: 1px solid transparent;
+            border-radius: 11px;
+        }
+        .wallet-side-nav .bn-item:hover,
+        .wallet-side-nav .bn-item:focus-visible,
+        .wallet-side-nav .bn-item.active {
+            color: var(--text);
+            background: rgba(var(--accent-rgb),0.18);
+            border-color: rgba(var(--accent-rgb),0.38);
+            outline: none;
+        }
+        .wallet-side-nav .bn-item .bn-icon {
+            flex: 0 0 30px;
+            width: 30px;
+            height: 30px;
+            font-size: 0.95rem;
+            box-shadow: none;
+        }
+        .wallet-side-nav .bn-item .bn-label {
+            color: inherit;
+            font-size: 0.72rem;
+            text-align: left;
+        }
+        .bn-profile  { --nav-g1: #ec4899; --nav-g2: #be185d; }
+        .bn-wallet   { --nav-g1: #10b981; --nav-g2: #059669; }
+        .bn-swap     { --nav-g1: #6366f1; --nav-g2: #4f46e5; }
+        .bn-bridge   { --nav-g1: #7c3aed; --nav-g2: #5b21b6; }
+        .bn-xdc      { --nav-g1: #2563eb; --nav-g2: #1d4ed8; }
+        .bn-savings  { --nav-g1: #0e7490; --nav-g2: #155e75; }
+        .bn-services { --nav-g1: #f97316; --nav-g2: #dc2626; }
+
+        @media (min-width: 900px) {
+            body { max-width: 1336px; padding-left: 156px; }
+        }
+        @media (max-width: 899px) {
+            body { padding-left: 60px; padding-bottom: 0; }
+            .wallet-side-nav {
+                top: 0.55rem;
+                bottom: 0.55rem;
+                left: 0.35rem;
+                transform: none;
+                width: 52px;
+                max-height: none;
+                align-items: center;
+                padding: 0.3rem;
+                border-radius: 14px;
+            }
+            .wallet-side-nav .bn-item {
+                min-height: 38px;
+                justify-content: center;
+                padding: 0.28rem;
+            }
+            .wallet-side-nav .bn-item .bn-icon {
+                flex-basis: 28px;
+                width: 28px;
+                height: 28px;
+                font-size: 0.88rem;
+            }
+            .wallet-side-nav .bn-item .bn-label {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                padding: 0;
+                margin: -1px;
+                overflow: hidden;
+                clip: rect(0, 0, 0, 0);
+                white-space: nowrap;
+                border: 0;
+            }
+        }
 
         /* ── Face Verification intro modal ──
            First-visit explainer for unverified users (KYC + one-account rule).
@@ -3572,9 +3676,9 @@
                 <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#f59e0b,#e11d48);color:#fff;">💰</span>
                 <span class="bn-sheet-name">More Ways To Earn</span>
             </button>
-            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openBottomSheet('bnSheetWallet'); })">
-                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;">👛</span>
-                <span class="bn-sheet-name">GoodMarket Wallet</span>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openModal('receiveModal'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#0e7490,#155e75);color:#fff;">↓</span>
+                <span class="bn-sheet-name">Receive G$</span>
             </button>
             <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openBottomSheet('bnSheetServices'); })">
                 <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;">🛠️</span>
@@ -3588,31 +3692,60 @@
                 <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#2563eb,#93c5fd);color:#fff;">💸</span>
                 <span class="bn-sheet-name">GCash Cashout</span>
             </button>
-            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/profile', 'Opening Profile…'); })">
-                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#ec4899,#be185d);color:#fff;">👤</span>
-                <span class="bn-sheet-name">Profile</span>
+            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openModal('streamModal'); })">
+                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#06b6d4,#0891b2);color:#fff;">💸</span>
+                <span class="bn-sheet-name">Stream G$</span>
             </button>
         </div>
     </div>
 
-    <!-- ── Bottom Navigation Bar ── -->
-    <!-- Four core destinations always visible; More opens the full hub so every
-         sub-feature stays reachablein at most two taps from here. -->
-    <nav class="wallet-bottom-nav" aria-label="Wallet navigation">
-        <button type="button" class="bn-item bn-send" onclick="openModal('sendModal')" aria-haspopup="dialog" aria-controls="sendModal">
-            <span class="bn-icon">↑</span>
-            <span class="bn-label">Send</span>
-        </button>
-        <button type="button" class="bn-item bn-receive" onclick="openModal('receiveModal')" aria-haspopup="dialog" aria-controls="receiveModal">
-            <span class="bn-icon">↓</span>
-            <span class="bn-label">Receive</span>
-        </button>
-        <button type="button" class="bn-item bn-earn" onclick="openBottomSheet('bnSheetEarn')" aria-haspopup="dialog" aria-controls="bnSheetEarn">
-            <span class="bn-icon">💰</span>
+    <!-- ── Wallet Side Navigation ──
+         Primary destinations stay one tap away. Profile deliberately comes
+         first, followed by the wallet and cross-chain tools requested for the
+         wallet hub. Secondary actions remain in their existing sheets. -->
+    <nav class="wallet-bottom-nav wallet-side-nav" aria-label="Wallet navigation">
+        <a class="bn-item bn-profile" href="/profile" aria-label="Profile" title="Profile">
+            <span class="bn-icon" aria-hidden="true">👤</span>
+            <span class="bn-label">Profile</span>
+        </a>
+        <a class="bn-item bn-wallet active" href="/wallet" aria-current="page" aria-label="Wallet" title="Wallet">
+            <span class="bn-icon" aria-hidden="true">👛</span>
+            <span class="bn-label">Wallet</span>
+        </a>
+        <a class="bn-item bn-swap" href="/swap?tab=goodswap" aria-label="Swap" title="Swap">
+            <span class="bn-icon" aria-hidden="true">⇌</span>
+            <span class="bn-label">Swap</span>
+        </a>
+        <a class="bn-item bn-bridge" href="/swap?tab=bridge" aria-label="Bridge" title="Bridge">
+            <span class="bn-icon" aria-hidden="true">🌉</span>
+            <span class="bn-label">Bridge</span>
+        </a>
+        <a class="bn-item bn-xdc" href="/xdc-wallet" aria-label="XDC Wallet" title="XDC Wallet">
+            <span class="bn-icon" aria-hidden="true">💠</span>
+            <span class="bn-label">XDC Wallet</span>
+        </a>
+        <a class="bn-item bn-savings" href="/savings" aria-label="Savings" title="Savings">
+            <span class="bn-icon" aria-hidden="true">🏦</span>
+            <span class="bn-label">Savings</span>
+        </a>
+        <button type="button" class="bn-item bn-earn" onclick="openBottomSheet('bnSheetEarn')" aria-haspopup="dialog" aria-controls="bnSheetEarn" aria-label="Earn" title="Earn">
+            <span class="bn-icon" aria-hidden="true">💰</span>
             <span class="bn-label">Earn</span>
         </button>
-        <button type="button" class="bn-item bn-more" onclick="openBottomSheet('bnSheetMenu')" aria-haspopup="dialog" aria-controls="bnSheetMenu">
-            <span class="bn-icon">⚙️</span>
+        <button type="button" class="bn-item bn-send" onclick="openModal('sendModal')" aria-haspopup="dialog" aria-controls="sendModal" aria-label="Send" title="Send">
+            <span class="bn-icon" aria-hidden="true">↑</span>
+            <span class="bn-label">Send</span>
+        </button>
+        <button type="button" class="bn-item bn-receive" onclick="openModal('receiveModal')" aria-haspopup="dialog" aria-controls="receiveModal" aria-label="Receive" title="Receive">
+            <span class="bn-icon" aria-hidden="true">↓</span>
+            <span class="bn-label">Receive</span>
+        </button>
+        <button type="button" class="bn-item bn-services" onclick="openBottomSheet('bnSheetServices')" aria-haspopup="dialog" aria-controls="bnSheetServices" aria-label="Services" title="Services">
+            <span class="bn-icon" aria-hidden="true">🛠️</span>
+            <span class="bn-label">Services</span>
+        </button>
+        <button type="button" class="bn-item bn-more" onclick="openBottomSheet('bnSheetMenu')" aria-haspopup="dialog" aria-controls="bnSheetMenu" aria-label="More" title="More">
+            <span class="bn-icon" aria-hidden="true">•••</span>
             <span class="bn-label">More</span>
         </button>
     </nav>
