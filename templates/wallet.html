@@ -2080,6 +2080,7 @@
         }
         .bn-profile  { --nav-g1: #ec4899; --nav-g2: #be185d; }
         .bn-wallet   { --nav-g1: #10b981; --nav-g2: #059669; }
+        .bn-claim    { --nav-g1: #d97706; --nav-g2: #b45309; }
         .bn-swap     { --nav-g1: #6366f1; --nav-g2: #4f46e5; }
         .bn-bridge   { --nav-g1: #7c3aed; --nav-g2: #5b21b6; }
         .bn-xdc      { --nav-g1: #2563eb; --nav-g2: #1d4ed8; }
@@ -2090,22 +2091,26 @@
             body { max-width: 1336px; padding-left: 156px; }
         }
         @media (max-width: 899px) {
-            body { padding-left: 60px; padding-bottom: 0; }
+            /* Keep navigation clear of the very top of the screen and retain
+               readable names on phones. The old 52px icon-only rail made it
+               hard to discover destinations such as Claim G$. */
+            body { padding-left: 124px; padding-bottom: 0; }
             .wallet-side-nav {
-                top: 0.55rem;
-                bottom: 0.55rem;
+                top: 4.25rem;
+                bottom: auto;
                 left: 0.35rem;
                 transform: none;
-                width: 52px;
-                max-height: none;
-                align-items: center;
+                width: 116px;
+                max-height: calc(100dvh - 4.9rem);
+                align-items: stretch;
                 padding: 0.3rem;
                 border-radius: 14px;
             }
             .wallet-side-nav .bn-item {
                 min-height: 38px;
-                justify-content: center;
-                padding: 0.28rem;
+                justify-content: flex-start;
+                gap: 0.38rem;
+                padding: 0.28rem 0.34rem;
             }
             .wallet-side-nav .bn-item .bn-icon {
                 flex-basis: 28px;
@@ -2114,16 +2119,26 @@
                 font-size: 0.88rem;
             }
             .wallet-side-nav .bn-item .bn-label {
-                position: absolute;
-                width: 1px;
-                height: 1px;
+                position: static;
+                width: auto;
+                height: auto;
                 padding: 0;
-                margin: -1px;
-                overflow: hidden;
-                clip: rect(0, 0, 0, 0);
+                margin: 0;
+                overflow: visible;
+                clip: auto;
                 white-space: nowrap;
                 border: 0;
+                font-size: 0.62rem;
+                line-height: 1.1;
+                text-align: left;
             }
+        }
+
+        @media (max-width: 380px) {
+            body { padding-left: 112px; }
+            .wallet-side-nav { width: 104px; }
+            .wallet-side-nav .bn-item { gap: 0.25rem; padding-inline: 0.24rem; }
+            .wallet-side-nav .bn-item .bn-label { font-size: 0.58rem; }
         }
 
         /* ── Face Verification intro modal ──
@@ -2509,11 +2524,10 @@
     </section>
     </div>
 
-    <!-- UBI Claim Hero (center) -->
-    <!-- The orb/CTA route through openClaimOrVerify(): an unverified wallet
-         opens the face-verification intro (KYC + one-account-per-person
-         explainer) instead of jumping straight into the claim sheet. -->
-    <div class="ubi-hero">
+    <!-- Claim availability stays mounted for its existing state updater, but
+         is deliberately hidden from the wallet landing page. Claim G$ is now
+         entered only from the side navigation below. -->
+    <div class="ubi-hero" hidden aria-hidden="true">
         <div class="ubi-hero-orb" id="ubiClaimHero" role="button" tabindex="0"
              onclick="openClaimOrVerify();"
              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClaimOrVerify();}">
@@ -3712,6 +3726,10 @@
             <span class="bn-icon" aria-hidden="true">👛</span>
             <span class="bn-label">Wallet</span>
         </a>
+        <button type="button" class="bn-item bn-claim" onclick="openClaimOrVerify()" aria-haspopup="dialog" aria-controls="claimModal" aria-label="Claim G$" title="Claim G$">
+            <span class="bn-icon" aria-hidden="true">🪙</span>
+            <span class="bn-label">Claim G$</span>
+        </button>
         <a class="bn-item bn-swap" href="/swap?tab=goodswap" aria-label="Swap" title="Swap">
             <span class="bn-icon" aria-hidden="true">⇌</span>
             <span class="bn-label">Swap</span>
