@@ -262,18 +262,17 @@
     });
   }
 
-  // The launcher is position:fixed with a hardcoded bottom offset in
-  // ai-agent.css, but on the wallet page the bottom nav (2x3 grid of six
-  // items) can grow to ~163px tall on phones — taller than the old 92px
-  // offset — so the launcher used to float on top of the nav buttons.
-  // Measure the real nav height and park the launcher just above it.
+  // A wallet side rail leaves the lower screen edge free, so its launcher
+  // uses the regular bottom offset. Keep measuring any legacy bottom bar so
+  // the launcher cannot cover it on pages that still use that layout.
   function positionAgentLauncher() {
     const launcher = document.querySelector('.gm-ai-agent');
     if (!launcher) return;
     const nav = document.querySelector('.wallet-bottom-nav');
     if (!nav) return;
     const gap = 12;
-    launcher.style.setProperty('--gm-ai-bottom', (nav.getBoundingClientRect().height + gap) + 'px');
+    const bottom = nav.classList.contains('wallet-side-nav') ? 24 : nav.getBoundingClientRect().height + gap;
+    launcher.style.setProperty('--gm-ai-bottom', bottom + 'px');
   }
 
 
