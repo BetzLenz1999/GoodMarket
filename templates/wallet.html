@@ -2558,22 +2558,6 @@
     </section>
     </div>
 
-    <!-- Claim availability stays mounted for its existing state updater, but
-         is deliberately hidden from the wallet landing page. Claim G$ is now
-         entered only from the side navigation below. -->
-    <div class="ubi-hero" hidden aria-hidden="true">
-        <div class="ubi-hero-orb" id="ubiClaimHero" role="button" tabindex="0"
-             onclick="openClaimOrVerify();"
-             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClaimOrVerify();}">
-            <div class="ubi-hero-eyebrow" id="heroClaimEyebrow">Claimable UBI</div>
-            <div class="ubi-hero-amount" id="heroClaimAmount">— <span class="unit">G$</span></div>
-            <div class="ubi-hero-sub" id="heroClaimSub">Loading…</div>
-            <div class="ubi-hero-timer" id="heroClaimTimer"></div>
-        </div>
-        <div class="ubi-hero-cta" id="heroClaimCta" role="button" tabindex="0"
-             onclick="openClaimOrVerify();"
-             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClaimOrVerify();}">Claim UBI G$</div>
-    </div>
     </section>
 
     <div class="wallet-layout">
@@ -2693,10 +2677,12 @@
     <!-- ─── Modals ─── -->
 
     <!-- Claim Modal -->
-    <div class="modal-overlay" id="claimModal">
+    <!-- Claim details are intentionally modal-only. The wallet landing page
+         stays focused on balances, assets, and transaction activity. -->
+    <div class="modal-overlay" id="claimModal" role="dialog" aria-modal="true" aria-labelledby="claimModalTitle">
         <div class="modal-sheet">
             <div class="modal-handle"></div>
-            <div class="modal-title">🪙 Available G$ Claims</div>
+            <div class="modal-title" id="claimModalTitle">🪙 Available G$ Claims</div>
 
             <div class="ubi-pool-panel">
                 <div class="ubi-pool-head">
