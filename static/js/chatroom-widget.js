@@ -671,14 +671,14 @@
     tipTokens: function () { return (TIP_BOOT.tokens || []).slice(); }
   };
 
-  // The launcher must sit above the wallet bottom nav, whose height changes
-  // when it re-wraps on this page.
+  // The wallet side rail leaves the bottom edge free. Legacy bottom bars still
+  // require a measured offset so the chat launcher does not cover them.
   function positionChatroomLauncher() {
     var launcher = document.querySelector('.gm-chat-widget');
     if (!launcher) return;
     var nav = document.querySelector('.wallet-bottom-nav');
     var gap = 12;
-    var bottom = nav ? nav.getBoundingClientRect().height + gap : 24;
+    var bottom = nav && !nav.classList.contains('wallet-side-nav') ? nav.getBoundingClientRect().height + gap : 24;
     // If the GoodMarket Agent launcher is also on screen, stack above it so
     // the two floating buttons never overlap.
     var agent = document.querySelector('.gm-ai-agent');
