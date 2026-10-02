@@ -35,6 +35,7 @@ FEATURE_NAME = "chatroom_feature"
 # message can never smuggle invisible content into the rendered log.
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029]")
 _WHITESPACE = re.compile(r"\s+")
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,24}$")
 
 
 def _get_supabase():
@@ -100,6 +101,59 @@ def get_username(wallet: str | None) -> str | None:
 def display_name(wallet: str | None) -> str:
     """Username when set, otherwise a shortened wallet address."""
     return get_username(wallet) or short_wallet(wallet)
+
+
+def get_public_profile(username: str | None) -> dict:
+    """Return the deliberately small public profile exposed by the chatroom.
+
+    Chat messages must not become a way to discover a member's wallet address
+    or private earnings/activity.  A profile therefore contains only the
+    member's public username, their join date, and public-room message count.
+    """
+    name = (username or "").strip().lstrip("@")
+    if not _USERNAME_RE.fullmatch(name):
+        return {"success": False, "error": "Member not found", "code": "not_found"}
+
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable", "code": "db"}
+    try:
+        member_result = (
+            supabase.table("user_data")
+            .select("wallet_address, username, created_at")
+            .ilike("username", name)
+            .limit(1)
+            .execute()
+        )
+        if not member_result or not member_result.data:
+            return {"success": False, "error": "Member not found", "code": "not_found"}
+
+        member = member_result.data[0]
+        wallet = (member.get("wallet_address") or "").strip()
+        # Count only messages that are currently visible in the public room.
+        # Never return this query's wallet key to the caller.
+        messages_result = (
+            supabase.table("community_chat_messages")
+            .select("id", count="exact")
+            .eq("room", ROOM)
+            .eq("is_deleted", False)
+            .ilike("wallet_address", wallet)
+            .execute()
+        )
+        message_count = getattr(messages_result, "count", None) if messages_result else None
+        if message_count is None:
+            message_count = len(messages_result.data or []) if messages_result else 0
+        return {
+            "success": True,
+            "profile": {
+                "username": (member.get("username") or name).strip(),
+                "joined_at": member.get("created_at"),
+                "message_count": message_count,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: public profile lookup failed: %s", exc)
+        return {"success": False, "error": "Unable to load this member", "code": "db"}
 
 
 # ── Feature flag ─────────────────────────────────────────────────────────────
