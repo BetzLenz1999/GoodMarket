@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS community_chat_messages (
     wallet_address TEXT NOT NULL,
     username       TEXT,
     message        TEXT NOT NULL,
+    -- Reply metadata is server-generated after validating a visible message.
+    -- Wallet keys remain private and are used only to mark reply notifications.
+    reply_to_id       BIGINT REFERENCES community_chat_messages(id) ON DELETE SET NULL,
+    reply_to_username TEXT,
+    reply_to_wallet   TEXT,
     is_deleted     BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_by     TEXT,
     deleted_at     TIMESTAMPTZ,
@@ -33,6 +38,15 @@ CREATE INDEX IF NOT EXISTS idx_community_chat_room_id
 -- Rate-limit lookup: the poster's most recent message.
 CREATE INDEX IF NOT EXISTS idx_community_chat_wallet_id
     ON community_chat_messages(wallet_address, id DESC);
+CREATE INDEX IF NOT EXISTS idx_community_chat_reply_recipient
+    ON community_chat_messages(reply_to_wallet, id DESC)
+    WHERE reply_to_wallet IS NOT NULL;
+
+-- Safe to run after the original chatroom migration as well.
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS reply_to_id BIGINT
+    REFERENCES community_chat_messages(id) ON DELETE SET NULL;
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS reply_to_username TEXT;
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS reply_to_wallet TEXT;
 
 -- ── Reports (user-flagged messages) ──────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS community_chat_reports (
@@ -64,8 +78,19 @@ CREATE TABLE IF NOT EXISTS community_chat_bans (
 -- maintenance_settings semantics: is_maintenance = TRUE  →  HIDDEN.
 -- The NOT EXISTS guard keeps this idempotent even though the table may not
 -- carry a UNIQUE constraint on feature_name.
+--
+-- chatroom_feature: the PUBLIC ROOM is hidden until an admin turns it on.
+-- goodmarket_agent_feature: the GoodMarket Agent widget is the one we hide by
+--   default, so the community room is what users land on. Flip it ON from
+--   Admin → Feature Visibility → GoodMarket Agent when the agent is ready.
 INSERT INTO maintenance_settings (feature_name, is_maintenance, maintenance_message)
 SELECT 'chatroom_feature', TRUE, ''
 WHERE NOT EXISTS (
     SELECT 1 FROM maintenance_settings WHERE feature_name = 'chatroom_feature'
+);
+
+INSERT INTO maintenance_settings (feature_name, is_maintenance, maintenance_message)
+SELECT 'goodmarket_agent_feature', TRUE, ''
+WHERE NOT EXISTS (
+    SELECT 1 FROM maintenance_settings WHERE feature_name = 'goodmarket_agent_feature'
 );
