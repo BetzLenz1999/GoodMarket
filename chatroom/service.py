@@ -275,6 +275,17 @@ def _public_row(row: dict, viewer_wallet: str | None) -> dict:
         "is_me": bool(viewer_wallet) and owner == viewer_wallet.lower(),
         "message_type": message_type,
     }
+    # Reply ownership is evaluated server-side so the recipient can be notified
+    # without exposing either wallet address to the browser.
+    if row.get("reply_to_id"):
+        public["reply_to"] = {
+            "id": row.get("reply_to_id"),
+            "username": row.get("reply_to_username") or "member",
+        }
+        public["is_reply_to_me"] = bool(viewer_wallet) and (
+            (row.get("reply_to_wallet") or "").lower() == viewer_wallet.lower()
+        )
+
     if message_type == "tip":
         tx_hash = row.get("tip_tx_hash") or ""
         public["tip"] = {
@@ -296,7 +307,10 @@ def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
         size = max(1, min(int(limit or DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE))
         query = (
             supabase.table("community_chat_messages")
-            .select("id, username, wallet_address, message, created_at, message_type, tip_token, tip_amount, tip_tx_hash")
+            .select(
+                "id, username, wallet_address, message, created_at, message_type, "
+                "tip_token, tip_amount, tip_tx_hash, reply_to_id, reply_to_username, reply_to_wallet"
+            )
             .eq("room", ROOM)
             .eq("is_deleted", False)
         )
@@ -321,7 +335,7 @@ def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
         return {"success": False, "error": "Failed to load messages", "messages": []}
 
 
-def post_message(wallet: str, raw_message: str) -> dict:
+def post_message(wallet: str, raw_message: str, reply_to_id: int | None = None) -> dict:
     text = sanitize_message(raw_message)
     if len(text) < MIN_MESSAGE_LENGTH:
         return {"success": False, "error": "Message cannot be empty", "code": "empty"}
@@ -342,6 +356,36 @@ def post_message(wallet: str, raw_message: str) -> dict:
         return {"success": False, "error": "Database unavailable", "code": "db"}
 
     username = get_username(wallet)
+    reply = {}
+    if reply_to_id is not None:
+        try:
+            target_id = int(reply_to_id)
+        except (TypeError, ValueError):
+            return {"success": False, "error": "Invalid reply target", "code": "reply_target"}
+        try:
+            target_result = (
+                supabase.table("community_chat_messages")
+                .select("id, username, wallet_address")
+                .eq("id", target_id)
+                .eq("room", ROOM)
+                .eq("is_deleted", False)
+                .limit(1)
+                .execute()
+            )
+            if not target_result or not target_result.data:
+                return {
+                    "success": False, "error": "That message is no longer available to reply to",
+                    "code": "reply_target",
+                }
+            target = target_result.data[0]
+            reply = {
+                "reply_to_id": target["id"],
+                "reply_to_username": target.get("username") or short_wallet(target.get("wallet_address")),
+                "reply_to_wallet": target.get("wallet_address"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("chatroom: reply target lookup failed: %s", exc)
+            return {"success": False, "error": "Could not validate reply target", "code": "reply_target"}
     try:
         result = (
             supabase.table("community_chat_messages")
@@ -350,6 +394,7 @@ def post_message(wallet: str, raw_message: str) -> dict:
                 "wallet_address": wallet,
                 "username": username,
                 "message": text,
+                **reply,
             })
             .execute()
         )
