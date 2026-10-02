@@ -376,3 +376,19 @@
     height: min(300px, calc(100dvh - 318px - env(safe-area-inset-bottom, 0px)));
   }
 }
+
+/* Reply context keeps parallel conversations readable without exposing wallets. */
+.gm-chat-reply-ref { color: #c4b5fd; font-size: 11px; margin: 0 0 4px 3px; }
+.gm-chat-reply, .gm-chat-reply-cancel {
+  border: 0; background: transparent; color: #c4b5fd; font-size: 11px;
+  font-weight: 700; cursor: pointer; padding: 0;
+}
+.gm-chat-reply:hover, .gm-chat-reply-cancel:hover { color: #ddd6fe; }
+.gm-chat-replying {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 0 12px 7px; padding: 7px 9px; border-radius: 8px;
+  background: rgba(124, 58, 237, .18); color: #ddd6fe; font-size: 12px;
+}
+.gm-chat-message-link { color: #bfdbfe; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+.gm-chat-message-link:hover { color: #fef3c7; }
+.gm-chat-message-link:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
