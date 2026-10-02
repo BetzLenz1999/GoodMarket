@@ -143,10 +143,10 @@
 
 .gm-chat-name { color: #86efac; font-weight: 700; }
 
-/* A username is tappable: it opens the tip sheet for that member. */
-.gm-chat-name.is-tippable { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
-.gm-chat-name.is-tippable:hover { color: #fbbf24; }
-.gm-chat-name.is-tippable:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; border-radius: 4px; }
+/* Usernames open a privacy-safe public member profile. */
+.gm-chat-name.is-profile-link { cursor: pointer; color: #86efac; text-decoration: underline dotted; text-underline-offset: 2px; }
+.gm-chat-name.is-profile-link:hover { color: #fbbf24; }
+.gm-chat-name.is-profile-link:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; border-radius: 4px; }
 
 .gm-chat-time { color: #94a3b8; }
 
