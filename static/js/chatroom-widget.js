@@ -35,6 +35,43 @@
     }
   }
 
+  // Message text is untrusted. Build URL anchors with DOM nodes rather than
+  // innerHTML so links are useful without turning chat into an XSS surface.
+  var URL_RE = /(https?:\/\/[^\s<>]+)/gi;
+  function appendLinkedText(node, text) {
+    var value = String(text || '');
+    // Keep the common no-link path as a direct textContent assignment. Besides
+    // being faster, this retains the same literal-message behavior everywhere.
+    URL_RE.lastIndex = 0;
+    if (!URL_RE.test(value)) { node.textContent = value; return; }
+    URL_RE.lastIndex = 0;
+    var cursor = 0;
+    value.replace(URL_RE, function (match, offset) {
+      if (offset > cursor) node.appendChild(el('span', '', value.slice(cursor, offset)));
+      // Trim sentence punctuation while preserving it as ordinary text.
+      var url = match.replace(/[),.!?;:]+$/, '');
+      if (url) {
+        var link = document.createElement('a');
+        link.className = 'gm-chat-message-link';
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = url;
+        node.appendChild(link);
+      }
+      if (url.length < match.length) node.appendChild(el('span', '', match.slice(url.length)));
+      cursor = offset + match.length;
+      return match;
+    });
+    if (cursor < value.length) node.appendChild(el('span', '', value.slice(cursor)));
+  }
+
+  function messageBody(className, text) {
+    var body = el('div', className);
+    appendLinkedText(body, text);
+    return body;
+  }
+
   function reportChatMessage(id, btn) {
     btn.disabled = true;
     fetch('/chatroom/api/report', {
@@ -361,7 +398,8 @@
 
   // Every value is written with textContent (never innerHTML) — the message
   // body is untrusted user input.
-  function buildChatRow(msg) {
+  function buildChatRow(msg, options) {
+    options = options || {};
     var row = el('div', 'gm-chat-row' + (msg.is_me ? ' is-me' : ''));
     var meta = el('div', 'gm-chat-meta');
     // A username is a normal link rather than a scripted click target. This
@@ -378,13 +416,19 @@
     meta.appendChild(el('span', 'gm-chat-time', formatChatTime(msg.created_at)));
     row.appendChild(meta);
 
+    if (msg.reply_to) {
+      var replyRef = el('div', 'gm-chat-reply-ref', '↩ Reply to @' + (msg.reply_to.username || 'member'));
+      replyRef.title = 'This message is a reply to an earlier message.';
+      row.appendChild(replyRef);
+    }
+
     var isTip = msg.message_type === 'tip' && msg.tip;
     if (isTip) {
       row.classList.add('is-tip');
       var card = el('div', 'gm-chat-tip-card');
       card.appendChild(el('div', 'gm-chat-tip-head',
         '🎁 ' + (msg.tip.amount || '') + ' ' + _tipTokenLabel(msg.tip.token)));
-      card.appendChild(el('div', 'gm-chat-tip-body', msg.message));
+      card.appendChild(messageBody('gm-chat-tip-body', msg.message));
       var url = _explorerUrl(msg.tip.token, msg.tip.tx_hash);
       if (url) {
         var link = el('a', 'gm-chat-tip-link', 'View tx ↗');
@@ -395,21 +439,31 @@
       }
       row.appendChild(card);
     } else {
-      row.appendChild(el('div', 'gm-chat-bubble', msg.message));
+      // Previously: el('div', 'gm-chat-bubble', msg.message). messageBody keeps that
+      // text-only safety while replacing only validated http(s) URLs with anchors.
+      row.appendChild(messageBody('gm-chat-bubble', msg.message));
     }
 
-    if (!msg.is_me && msg.id) {
+    if (msg.id) {
       var actions = el('div', 'gm-chat-actions');
-      if (msg.username) {
+      var replyBtn = el('button', 'gm-chat-reply', '↩ Reply');
+      replyBtn.type = 'button';
+      replyBtn.addEventListener('click', function () {
+        if (typeof options.onReply === 'function') options.onReply(msg);
+      });
+      actions.appendChild(replyBtn);
+      if (!msg.is_me && msg.username) {
         var tipBtn = el('button', 'gm-chat-tip', '💸 Tip');
         tipBtn.type = 'button';
         tipBtn.addEventListener('click', function () { openTipModal(msg.username); });
         actions.appendChild(tipBtn);
       }
-      var report = el('button', 'gm-chat-report', 'Report');
-      report.type = 'button';
-      report.addEventListener('click', function () { reportChatMessage(msg.id, report); });
-      actions.appendChild(report);
+      if (!msg.is_me) {
+        var report = el('button', 'gm-chat-report', 'Report');
+        report.type = 'button';
+        report.addEventListener('click', function () { reportChatMessage(msg.id, report); });
+        actions.appendChild(report);
+      }
       row.appendChild(actions);
     }
     return row;
@@ -429,6 +483,26 @@
     var badge = root.querySelector('[data-gm-chat-badge]');
     var closeBtn = root.querySelector('[data-gm-chat-close]');
     if (!list || !form) return null;
+
+    var replyTarget = null;
+    var replyBar = null;
+    function clearReply() {
+      replyTarget = null;
+      if (replyBar) { replyBar.remove(); replyBar = null; }
+    }
+    function startReply(message) {
+      if (!message || !message.id) return;
+      replyTarget = message;
+      if (replyBar) replyBar.remove();
+      replyBar = el('div', 'gm-chat-replying');
+      replyBar.appendChild(el('span', '', '↩ Replying to @' + (message.username || 'member')));
+      var cancel = el('button', 'gm-chat-reply-cancel', 'Cancel');
+      cancel.type = 'button';
+      cancel.addEventListener('click', clearReply);
+      replyBar.appendChild(cancel);
+      form.parentNode.insertBefore(replyBar, form);
+      if (input) { input.focus(); input.placeholder = 'Reply to @' + (message.username || 'member') + '…'; }
+    }
 
     var lastId = 0;
     var timer = null;
@@ -473,7 +547,10 @@
       renderedIds[m.id] = true;
       var empty = list.querySelector('.gm-chat-empty');
       if (empty) empty.remove();
-      list.appendChild(buildChatRow(m));
+      list.appendChild(buildChatRow(m, { onReply: startReply }));
+      if (m.is_reply_to_me && !m.is_me) {
+        setStatus('↩ @' + (m.username || 'Someone') + ' replied to your message.');
+      }
       if (m.id > lastId) lastId = m.id;
       return true;
     }
@@ -592,11 +669,13 @@
         var res = await fetch('/chatroom/api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: clean })
+          body: JSON.stringify({ message: clean, reply_to_id: replyTarget ? replyTarget.id : null })
         });
         var data = await res.json();
         if (data && data.success && data.message) {
           setStatus('');
+          clearReply();
+          if (input) input.placeholder = 'Message the community…';
           appendMessages([data.message]);
         } else if (res.status === 429) {
           retryUntil = Date.now() + (data.retry_after || 3) * 1000;
