@@ -3337,6 +3337,21 @@
             blockExplorerUrls: ['https://celoscan.io']
         });
 
+        // G$ is an ERC-20 token on Celo, not a separate EVM network.  EIP-747
+        // deliberately leaves the final decision to the wallet/user: calling
+        // wallet_watchAsset can show a confirmation prompt and never adds the
+        // token silently.  Request it after Celo is selected so wallets that
+        // validate the active chain can display the correct token.
+        const GOODDOLLAR_TOKEN = Object.freeze({
+            type: 'ERC20',
+            options: {
+                address: '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A',
+                symbol: 'G$',
+                decimals: 18,
+                image: window.location.origin + '/static/icons/goodmarket-icon.png'
+            }
+        });
+
         // Check if user should return to community stories after login
         window.addEventListener('load', function() {
             const returnToCommunityStories = sessionStorage.getItem('return_to_community_stories');
@@ -4530,6 +4545,27 @@
             }
         }
 
+        async function requestGoodDollarToken(provider) {
+            try {
+                // There is no EIP-1193 method to query a wallet's watched-token
+                // list. Re-requesting is intentional: wallets that already show
+                // G$ generally resolve without a duplicate prompt, while a user
+                // who declined it on an earlier login can opt in later.
+                const added = await provider.request({
+                    method: 'wallet_watchAsset',
+                    params: GOODDOLLAR_TOKEN
+                });
+                if (added) console.info('GoodDollar (G$) token added to wallet.');
+                return !!added;
+            } catch (err) {
+                // wallet_watchAsset is optional. A wallet that does not support
+                // it, or a user who declines its confirmation, must still be
+                // able to log in and use Celo.
+                console.info('GoodDollar token setup was skipped or is unsupported:', err && err.message);
+                return false;
+            }
+        }
+
         async function connectInjectedWallet() {
             showWalletStatus('walletConnectStatus', '⏳ Detecting wallet…', 'info');
             const provider = await awaitPreferredInjectedProvider();
@@ -4567,6 +4603,8 @@
                         return;
                     }
                 }
+                showWalletStatus('walletConnectStatus', '🪙 Optional: confirm in your wallet to add GoodDollar (G$) on Celo…', 'info');
+                await requestGoodDollarToken(provider);
                 const message = makeLoginMessage(wallet);
                 const messageHex = utf8ToHex(message);
                 showWalletStatus('walletConnectStatus', '✍️ Signature request sent. Approve the login message in your wallet.', 'info');
