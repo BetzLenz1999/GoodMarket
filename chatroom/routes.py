@@ -149,7 +149,7 @@ def api_post_message():
         return jsonify({"success": False, "error": "Not authenticated"}), 401
 
     data = request.get_json(silent=True) or {}
-    result = svc.post_message(wallet, data.get("message", ""))
+    result = svc.post_message(wallet, data.get("message", ""), data.get("reply_to_id"))
     status = 200 if result.get("success") else 400
     if result.get("code") == "rate_limited":
         status = 429
