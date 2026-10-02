@@ -364,18 +364,15 @@
   function buildChatRow(msg) {
     var row = el('div', 'gm-chat-row' + (msg.is_me ? ' is-me' : ''));
     var meta = el('div', 'gm-chat-meta');
-    var name = el('span', 'gm-chat-name', '@' + (msg.username || 'anonymous'));
-    // Tapping someone's @username opens the tip sheet — the primary, most
-    // discoverable way to tip (the 💸 button below is the second one).
-    if (!msg.is_me && msg.username) {
-      name.classList.add('is-tippable');
-      name.setAttribute('role', 'button');
-      name.setAttribute('tabindex', '0');
-      name.setAttribute('title', 'Tip @' + msg.username);
-      name.addEventListener('click', function () { openTipModal(msg.username); });
-      name.addEventListener('keydown', function (ev) {
-        if (ev && (ev.key === 'Enter' || ev.key === ' ')) openTipModal(msg.username);
-      });
+    // A username is a normal link rather than a scripted click target. This
+    // keeps profile navigation accessible (keyboard, long-press and open in a
+    // new tab) while the separate Tip button remains an explicit money action.
+    var name = el(msg.username ? 'a' : 'span', 'gm-chat-name', '@' + (msg.username || 'anonymous'));
+    if (msg.username) {
+      name.href = '/chatroom/u/' + encodeURIComponent(String(msg.username).replace(/^@/, ''));
+      name.title = 'View @' + msg.username + "'s profile";
+      name.setAttribute('aria-label', 'View @' + msg.username + "'s profile");
+      name.classList.add('is-profile-link');
     }
     meta.appendChild(name);
     meta.appendChild(el('span', 'gm-chat-time', formatChatTime(msg.created_at)));
