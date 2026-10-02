@@ -76,6 +76,21 @@ def chatroom_home():
     )
 
 
+@chatroom_bp.route("/u/<username>")
+def chatroom_member_profile(username: str):
+    """Public-by-username profile, reachable from a chat message."""
+    wallet = _session_wallet()
+    if not wallet:
+        return redirect("/")
+    if not svc.is_enabled():
+        return redirect("/wallet")
+
+    result = svc.get_public_profile(username)
+    if not result.get("success"):
+        return render_template("chatroom_profile.html", profile=None), 404
+    return render_template("chatroom_profile.html", profile=result["profile"])
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 @chatroom_bp.route("/api/state")
