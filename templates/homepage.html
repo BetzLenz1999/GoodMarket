@@ -3326,6 +3326,17 @@
     {% endif %}
 
     <script>
+        // Network configuration is shared by the injected-wallet login flow.
+        // The add/switch requests happen only after the Connect click, because
+        // browser extensions require a user gesture for those permission prompts.
+        const CELO_NETWORK = Object.freeze({
+            chainId: '0xa4ec', // 42220
+            chainName: 'Celo Mainnet',
+            nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+            rpcUrls: ['https://forno.celo.org'],
+            blockExplorerUrls: ['https://celoscan.io']
+        });
+
         // Check if user should return to community stories after login
         window.addEventListener('load', function() {
             const returnToCommunityStories = sessionStorage.getItem('return_to_community_stories');
@@ -4477,38 +4488,44 @@
         }
 
         async function ensureCeloChain(provider) {
-            const CELO_CHAIN_HEX = '0xa4ec'; // 42220
+            const isCeloChain = (chainId) => String(chainId || '').toLowerCase() === CELO_NETWORK.chainId;
+            const switchToCelo = () => provider.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: CELO_NETWORK.chainId }]
+            });
             try {
                 const current = await provider.request({ method: 'eth_chainId' });
-                const normalized = (typeof current === 'string') ? current.toLowerCase() : current;
-                if (normalized === CELO_CHAIN_HEX) return true;
+                if (isCeloChain(current)) return true;
             } catch (_) { /* some wallets don't support eth_chainId pre-connect */ }
             try {
-                await provider.request({
-                    method: 'wallet_switchEthereumChain',
-                    params: [{ chainId: CELO_CHAIN_HEX }]
-                });
-                return true;
+                await switchToCelo();
             } catch (switchErr) {
                 if (switchErr && (switchErr.code === 4902 || /unrecognized|not added/i.test(switchErr.message || ''))) {
                     try {
                         await provider.request({
                             method: 'wallet_addEthereumChain',
-                            params: [{
-                                chainId: CELO_CHAIN_HEX,
-                                chainName: 'Celo Mainnet',
-                                nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
-                                rpcUrls: ['https://forno.celo.org'],
-                                blockExplorerUrls: ['https://celoscan.io']
-                            }]
+                            params: [CELO_NETWORK]
                         });
-                        return true;
+                        // Adding a network does not necessarily select it.
+                        // Explicitly switch after MetaMask/another extension
+                        // accepts the Celo configuration.
+                        await switchToCelo();
                     } catch (addErr) {
                         console.warn('Failed to add Celo network to wallet:', addErr);
                         return false;
                     }
+                } else {
+                    console.warn('Failed to switch wallet to Celo:', switchErr);
+                    return false;
                 }
-                console.warn('Failed to switch wallet to Celo:', switchErr);
+            }
+            // Do not sign until the extension confirms it actually selected
+            // Celo. Some providers acknowledge an add/switch without changing
+            // the active chain immediately.
+            try {
+                return isCeloChain(await provider.request({ method: 'eth_chainId' }));
+            } catch (verifyErr) {
+                console.warn('Could not verify Celo network after switch:', verifyErr);
                 return false;
             }
         }
@@ -4536,7 +4553,7 @@
                     onCelo = true;
                     try {
                         const chainId = await provider.request({ method: 'eth_chainId' });
-                        if (String(chainId || '').toLowerCase() !== CELO_CHAIN_HEX.toLowerCase()) {
+                        if (String(chainId || '').toLowerCase() !== CELO_NETWORK.chainId) {
                             console.warn('MiniPay reported non-Celo chainId:', chainId);
                         }
                     } catch (_) {
