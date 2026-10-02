@@ -4614,6 +4614,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     note.textContent = 'MiniPay is Celo-only. XDC claims require MetaMask or a compatible WalletConnect wallet.';
                 } else if (caps.isTrustWallet) {
                     note.textContent = 'Trust Wallet network prompts can be unreliable for XDC. Use MetaMask or compatible WalletConnect for XDC.';
+                } else if (_isUnifiedLocalUbiClaim() &&
+                    claims.celo && claims.celo.can_claim && claims.celo.is_available !== false &&
+                    claims.xdc && claims.xdc.can_claim && claims.xdc.is_available !== false) {
+                    note.textContent = 'Your in-app GoodMarket wallet will claim both available Celo and XDC UBI in one PIN-authorized action.';
                 } else if (selectedClaimNetwork) {
                     note.textContent = `You chose ${selectedClaimNetwork.toUpperCase()}. Tap its button again to claim, or pick another network.`;
                 } else {
@@ -5889,6 +5893,54 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             throw new Error((postFaucet && postFaucet.error) || 'Fuse gas top-up did not arrive in time. Please retry shortly.');
         }
 
+        function _isUnifiedLocalUbiClaim() {
+            return (LOGIN_METHOD || '').toLowerCase() === 'local'
+                && typeof GMLocalWallet !== 'undefined';
+        }
+
+        function _hasClaimableLocalXdcUbi() {
+            const xdc = claimAvailability && claimAvailability.claims && claimAvailability.claims.xdc;
+            return !!(xdc && xdc.can_claim && xdc.is_available !== false);
+        }
+
+        // A GMLocalWallet has one PIN-unlocked key that can sign on both of
+        // its supported chains.  Keep the two UBI claims in the same user
+        // action: after the Celo transaction is submitted, move its active
+        // chain pointer to XDC and submit that claim too.  This deliberately
+        // does not apply to injected/WC wallets, where a second network may
+        // require an extra wallet approval or network prompt.
+        async function _claimXdcAfterLocalCelo(provider, from) {
+            if (!_isUnifiedLocalUbiClaim() || !_hasClaimableLocalXdcUbi()) return null;
+
+            try {
+                label.textContent = 'Claiming on XDC…';
+                icon.textContent = '💠';
+                appendStatusLine('💠 Celo submitted. Claiming your available XDC UBI with the same GoodMarket wallet…', 'var(--text-dim)');
+                await ensureXdcGasReadyBeforeClaim();
+                const txHash = await claimXdcInjected(provider, from);
+                logGoodMarketClaim(txHash, 'xdc', 'submitted');
+                appendStatusLine(
+                    `✅ XDC claim submitted: <a href="https://xdcscan.com/tx/${txHash}" target="_blank" rel="noopener" style="color:#34d399;">${txHash.slice(0, 10)}...${txHash.slice(-6)}</a>`,
+                    'var(--green)'
+                );
+                setTimeout(() => {
+                    if (typeof loadXdcBalances === 'function') loadXdcBalances();
+                    fetchEntitlement();
+                }, 4000);
+                return txHash;
+            } catch (err) {
+                // Celo was already broadcast, so an XDC-side problem must not
+                // turn the completed Celo claim into an apparent failure. The
+                // user can retry only the remaining XDC claim from its card.
+                const raw = (err && (err.shortMessage || err.message)) || 'XDC claim failed';
+                const msg = _isUserRejectedError(err)
+                    ? 'XDC transaction cancelled.'
+                    : (window.GMTxError && GMTxError.format ? GMTxError.format(err) : raw);
+                appendStatusLine('⚠️ XDC claim was not submitted: ' + msg + ' You can retry XDC only below.', '#fcd34d');
+                return null;
+            }
+        }
+
         async function ensureInjectedWalletClaim() {
             const isInsufficientFundsError = (err) => {
                 const raw = String(
@@ -6285,8 +6337,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 // verifier (or a follow-up confirm call) can upgrade it.
                 logGoodMarketClaim(txHash, 'celo', 'submitted');
                 pollReceipt(txHash, 20);
+                await _claimXdcAfterLocalCelo(provider, from);
 
-                appendStatusLine('ℹ️ Other network claims will appear here after Celo confirms — no automatic XDC prompt.', 'var(--text-dim)');
+                if (!_isUnifiedLocalUbiClaim()) {
+                    appendStatusLine('ℹ️ Other network claims will appear here after Celo confirms — select XDC to claim it.', 'var(--text-dim)');
+                }
             } catch (err) {
                 console.error('[claim] Celo claim error:', err);
                 
@@ -6696,6 +6751,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             recommendedClaimNetwork = pickRecommendedClaimNetwork() || recommendedClaimNetwork;
             if (claimed && recommendedClaimNetwork === 'celo') return;
             if (needsVerification) { startFV(); return; }
+
+            // The in-app wallet is the only signer that can safely make the
+            // Celo + XDC UBI claims as one PIN-authorized action. Even if the
+            // user tapped the XDC card, start with Celo when both are ready;
+            // ensureInjectedWalletClaim() then submits XDC immediately using
+            // the same unlocked provider. Other login methods retain their
+            // explicit per-network choice and never receive an unexpected
+            // second wallet request.
+            const localCelo = claimAvailability && claimAvailability.claims && claimAvailability.claims.celo;
+            if (_isUnifiedLocalUbiClaim() && localCelo && localCelo.can_claim &&
+                localCelo.is_available !== false && _hasClaimableLocalXdcUbi()) {
+                selectedClaimNetwork = 'celo';
+                recommendedClaimNetwork = 'celo';
+                renderClaimNetworks();
+                appendStatusLine('🪙 Your GoodMarket wallet will claim available UBI on Celo and XDC in one PIN-authorized action.', 'var(--text-dim)');
+            }
             if (recommendedClaimNetwork === 'fuse' || recommendedClaimNetwork === 'xdc') {
                 await executeNetworkClaim(recommendedClaimNetwork);
                 return;
@@ -6720,7 +6791,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 // GoodDapp-style: No pre-flight balance check.
                 // Always proceed to claim. If it fails due to insufficient gas,
                 // the catch block will handle the faucet fallback.
-                ensureInjectedWalletClaim();
+                await ensureInjectedWalletClaim();
                 return;
             }
 
