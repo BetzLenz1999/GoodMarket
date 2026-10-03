@@ -969,6 +969,19 @@ async function ensureCountriesLoaded() {
     return _countriesLoadingPromise;
 }
 
+// Drop the cached failure and try the catalog again, so a transient backend
+// error recovers without a full page reload.
+async function retryCountriesLoad() {
+    _countriesCache = null;
+    _countriesLoadingPromise = null;
+    const listEl = document.getElementById('countryPickerList');
+    if (listEl) {
+        listEl.innerHTML = `<div class="country-picker-loading"><i class="fas fa-spinner fa-spin"></i><div style="margin-top:8px">Loading countries...</div></div>`;
+    }
+    const searchEl = document.getElementById('countryPickerSearch');
+    await renderCountryList(searchEl ? searchEl.value : '');
+}
+
 function getDialCode(country) {
     if (!country) return '';
     const cc = (country.callingCodes && country.callingCodes[0]) || '';
@@ -1002,7 +1015,8 @@ async function renderCountryList(query) {
     try {
         countries = await ensureCountriesLoaded();
     } catch (e) {
-        listEl.innerHTML = `<div class="country-picker-empty">Failed to load countries. Please try again.</div>`;
+        listEl.innerHTML = `<div class="country-picker-empty">Failed to load countries.` +
+            `<div style="margin-top:12px"><button type="button" class="btn-secondary" onclick="retryCountriesLoad()">Retry</button></div></div>`;
         return;
     }
     const q = (query || '').toLowerCase();
