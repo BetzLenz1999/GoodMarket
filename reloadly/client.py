@@ -325,13 +325,40 @@ class ReloadlyClient:
             logger.error(f"❌ pay_utility error: {e}")
             raise
 
+    def _countries_public_headers(self) -> dict:
+        """Headers for the anonymous countries catalog request."""
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/com.reloadly.topups-v1+json",
+        }
+
     def get_countries(self) -> list:
-        """Get list of supported countries for top-ups"""
+        """Get list of supported countries for top-ups.
+
+        The countries catalog is a public endpoint — Reloadly serves the full
+        list without an Authorization header. Authenticating is still preferred
+        so the request honours the configured environment, but a missing,
+        expired, or rejected credential must not blank the country picker, so
+        an anonymous request is used as the fallback.
+        """
+        url = f"{self.topup_url}/countries"
+        if self.is_initialized:
+            try:
+                resp = requests.get(url, headers=self._topup_headers(), timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, list):
+                    return data
+                logger.warning("⚠️ get_countries returned a non-list payload; trying public catalog")
+            except Exception as e:
+                logger.warning(f"⚠️ get_countries authenticated fetch failed ({e}); trying public catalog")
         try:
-            url = f"{self.topup_url}/countries"
-            resp = requests.get(url, headers=self._topup_headers(), timeout=15)
+            resp = requests.get(url, headers=self._countries_public_headers(), timeout=15)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            if not isinstance(data, list):
+                raise ValueError(f"Unexpected countries payload: {type(data).__name__}")
+            return data
         except Exception as e:
             logger.error(f"❌ get_countries error: {e}")
             raise
