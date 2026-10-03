@@ -148,8 +148,12 @@ def api_countries():
         return jsonify({"error": "Not authenticated"}), 401
     try:
         countries = reloadly_client.get_countries()
+        if not isinstance(countries, list):
+            logger.error(f"api_countries unexpected payload: {type(countries).__name__}")
+            return jsonify({"success": False, "error": "Countries catalog is temporarily unavailable."}), 502
         return jsonify({"success": True, "countries": countries})
     except Exception as e:
+        logger.error(f"api_countries error: {e}")
         return jsonify({"success": False, "error": sanitize_error(e)}), 500
 
 
