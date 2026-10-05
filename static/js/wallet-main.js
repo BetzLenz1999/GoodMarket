@@ -4125,6 +4125,32 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             );
         }
 
+        // Detects when the wallet could not determine the transaction fee
+        // itself. MetaMask surfaces this as a red "Network fee unavailable"
+        // field and refuses to sign; Trust Wallet says it can't estimate the
+        // fee. These errors mean the wallet's OWN RPC could not run
+        // eth_estimateGas, so the cure is the same as an unreachable RPC:
+        // point the wallet at our healthy list and retry.
+        function _isNetworkFeeUnavailableError(err) {
+            if (!err) return false;
+            const msg = ((err.shortMessage || err.message) || '').toLowerCase();
+            if (!msg) return false;
+            return (
+                msg.includes('network fee unavailable')
+                || msg.includes('fee unavailable')
+                || msg.includes('cannot estimate')
+                || msg.includes("can't estimate")
+                || msg.includes('unable to estimate')
+                || msg.includes('failed to estimate')
+                || msg.includes('invalid network fee')
+                || msg.includes('invalid fee')
+                || msg.includes('missing gas')
+                || msg.includes('gas required exceeds')
+                || msg.includes('cannot determine the fee')
+                || msg.includes('unable to determine the fee')
+            );
+        }
+
         // Ask the wallet to (re)register XDC with our healthy multi-RPC list.
         // Modern MetaMask supports updating an existing network's RPC
         // endpoints via wallet_addEthereumChain, so this lets a user whose
@@ -4217,7 +4243,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     if (switchErr && switchErr.code === 4001) {
                         throw new Error('XDC network switch was cancelled.');
                     }
-                    if (switchErr && switchErr.code !== 4902) {
+                    // 4902 = chain not added; -32603 = some wallets (older
+                    // MetaMask builds, Trust) report a missing chain this way.
+                    if (switchErr && switchErr.code !== 4902 && switchErr.code !== -32603) {
                         throw new Error(switchErr.message || 'Could not switch to XDC network.');
                     }
                     try {
@@ -4244,19 +4272,41 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             // eth_sendTransaction when a non-standard `chainId` field is
             // present in the tx params. The chain switch above already
             // pinned the wallet to XDC, so we omit it from params.
-            const sendXdcTx = () => provider.request({
-                method: 'eth_sendTransaction',
-                params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0' }]
-            });
+            //
+            // Estimate gas explicitly for the real claim() calldata and send
+            // it with the tx — mirrors claimCeloInjected. Without an explicit
+            // gas limit the wallet must estimate the fee through its OWN XDC
+            // RPC; when that estimate fails (slow/dead RPC, no XDC network
+            // added yet) MetaMask shows a red "Network fee unavailable" field
+            // and the claim never leaves the wallet. 40% headroom, falling
+            // back to the same 500,000 claim() gas cap the backend uses.
+            const sendXdcTx = async () => {
+                let gasHex;
+                try {
+                    const est = await provider.request({
+                        method: 'eth_estimateGas',
+                        params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0' }],
+                    });
+                    const estimated = typeof est === 'string' ? BigInt(est) : BigInt(Number(est));
+                    gasHex = '0x' + (estimated * 140n / 100n).toString(16);
+                } catch (_) {
+                    gasHex = '0x7a120'; // 500 000 — safe claim() gas fallback
+                }
+                return provider.request({
+                    method: 'eth_sendTransaction',
+                    params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0', gas: gasHex }]
+                });
+            };
 
             try {
                 return await sendXdcTx();
             } catch (sendErr) {
                 if (_isUserRejectedError(sendErr)) throw sendErr;
-                // The wallet's own XDC RPC is unreachable (e.g. still pinned to
-                // the dead erpc.xinfin.network). Ask it to adopt our healthy
-                // RPC list, then retry the send once.
-                if (_isWalletRpcUnreachableError(sendErr)) {
+                // The wallet's own XDC RPC is unreachable OR could not estimate
+                // the network fee (e.g. still pinned to the dead
+                // erpc.xinfin.network). Ask it to adopt our healthy RPC list,
+                // then retry the send once.
+                if (_isWalletRpcUnreachableError(sendErr) || _isNetworkFeeUnavailableError(sendErr)) {
                     try {
                         await _promptAddHealthyXdcRpc(provider);
                         await new Promise(r => setTimeout(r, 1200));
