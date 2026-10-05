@@ -2641,9 +2641,13 @@
                 // RPC, XDC not fully set up) MetaMask shows a red "Network fee
                 // unavailable" field and the claim never leaves the wallet.
                 // 40% headroom, falling back to the 500,000 claim() gas cap.
-                // The chainId field is intentionally omitted — some wallets
-                // (MetaMask Mobile, Trust) reject a non-standard chainId inside
-                // eth_sendTransaction params; the wallet is already on XDC.
+                // We also send gasPrice: eth_estimateGas returns only the gas
+                // UNITS, so the wallet would still have to ask its own RPC for
+                // the price — a flaky XDC RPC fails that second round-trip even
+                // when the estimate succeeds. The chainId field is
+                // intentionally omitted — some wallets (MetaMask Mobile, Trust)
+                // reject a non-standard chainId inside eth_sendTransaction
+                // params; the wallet is already on XDC.
                 let claimGasHex;
                 try {
                     const est = await ep.request({
@@ -2654,6 +2658,15 @@
                 } catch (_) { /* fall through to the fixed cap */ }
                 if (!claimGasHex) claimGasHex = '0x7a120'; // 500 000 — safe claim() gas fallback
 
+                let claimGasPriceHex = '0x5d21dba00'; // 25 gwei fallback
+                try {
+                    const gp = await ep.request({ method: 'eth_gasPrice', params: [] });
+                    if (gp) {
+                        const parsed = BigInt(gp);
+                        if (parsed > 0n) claimGasPriceHex = '0x' + parsed.toString(16);
+                    }
+                } catch (_) { /* keep the fallback price */ }
+
                 const txHash = await ep.request({
                     method: 'eth_sendTransaction',
                     params: [{
@@ -2661,6 +2674,7 @@
                         to: '0x22867567E2D80f2049200E25C6F31CB6Ec2F0faf',
                         data: '0x4e71d92d',
                         gas: claimGasHex,
+                        gasPrice: claimGasPriceHex,
                     }]
                 });
 
