@@ -4280,6 +4280,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             // added yet) MetaMask shows a red "Network fee unavailable" field
             // and the claim never leaves the wallet. 40% headroom, falling
             // back to the same 500,000 claim() gas cap the backend uses.
+            //
+            // We also fetch and send gasPrice. `eth_estimateGas` returns only
+            // the gas UNITS — the wallet still has to ask its own RPC for the
+            // price, and a flaky XDC RPC fails that second round-trip even
+            // when the estimate succeeds. Sending both removes the wallet's
+            // fee lookup entirely (same proven pattern as learn_and_earn /
+            // savings). The fallback price is a generous 25 gwei so a wallet
+            // whose RPC can't quote a price still submits.
+            const XDC_FALLBACK_GAS_PRICE = '0x5d21dba00'; // 25 gwei
             const sendXdcTx = async () => {
                 let gasHex;
                 try {
@@ -4292,9 +4301,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 } catch (_) {
                     gasHex = '0x7a120'; // 500 000 — safe claim() gas fallback
                 }
+                let gasPriceHex = XDC_FALLBACK_GAS_PRICE;
+                try {
+                    const gp = await provider.request({ method: 'eth_gasPrice', params: [] });
+                    const parsed = typeof gp === 'string' ? BigInt(gp) : BigInt(Number(gp));
+                    if (parsed > 0n) gasPriceHex = '0x' + parsed.toString(16);
+                } catch (_) { /* keep the fallback price */ }
                 return provider.request({
                     method: 'eth_sendTransaction',
-                    params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0', gas: gasHex }]
+                    params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0', gas: gasHex, gasPrice: gasPriceHex }]
                 });
             };
 
@@ -6590,8 +6605,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     msg = "Your wallet's XDC RPC endpoint is offline. Open your wallet's XDC Network settings and set the RPC URL to <strong>https://earpc.xinfin.network</strong> (or remove &amp; re-add XDC Network), then retry.";
                 } else if (_isRpcHtmlError(err)) {
                     msg = `${network.toUpperCase()} network is temporarily busy. Please retry in 30–60 seconds.`;
+                } else if (network === 'xdc' && _isNetworkFeeUnavailableError(err)) {
+                    msg = "Your wallet could not work out the XDC network fee. Open your wallet's XDC Network settings and set the RPC URL to <strong>https://earpc.xinfin.network</strong> (or remove &amp; re-add XDC Network), then retry.";
                 } else if (window.GMTxError && GMTxError.format) {
-                    msg = GMTxError.format(err);
+                    msg = GMTxError.format(err, { nativeSymbol: network === 'xdc' ? 'XDC' : 'CELO' });
                 } else {
                     msg = raw;
                 }
