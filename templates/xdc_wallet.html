@@ -2635,13 +2635,32 @@
                     // User rejected or other error - proceed anyway, tx will still go to XDC
                 }
                 
+                // Estimate gas for the real claim() calldata and send it with
+                // the tx. Without an explicit gas limit the wallet estimates
+                // the fee through its OWN XDC RPC; when that fails (slow/dead
+                // RPC, XDC not fully set up) MetaMask shows a red "Network fee
+                // unavailable" field and the claim never leaves the wallet.
+                // 40% headroom, falling back to the 500,000 claim() gas cap.
+                // The chainId field is intentionally omitted — some wallets
+                // (MetaMask Mobile, Trust) reject a non-standard chainId inside
+                // eth_sendTransaction params; the wallet is already on XDC.
+                let claimGasHex;
+                try {
+                    const est = await ep.request({
+                        method: 'eth_estimateGas',
+                        params: [{ from: from, to: '0x22867567E2D80f2049200E25C6F31CB6Ec2F0faf', data: '0x4e71d92d' }]
+                    });
+                    claimGasHex = _increaseGasLimitHex(est, 40);
+                } catch (_) { /* fall through to the fixed cap */ }
+                if (!claimGasHex) claimGasHex = '0x7a120'; // 500 000 — safe claim() gas fallback
+
                 const txHash = await ep.request({
                     method: 'eth_sendTransaction',
                     params: [{
                         from: from,
                         to: '0x22867567E2D80f2049200E25C6F31CB6Ec2F0faf',
                         data: '0x4e71d92d',
-                        chainId: XDC_CHAIN_ID_HEX,
+                        gas: claimGasHex,
                     }]
                 });
 
