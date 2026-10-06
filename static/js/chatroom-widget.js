@@ -91,6 +91,30 @@
     });
   }
 
+  // Admin-only: remove a message for everyone. The delete button is only shown
+  // when the server said this viewer is an admin, and the endpoint re-checks
+  // admin status — a non-admin calling this directly still gets a 403.
+  function deleteChatMessage(id, btn, onDeleted) {
+    if (!confirm('Delete this message for everyone?')) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    fetch('/chatroom/api/admin/messages/' + encodeURIComponent(id), { method: 'DELETE' })
+      .then(function (res) {
+        return res.json().then(function (data) { return data; }, function () { return null; });
+      })
+      .then(function (data) {
+        if (data && data.success) {
+          if (typeof onDeleted === 'function') onDeleted(id);
+        } else {
+          if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete'; }
+          alert((data && data.error) || 'Failed to delete message.');
+        }
+      })
+      .catch(function () {
+        if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete'; }
+        alert('Failed to delete message.');
+      });
+  }
+
   // ── Tipping ───────────────────────────────────────────────────────────
   // A tip is a REAL on-chain transfer signed by the sender's own wallet. The
   // widget resolves the recipient, hands the unsigned tx to the wallet, then
@@ -400,7 +424,9 @@
   // body is untrusted user input.
   function buildChatRow(msg, options) {
     options = options || {};
-    var row = el('div', 'gm-chat-row' + (msg.is_me ? ' is-me' : ''));
+    var row = el('div', 'gm-chat-row' + (msg.is_me ? ' is-me' : '')
+      + (msg.is_admin ? ' is-admin' : ''));
+    if (msg.id != null) row.setAttribute('data-id', String(msg.id));
     var meta = el('div', 'gm-chat-meta');
     // A username is a normal link rather than a scripted click target. This
     // keeps profile navigation accessible (keyboard, long-press and open in a
@@ -413,6 +439,11 @@
       name.classList.add('is-profile-link');
     }
     meta.appendChild(name);
+    // Admin badge — `is_admin` is computed server-side and is a boolean only;
+    // the wallet address is never exposed.
+    if (msg.is_admin) {
+      meta.appendChild(el('span', 'gm-chat-admin-badge', 'ADMIN'));
+    }
     meta.appendChild(el('span', 'gm-chat-time', formatChatTime(msg.created_at)));
     row.appendChild(meta);
 
@@ -464,6 +495,19 @@
         report.addEventListener('click', function () { reportChatMessage(msg.id, report); });
         actions.appendChild(report);
       }
+      // Admin delete — visible only when the server told us this viewer is an
+      // admin. Available on ANY message (including the admin's own).
+      if (options.isAdmin) {
+        var del = el('button', 'gm-chat-delete', '🗑 Delete');
+        del.type = 'button';
+        del.title = 'Delete this message for everyone';
+        del.addEventListener('click', function () {
+          deleteChatMessage(msg.id, del, function (deletedId) {
+            if (typeof options.onDelete === 'function') options.onDelete(deletedId);
+          });
+        });
+        actions.appendChild(del);
+      }
       row.appendChild(actions);
     }
     return row;
@@ -512,6 +556,11 @@
     var unread = 0;
     var retryUntil = 0;
     var interval = POLL_FAST_MS;
+    // Server-side truth: only an admin sees the in-room delete affordance.
+    var viewerIsAdmin = false;
+    // High-water mark of deletions we have already pruned, so each poll only
+    // asks for deletions newer than the last tick.
+    var deletedCursor = null;
     // A brand-new mount must paint the existing backlog, so the first fetch is
     // always a "latest N" read; every later tick is a cheap after_id cursor.
     var needInitial = true;
@@ -541,13 +590,40 @@
     // arrive on the next after_id poll, so without this it would show twice.
     var renderedIds = {};
 
+    function removeMessageRow(id) {
+      var target = String(id);
+      var rows = list.querySelectorAll('.gm-chat-row');
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].getAttribute('data-id') === target) { rows[i].remove(); break; }
+      }
+      delete renderedIds[id];
+      if (!list.querySelector('.gm-chat-row') && !list.querySelector('.gm-chat-empty')) {
+        list.appendChild(el('div', 'gm-chat-empty', 'No messages yet — say hi! 👋'));
+      }
+    }
+
+    // Remove any row an admin deleted since the last tick. The after_id cursor
+    // never re-reads old rows, so without this a deleted message would linger
+    // on other viewers' screens until a manual refresh.
+    function pruneDeleted(ids) {
+      if (!ids || !ids.length) return;
+      ids.forEach(function (id) {
+        var numeric = Number(id);
+        if (renderedIds[numeric]) removeMessageRow(numeric);
+      });
+    }
+
     function appendMessage(m) {
       if (!m || m.id == null) return false;
       if (renderedIds[m.id]) return false;
       renderedIds[m.id] = true;
       var empty = list.querySelector('.gm-chat-empty');
       if (empty) empty.remove();
-      list.appendChild(buildChatRow(m, { onReply: startReply }));
+      list.appendChild(buildChatRow(m, {
+        onReply: startReply,
+        isAdmin: viewerIsAdmin,
+        onDelete: function (deletedId) { removeMessageRow(Number(deletedId)); }
+      }));
       if (m.is_reply_to_me && !m.is_me) {
         setStatus('↩ @' + (m.username || 'Someone') + ' replied to your message.');
       }
@@ -570,6 +646,8 @@
         // The server is the source of truth for the tip tokens on offer.
         if (data.tip_tokens && data.tip_tokens.length) TIP_BOOT.tokens = data.tip_tokens;
         if (data.wallet) TIP_BOOT.wallet = data.wallet;
+        // Admin status drives the delete affordance (server-verified).
+        viewerIsAdmin = data.is_admin === true;
         if (data.has_username === false) {
           setStatus('Tip: set a username on the wallet page so people can tip you.');
         }
@@ -582,7 +660,8 @@
       try {
         var url = needInitial
           ? '/chatroom/api/messages?limit=50'
-          : '/chatroom/api/messages?after_id=' + encodeURIComponent(lastId);
+          : '/chatroom/api/messages?after_id=' + encodeURIComponent(lastId)
+            + (deletedCursor ? '&deleted_after=' + encodeURIComponent(deletedCursor) : '');
         var res = await fetch(url);
         if (res.status === 403) {
           stop();
@@ -592,6 +671,12 @@
         if (!res.ok) return false;
         var data = await res.json();
         if (data && data.success) {
+          // Prune messages deleted since the last tick, then append new ones.
+          if (data.deleted_ids && data.deleted_ids.length) pruneDeleted(data.deleted_ids);
+          // Seed the deletion cursor from the SERVER clock so a skewed device
+          // clock can never miss (or spuriously include) deletions.
+          if (data.deleted_cursor) deletedCursor = data.deleted_cursor;
+          else if (!deletedCursor && data.server_time) deletedCursor = data.server_time;
           if (needInitial && (!data.messages || !data.messages.length)
               && !list.querySelector('.gm-chat-empty')) {
             list.appendChild(el('div', 'gm-chat-empty', 'No messages yet — say hi! 👋'));
