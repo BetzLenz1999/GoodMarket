@@ -1547,6 +1547,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     }
 
     function openClaimOrVerify() {
+        // The claim is the moment the XDC fee-row problem bites. Re-probe (and
+        // surface the one-tap fix) right when the user is about to claim.
+        if (typeof window.checkXdcRpcHealthProactively === 'function') {
+            try { window.checkXdcRpcHealthProactively({ force: true }); } catch (_) {}
+        }
         if (_fvNeedsOnboarding()) {
             openModal('fvIntroModal');
             return;
@@ -2395,6 +2400,184 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         } finally {
             btn.disabled = false;
             btn.textContent = originalText;
+        }
+    }
+
+    // ── Discourse Task modal ──────────────────────────────────────────
+    // Surfaced only from the "More Ways To Earn G$" sheet. Reuses the
+    // existing /api/discourse-task endpoints the /dashboard card uses, but
+    // renders with wallet theme vars and wallet-scoped wlDiscourse* ids.
+    function _wlDiscourseEl(id) { return document.getElementById(id); }
+
+    function _wlDiscourseEsc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function openDiscourseTaskModal() {
+        openModal('discourseTaskModal');
+        loadWalletDiscourseTask();
+    }
+
+    function loadWalletDiscourseTask() {
+        const container = _wlDiscourseEl('wlDiscourseTaskContent');
+        if (!container) return;
+        container.innerHTML = '<div style="text-align:center;padding:1.25rem 0;">'
+            + '<div class="spinner"></div>'
+            + '<div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">Loading Discourse Task…</div></div>';
+        fetch('/api/discourse-task/settings')
+            .then(function (resp) { return resp.json(); })
+            .then(function (data) { window._wlDiscourseTaskData = data; renderWalletDiscourseTask(data); })
+            .catch(function () {
+                container.innerHTML = '<p style="color:#f87171;text-align:center;font-size:0.85rem;">❌ Failed to load Discourse Task. Please try again.</p>';
+            });
+    }
+
+    function renderWalletDiscourseTask(data) {
+        const container = _wlDiscourseEl('wlDiscourseTaskContent');
+        if (!container) return;
+        data = data || {};
+        const status = data.user_status;
+        const link = data.link || 'https://discourse.gooddollar.org/';
+        const reward = parseFloat(data.reward_amount || 500);
+
+        if (status === 'approved') {
+            const txLink = data.tx_hash
+                ? '<a href="https://explorer.celo.org/mainnet/tx/' + _wlDiscourseEsc(data.tx_hash) + '" target="_blank" rel="noopener" style="color:#34d399;font-size:0.82rem;margin-top:0.5rem;display:block;text-decoration:none;">View Transaction 🔗</a>'
+                : '';
+            container.innerHTML = '<div style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.35);border-radius:12px;padding:1.2rem;text-align:center;">'
+                + '<div style="font-size:2.5rem;">✅</div>'
+                + '<div style="color:#34d399;font-weight:700;font-size:1.05rem;margin-top:0.5rem;">Reward Approved!</div>'
+                + '<div style="color:var(--text-dim);font-size:0.88rem;margin-top:0.3rem;">' + reward.toLocaleString() + ' G$ has been sent to your wallet.</div>'
+                + txLink
+                + '<div style="margin-top:1rem;background:var(--card-soft);border:1px dashed var(--card-border);border-radius:8px;padding:0.8rem;font-size:0.8rem;color:var(--text-muted);">🔒 This task will be available again once the admin posts a new Discourse topic.</div>'
+                + '</div>';
+            return;
+        }
+
+        if (status === 'pending') {
+            container.innerHTML = '<div style="background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.35);border-radius:12px;padding:1.2rem;text-align:center;">'
+                + '<div style="font-size:2.5rem;">⏳</div>'
+                + '<div style="color:#fcd34d;font-weight:700;font-size:1.05rem;margin-top:0.5rem;">Waiting for Approval</div>'
+                + '<div style="color:var(--text-dim);font-size:0.88rem;margin-top:0.3rem;">Your Discourse username <strong id="wlDiscoursePendingName" style="color:#fcd34d;"></strong> has been submitted.<br>An admin will review your participation soon.</div>'
+                + '</div>';
+            const nameEl = _wlDiscourseEl('wlDiscoursePendingName');
+            if (nameEl) nameEl.textContent = data.discourse_username || '';
+            return;
+        }
+
+        const rejectedBanner = status === 'rejected'
+            ? '<div style="background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.35);border-radius:12px;padding:1.2rem;text-align:center;margin-bottom:1rem;">'
+                + '<div style="font-size:2rem;">❌</div>'
+                + '<div style="color:#f87171;font-weight:700;margin-top:0.3rem;">Previous submission was rejected.</div>'
+                + '<div style="color:var(--text-muted);font-size:0.82rem;margin-top:0.3rem;">You may submit again below.</div>'
+                + '</div>'
+            : '';
+
+        container.innerHTML = rejectedBanner + _wlDiscourseCard(link, reward);
+        try {
+            if (localStorage.getItem('WL_DISCOURSE_TASK_form_open') === '1') {
+                const form = _wlDiscourseEl('wlDiscourseUsernameForm');
+                if (form) form.style.display = 'block';
+                restoreWalletDiscourseDraft();
+            }
+        } catch (_) {}
+    }
+
+    function _wlDiscourseCard(link, reward) {
+        const safeLink = _wlDiscourseEsc(link);
+        return '<div style="background:var(--card-soft);border:1px solid var(--card-border);border-radius:12px;padding:1.2rem;">'
+            + '<div style="text-align:center;margin-bottom:1rem;">'
+            + '<div style="font-size:2.5rem;">💬</div>'
+            + '<div style="color:var(--accent-secondary);font-weight:700;font-size:1.05rem;margin-top:0.3rem;">Discourse Community Task</div>'
+            + '<div style="background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;padding:0.4rem 1rem;border-radius:20px;display:inline-block;font-weight:700;font-size:0.88rem;margin-top:0.5rem;">Earn ' + reward.toLocaleString() + ' G$</div>'
+            + '</div>'
+            + '<div style="background:var(--card-soft);border:1px solid var(--card-border);border-radius:8px;padding:1rem;margin-bottom:1rem;font-size:0.88rem;color:var(--text-dim);line-height:1.6;">'
+            + '<strong style="color:var(--text);">How it works:</strong><br>Read the discussion and leave a comment sharing your thoughts. Then open the post below and submit your Discourse username for review.'
+            + '</div>'
+            + '<div style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:8px;padding:0.8rem;margin-bottom:1rem;font-size:0.8rem;color:var(--text-dim);">'
+            + 'ℹ️ <strong>Note:</strong> This task is <strong>optional</strong>. This reward is just a token of appreciation for your community participation.'
+            + '</div>'
+            + '<a href="' + safeLink + '" target="_blank" rel="noopener" onclick="showWalletDiscourseForm();" '
+            + 'style="display:block;background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;text-align:center;padding:0.8rem;border-radius:8px;font-weight:700;text-decoration:none;margin-bottom:0.8rem;">'
+            + '💬 Open Discourse Post &amp; Participate</a>'
+            + '<div id="wlDiscourseUsernameForm" style="display:none;">'
+            + '<div style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.5rem;text-align:center;">After commenting, enter your Discourse username below and submit.</div>'
+            + '<input type="text" id="wlDiscourseUsernameInput" placeholder="Your Discourse username" oninput="persistWalletDiscourseDraft();" '
+            + 'style="width:100%;padding:0.7rem 1rem;border-radius:8px;border:1px solid var(--card-border);background:var(--card-soft);color:var(--text);font-size:0.92rem;box-sizing:border-box;margin-bottom:0.6rem;outline:none;">'
+            + '<button type="button" id="wlDiscourseSubmitBtn" onclick="submitWalletDiscourseUsername();" class="btn-primary" style="width:100%;padding:0.75rem;font-size:0.92rem;">✅ Submit</button>'
+            + '<div id="wlDiscourseSubmitMsg" style="margin-top:0.5rem;font-size:0.82rem;text-align:center;"></div>'
+            + '</div></div>';
+    }
+
+    function _wlDiscourseDraftKey() {
+        const link = (window._wlDiscourseTaskData && window._wlDiscourseTaskData.link) || 'default';
+        return 'WL_DISCOURSE_TASK_username_draft_' + encodeURIComponent(link);
+    }
+
+    function persistWalletDiscourseDraft() {
+        const input = _wlDiscourseEl('wlDiscourseUsernameInput');
+        if (!input) return;
+        try { localStorage.setItem(_wlDiscourseDraftKey(), (input.value || '').trim()); } catch (_) {}
+    }
+
+    function restoreWalletDiscourseDraft() {
+        const input = _wlDiscourseEl('wlDiscourseUsernameInput');
+        if (!input) return;
+        try {
+            const saved = localStorage.getItem(_wlDiscourseDraftKey());
+            if (saved) input.value = saved;
+        } catch (_) {}
+    }
+
+    function showWalletDiscourseForm() {
+        try { localStorage.setItem('WL_DISCOURSE_TASK_form_open', '1'); } catch (_) {}
+        // The anchor opens the post in a new tab; reveal the form behind it.
+        setTimeout(function () {
+            const form = _wlDiscourseEl('wlDiscourseUsernameForm');
+            if (form) form.style.display = 'block';
+            restoreWalletDiscourseDraft();
+        }, 400);
+    }
+
+    async function submitWalletDiscourseUsername() {
+        const input = _wlDiscourseEl('wlDiscourseUsernameInput');
+        const msgEl = _wlDiscourseEl('wlDiscourseSubmitMsg');
+        const btn = _wlDiscourseEl('wlDiscourseSubmitBtn');
+        const username = input ? input.value.trim() : '';
+        const currentLink = (window._wlDiscourseTaskData && window._wlDiscourseTaskData.link) || '';
+
+        if (!username) {
+            if (msgEl) { msgEl.style.color = '#f87171'; msgEl.textContent = 'Please enter your Discourse username.'; }
+            return;
+        }
+
+        if (msgEl) { msgEl.style.color = 'var(--text-muted)'; msgEl.textContent = 'Submitting…'; }
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Submitting…'; }
+
+        try {
+            persistWalletDiscourseDraft();
+            const resp = await fetch('/api/discourse-task/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ discourse_username: username, discourse_link: currentLink })
+            });
+            const data = await resp.json();
+            if (data && data.success) {
+                try {
+                    localStorage.removeItem(_wlDiscourseDraftKey());
+                    localStorage.removeItem('WL_DISCOURSE_TASK_form_open');
+                } catch (_) {}
+                renderWalletDiscourseTask({ link: currentLink, reward_amount: (window._wlDiscourseTaskData || {}).reward_amount, user_status: 'pending', discourse_username: username });
+            } else {
+                if (msgEl) { msgEl.style.color = '#f87171'; msgEl.textContent = (data && data.error) || 'Submission failed. Please try again.'; }
+            }
+        } catch (e) {
+            if (msgEl) { msgEl.style.color = '#f87171'; msgEl.textContent = 'Network error. Please try again.'; }
+        } finally {
+            const btnNow = _wlDiscourseEl('wlDiscourseSubmitBtn');
+            if (btnNow) { btnNow.disabled = false; btnNow.textContent = '✅ Submit'; }
         }
     }
 
@@ -4056,12 +4239,16 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // first reachable one; passing several insulates us from a single
         // endpoint returning a Cloudflare/maintenance HTML page (which the
         // wallet then surfaces as "Unexpected token '<'").
+        // NOTE: https://rpc.xdc.org returns HTTP 502 (dead) and MUST NOT be
+        // listed — a wallet that adopts our rpcUrls list would then fail its
+        // own balance read, which MetaMask surfaces as a red "Insufficient
+        // funds" fee row plus a blocking "Review alerts" button.
         const XDC_RPC_URLS = [
             'https://earpc.xinfin.network',
             'https://rpc.ankr.com/xdc',
             'https://erpc.xdcrpc.com',
             'https://rpc.xdcrpc.com',
-            'https://rpc.xdc.org'
+            'https://rpc.xinfin.network'
         ];
 
         // Public Celo RPCs. Same rationale as XDC — when forno.celo.org
@@ -4125,6 +4312,23 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             );
         }
 
+        // Race a wallet request against a timeout. A wallet showing a red
+        // "Network fee unavailable" field (or a blocking security alert) leaves
+        // eth_sendTransaction pending indefinitely — without this the claim
+        // button spins forever and the user gets no explanation. The timeout
+        // error is intentionally recognisable so callers can surface guidance.
+        function _withWalletSignTimeout(promise, ms, label) {
+            let timer;
+            const timeout = new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    const e = new Error((label || 'Wallet signing') + ' timed out — the wallet never returned a result. If your wallet is showing a red "Network fee unavailable" field or a security alert, close it and update your XDC RPC in Settings → Networks, then retry.');
+                    e.code = 'WALLET_SIGN_TIMEOUT';
+                    reject(e);
+                }, ms);
+            });
+            return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+        }
+
         // Detects when the wallet could not determine the transaction fee
         // itself. MetaMask surfaces this as a red "Network fee unavailable"
         // field and refuses to sign; Trust Wallet says it can't estimate the
@@ -4167,6 +4371,293 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 }]
             });
         }
+
+        // Proactively probe the WALLET'S OWN XDC RPC before building the tx.
+        // A user who added XDC Network months ago may still point at a dead /
+        // flaky legacy RPC (rpc.xinfin.network, erpc.xinfin.network). The
+        // wallet answers this read-only call through that same RPC, so a
+        // failure here is a reliable signal to offer the healthy-RPC repair
+        // BEFORE the user ever sees a red "Network fee unavailable" field.
+        //
+        // IMPORTANT: a *JSON-RPC revert* ("execution reverted") proves the RPC
+        // is alive and answering — it must count as HEALTHY. Only a transport
+        // failure (fetch/timeout/5xx/HTML body) means the endpoint is dead.
+        // Treating a revert as "unhealthy" would nag every correctly-configured
+        // user with a network-update prompt they do not need.
+        //
+        // Shared RPC-read probe against the WALLET'S OWN XDC RPC.
+        // ok === true when the endpoint answered (a JSON-RPC result OR a
+        // structured error object both prove the endpoint is alive). Only a
+        // transport failure (fetch/timeout/5xx/HTML body) means it is dead.
+        async function _walletRpcRead(provider, method, params) {
+            try {
+                const res = await provider.request({ method, params: params || [] });
+                return { ok: typeof res === 'string' ? res.startsWith('0x') : res != null, value: res };
+            } catch (err) {
+                const code = err && (err.code ?? (err.data && err.data.code));
+                const msg = ((err && (err.shortMessage || err.message)) || '').toLowerCase();
+                const isTransport = _isWalletRpcUnreachableError(err)
+                    || _isRpcHtmlError(err)
+                    || msg.includes('failed to fetch')
+                    || msg.includes('timeout')
+                    || msg.includes('timed out')
+                    || msg.includes('network request failed');
+                if (typeof code === 'number' && !isTransport) return { ok: true, value: null };
+                return { ok: false, value: null };
+            }
+        }
+
+        // Returns true when the wallet's RPC answered with a JSON-RPC result.
+        //
+        // IMPORTANT: a *JSON-RPC revert* ("execution reverted") proves the RPC
+        // is alive and answering — it must count as HEALTHY. Only a transport
+        // failure (fetch/timeout/5xx/HTML body) means the endpoint is dead.
+        // Treating a revert as "unhealthy" would nag every correctly-configured
+        // user with a network-update prompt they do not need.
+        //
+        // We probe `eth_getBalance` too (not just `eth_blockNumber`) because
+        // MetaMask's fee row is driven by the wallet RPC's BALANCE read: a node
+        // that answers blockNumber but fails the balance read turns the fee row
+        // red ("Insufficient funds") even when the wallet is funded.
+        async function _walletXdcRpcHealthy(provider, from) {
+            const block = await _walletRpcRead(provider, 'eth_blockNumber');
+            if (!block.ok) return false;
+            if (from) {
+                const bal = await _walletRpcRead(provider, 'eth_getBalance', [from, 'latest']);
+                if (!bal.ok) return false;
+            }
+            return true;
+        }
+
+        // Cross-check the wallet RPC's balance against a known-good public XDC
+        // RPC. A stale node can answer a stale "0" balance, which MetaMask
+        // renders as a blocking "Insufficient funds" alert on the fee row even
+        // though the wallet is funded (the reported XDC "⚠ Review alerts" bug).
+        // Only flags a near-zero wallet balance vs a funded public chain, so a
+        // legitimately spent wallet is never nagged. Fails OPEN on any error.
+        async function _walletXdcBalanceLooksStale(provider, from) {
+            if (!from) return false;
+            const bal = await _walletRpcRead(provider, 'eth_getBalance', [from, 'latest']);
+            if (!bal.ok || typeof bal.value !== 'string') return false;
+            let walletWei;
+            try { walletWei = BigInt(bal.value); } catch (_) { return false; }
+            const STALE_FLOOR = 10n ** 15n; // 0.001 XDC
+            if (walletWei >= STALE_FLOOR) return false;
+            let publicWei = 0n;
+            for (const url of XDC_RPC_URLS) {
+                try {
+                    const r = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [from, 'latest'] })
+                    });
+                    const j = await r.json();
+                    if (j && typeof j.result === 'string') { publicWei = BigInt(j.result); break; }
+                } catch (_) { /* try the next public RPC */ }
+            }
+            return walletWei < STALE_FLOOR && publicWei >= STALE_FLOOR;
+        }
+
+        // True when the wallet's XDC RPC needs the healthy-list repair: either
+        // it cannot answer a basic read, or it reports a stale/zero balance for
+        // a funded wallet.
+        async function _xdcWalletRpcNeedsRepair(provider, from) {
+            if (!(await _walletXdcRpcHealthy(provider, from))) return true;
+            if (await _walletXdcBalanceLooksStale(provider, from)) return true;
+            return false;
+        }
+
+        // Detect the bad-RPC case and ask the wallet to adopt our healthy list.
+        // `alreadyAsked` guards against prompting twice in one claim attempt.
+        async function _ensureHealthyXdcRpc(provider, alreadyAsked, from) {
+            if (alreadyAsked) return false;
+            if (!(await _xdcWalletRpcNeedsRepair(provider, from))) return false;
+            try {
+                await _promptAddHealthyXdcRpc(provider);
+                // Give the wallet a moment to switch its active RPC.
+                await new Promise(r => setTimeout(r, 1200));
+                return true;
+            } catch (err) {
+                // User declined the network update — not fatal, proceed anyway.
+                if (err && err.code === 4001) return false;
+                return false;
+            }
+        }
+
+        // Simulate the exact claim() call on a known-good public XDC RPC
+        // BEFORE asking the wallet to sign. `claim()` returns a bool: `0x1`
+        // (success) or `0x0` (nothing claimable). A revert means the wallet
+        // would only show a blocking "⚠ Review alerts" — abort with the real
+        // reason instead of opening a doomed confirmation sheet.
+        //
+        // Fails OPEN: if no public RPC can answer (all transport errors), we
+        // return and let the wallet try rather than block a possibly-good claim.
+        async function _simulateXdcClaimOnPublicRpc(from) {
+            let answered = false;
+            for (const url of XDC_RPC_URLS) {
+                let json;
+                try {
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonrpc: '2.0', id: 1, method: 'eth_call',
+                            params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0' }, 'latest']
+                        })
+                    });
+                    json = await res.json();
+                } catch (_) {
+                    continue; // transport error — try the next RPC
+                }
+                if (!json || json.error) {
+                    if (json && json.error) {
+                        answered = true;
+                        const reason = (window.GMTxError && GMTxError.revertReasonFromError)
+                            ? GMTxError.revertReasonFromError(json.error)
+                            : (json.error.message || '');
+                        const e = new Error('This XDC claim cannot be submitted: '
+                            + (reason || 'the contract rejected the claim')
+                            + ' Please check your XDC UBI eligibility and try again.');
+                        e.__simulationBlock = true;
+                        throw e;
+                    }
+                    continue;
+                }
+                answered = true;
+                const result = json.result;
+                if (typeof result === 'string' && BigInt(result) === 0n) {
+                    const e = new Error('This wallet has nothing to claim on XDC right now — you may have already claimed today. Come back tomorrow.');
+                    e.__simulationBlock = true;
+                    throw e;
+                }
+                return; // 0x1 or unknown-but-successful — let the wallet sign
+            }
+            if (!answered) return; // fail open on total RPC outage
+        }
+
+        // ── Proactive XDC wallet-RPC repair banner ───────────────────────
+        // A user who added XDC Network months ago may still point at a slow /
+        // dead RPC. MetaMask then reads a stale/zero balance and renders a red
+        // "Network fee" row plus a blocking "Review alerts" the user cannot get
+        // past. We cannot read the wallet's configured RPC URL (EIP-1193 does
+        // not expose it) and we cannot change it silently (wallet_addEthereumChain
+        // always requires a user confirmation), so we detect the problem
+        // BEHAVIOURALLY — probe the wallet's own XDC RPC — and offer a one-tap
+        // fix that updates the RPC list in place.
+        const XDC_RPC_BANNER_SEEN_KEY = 'gmXdcRpcRepairSeen_v1';
+        const XDC_RPC_BANNER_FIXED_KEY = 'gmXdcRpcRepairDone_v1';
+        const XDC_RPC_BANNER_THROTTLE_MS = 24 * 60 * 60 * 1000; // 1 nag / day
+
+        function _xdcBannerEl() { return document.getElementById('xdcRpcRepairBanner'); }
+        function _xdcBannerStatusEl() { return document.getElementById('xdcRpcRepairStatus'); }
+
+        function _xdcBannerSetStatus(text, color) {
+            const el = _xdcBannerStatusEl();
+            if (!el) return;
+            el.textContent = text || '';
+            el.style.color = color || 'var(--text-dim)';
+        }
+
+        function _showXdcRpcBanner() {
+            const el = _xdcBannerEl();
+            if (el) el.classList.add('show');
+        }
+
+        function _hideXdcRpcBanner() {
+            const el = _xdcBannerEl();
+            if (el) el.classList.remove('show');
+            _xdcBannerSetStatus('');
+        }
+
+        // The provider used for a proactive probe: injected wallets only. Local
+        // (in-app) and WalletConnect logins have a different RPC path and must
+        // not be probed here.
+        function _xdcBannerProvider() {
+            try {
+                if ((LOGIN_METHOD || '').toLowerCase() === 'local') return null;
+                if (IS_PRIVY_LOGIN) return null;
+                if (_gmPreferWc()) return null;
+                return _getEthProvider();
+            } catch (_) { return null; }
+        }
+
+        // Probe the wallet's XDC RPC and show/hide the repair banner. Safe to
+        // call repeatedly; throttled so it never nags.
+        async function checkXdcRpcHealthProactively(opts) {
+            opts = opts || {};
+            let seen = 0;
+            let fixed = false;
+            try {
+                seen = parseInt(localStorage.getItem(XDC_RPC_BANNER_SEEN_KEY) || '0', 10) || 0;
+                fixed = localStorage.getItem(XDC_RPC_BANNER_FIXED_KEY) === '1';
+            } catch (_) { /* storage blocked — still probe, just never throttle */ }
+
+            const provider = _xdcBannerProvider();
+            if (!provider) return;
+            // Only probe when the wallet is ALREADY on XDC. Switching chains
+            // unprompted would pop an unexpected wallet dialog.
+            let chain;
+            try { chain = _normalizeChainIdHex(await provider.request({ method: 'eth_chainId' })); }
+            catch (_) { return; }
+            if (chain !== XDC_CHAIN_ID_HEX) return;
+
+            if (fixed && !opts.force) { _hideXdcRpcBanner(); return; }
+            if (!opts.force && seen && (Date.now() - seen) < XDC_RPC_BANNER_THROTTLE_MS) return;
+
+            let needsRepair = false;
+            try { needsRepair = await _xdcWalletRpcNeedsRepair(provider, WALLET); } catch (_) { return; }
+
+            if (needsRepair) {
+                _showXdcRpcBanner();
+                try { localStorage.setItem(XDC_RPC_BANNER_SEEN_KEY, String(Date.now())); } catch (_) {}
+            } else {
+                _hideXdcRpcBanner();
+            }
+        }
+
+        // One-tap repair from the banner. wallet_addEthereumChain on a known
+        // chain updates its RPC URLs in place; the user approves once.
+        async function repairXdcRpcNow() {
+            const btn = document.getElementById('xdcRpcRepairBtn');
+            const provider = _xdcBannerProvider();
+            if (!provider) {
+                _xdcBannerSetStatus('Open this page inside your wallet’s browser to update the network.', '#fcd34d');
+                return;
+            }
+            if (btn) { btn.disabled = true; btn.textContent = '🔧 Updating…'; }
+            _xdcBannerSetStatus('Waiting for your wallet to confirm the network update…', 'var(--text-dim)');
+            try {
+                await _promptAddHealthyXdcRpc(provider);
+                await new Promise(r => setTimeout(r, 1500));
+                // Re-probe against the fresh RPC to confirm the fix landed.
+                let stillBroken = false;
+                try { stillBroken = await _xdcWalletRpcNeedsRepair(provider, WALLET); } catch (_) {}
+                if (!stillBroken) {
+                    try { localStorage.setItem(XDC_RPC_BANNER_FIXED_KEY, '1'); } catch (_) {}
+                    _xdcBannerSetStatus('✅ XDC network updated. You can claim now.', '#34d399');
+                    setTimeout(_hideXdcRpcBanner, 4000);
+                } else {
+                    _xdcBannerSetStatus('Network updated, but your wallet still reads slowly. Please retry, or remove and re-add XDC Network.', '#fcd34d');
+                }
+            } catch (err) {
+                if (err && err.code === 4001) {
+                    _xdcBannerSetStatus('Update cancelled. You can tap “Fix XDC network” again anytime.', '#fcd34d');
+                } else {
+                    _xdcBannerSetStatus('Could not update the network automatically. In your wallet: Settings → Networks → XDC Network → set the RPC URL to https://earpc.xinfin.network', '#f87171');
+                }
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '🔧 Fix XDC network'; }
+            }
+        }
+
+        function dismissXdcRpcBanner() {
+            // Already stamped SEEN when shown — just hide for this session.
+            _hideXdcRpcBanner();
+        }
+
+        window.repairXdcRpcNow = repairXdcRpcNow;
+        window.dismissXdcRpcBanner = dismissXdcRpcBanner;
+        window.checkXdcRpcHealthProactively = checkXdcRpcHealthProactively;
 
         // Lenient JSON fetch: tries res.json() and only flags the error as
         // an HTML/upstream issue when the body is genuinely unparseable
@@ -4268,6 +4759,26 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 }
             }
 
+            // Proactive RPC repair: if the wallet's own XDC RPC cannot answer a
+            // trivial read — or reports a stale/zero balance for a funded
+            // wallet — offer to update it to our healthy list BEFORE the user
+            // is shown a red "Insufficient funds" / "Network fee unavailable"
+            // fee row. This is the case for users who added XDC months ago with
+            // a now-flaky legacy RPC (rpc.xinfin.network / erpc.xinfin.network)
+            // or with the dead rpc.xdc.org (HTTP 502).
+            let rpcRepairAttempted = false;
+            if (await _ensureHealthyXdcRpc(provider, rpcRepairAttempted, from)) {
+                rpcRepairAttempted = true;
+            }
+
+            // Never open the wallet for a claim that will revert. A reverting
+            // claim() makes MetaMask simulate a failure and render a blocking
+            // "⚠ Review alerts" the user cannot get past. Simulate on a known-
+            // good public RPC (not the wallet's own) so a flaky wallet node
+            // cannot produce a false block; the helper fails OPEN if the
+            // simulation itself cannot run.
+            await _simulateXdcClaimOnPublicRpc(from);
+
             // Some wallets (notably MetaMask Mobile, Trust Wallet) reject
             // eth_sendTransaction when a non-standard `chainId` field is
             // present in the tx params. The chain switch above already
@@ -4307,10 +4818,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     const parsed = typeof gp === 'string' ? BigInt(gp) : BigInt(Number(gp));
                     if (parsed > 0n) gasPriceHex = '0x' + parsed.toString(16);
                 } catch (_) { /* keep the fallback price */ }
-                return provider.request({
+                return _withWalletSignTimeout(provider.request({
                     method: 'eth_sendTransaction',
                     params: [{ from, to: XDC_UBI_CONTRACT, data: CLAIM_DATA, value: '0x0', gas: gasHex, gasPrice: gasPriceHex }]
-                });
+                }), 180000, 'XDC claim');
             };
 
             try {
@@ -4320,8 +4831,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 // The wallet's own XDC RPC is unreachable OR could not estimate
                 // the network fee (e.g. still pinned to the dead
                 // erpc.xinfin.network). Ask it to adopt our healthy RPC list,
-                // then retry the send once.
-                if (_isWalletRpcUnreachableError(sendErr) || _isNetworkFeeUnavailableError(sendErr)) {
+                // then retry the send once — unless the proactive probe above
+                // already offered the repair this attempt.
+                if ((_isWalletRpcUnreachableError(sendErr) || _isNetworkFeeUnavailableError(sendErr))
+                    && !rpcRepairAttempted) {
                     try {
                         await _promptAddHealthyXdcRpc(provider);
                         await new Promise(r => setTimeout(r, 1200));
@@ -6563,6 +7076,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 setStatus('XDC claiming needs MetaMask or a compatible WalletConnect wallet.', '#fcd34d');
                 return;
             }
+            // Never open the wallet for a claim the backend already knows will
+            // revert. MetaMask SIMULATES the tx before showing the confirm
+            // sheet; a reverting claim() renders a red "Network fee
+            // unavailable" field plus a blocking "⚠ Review alerts" button, and
+            // the claim never leaves the wallet. Gating here turns that dead
+            // end into a plain explanation. Only trust an explicit verdict —
+            // when the entitlement read itself failed (success:false) let the
+            // wallet try rather than block a possibly-good claim.
+            if (network === 'xdc' && claims.xdc
+                && claims.xdc.success !== false
+                && claims.xdc.can_claim === false) {
+                const why = claims.xdc.reason || claims.xdc.error
+                    || 'This wallet has nothing to claim on XDC right now.';
+                setStatus('ℹ️ ' + why, '#fcd34d');
+                return;
+            }
 
             btn.disabled = true;
             icon.textContent = network === 'fuse' ? '🔥' : '💠';
@@ -6580,6 +7109,17 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 } else if (network === 'fuse') {
                     setStatus('Checking Fuse gas…', 'var(--text-dim)');
                     await ensureFuseGasReadyBeforeClaim();
+                }
+
+                // The wallet sheet is about to open. If it shows a red fee
+                // field or a "⚠ Review alerts" button, the claim cannot be
+                // submitted — tell the user what that screen means and how to
+                // get past it, since the wallet UI itself does not explain it.
+                if (network === 'xdc') {
+                    appendStatusLine(
+                        '📲 Confirm the transaction in your wallet. If MetaMask shows a red <strong>Network fee</strong> row and a <strong>“⚠ Review alerts”</strong> button instead of Confirm, your wallet could not validate the XDC fee/balance — that is a wallet RPC problem, not a funds problem (the button cannot be tapped past it). Fix it by setting your XDC Network RPC URL to <strong>https://earpc.xinfin.network</strong> (Settings → Networks → XDC Network → RPC URL), then retry the claim.',
+                        'var(--text-dim)'
+                    );
                 }
 
                 const txHash = network === 'fuse'
@@ -6607,6 +7147,8 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     msg = `${network.toUpperCase()} network is temporarily busy. Please retry in 30–60 seconds.`;
                 } else if (network === 'xdc' && _isNetworkFeeUnavailableError(err)) {
                     msg = "Your wallet could not work out the XDC network fee. Open your wallet's XDC Network settings and set the RPC URL to <strong>https://earpc.xinfin.network</strong> (or remove &amp; re-add XDC Network), then retry.";
+                } else if (err && err.__simulationBlock) {
+                    msg = raw;
                 } else if (window.GMTxError && GMTxError.format) {
                     msg = GMTxError.format(err, { nativeSymbol: network === 'xdc' ? 'XDC' : 'CELO' });
                 } else {
@@ -7187,4 +7729,13 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
         // WalletConnect session expiry guard is handled globally by wc-bridge.js
         // (auto-starts when GMWalletConnect.configure() is called with loginMethod: "walletconnect")
+
+        // Proactive XDC wallet-RPC repair: once the injected provider is ready
+        // (delayed so late-injecting wallets are seen) and every time the user
+        // returns to the tab, probe the wallet's XDC RPC and offer a one-tap
+        // fix if it is slow/dead. Throttled internally so it never nags.
+        setTimeout(() => { checkXdcRpcHealthProactively(); }, 2500);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') checkXdcRpcHealthProactively();
+        });
     });
