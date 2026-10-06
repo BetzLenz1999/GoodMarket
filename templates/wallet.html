@@ -1760,6 +1760,60 @@
             color: #92400e;
         }
 
+        /* ── Proactive XDC wallet-RPC repair banner ── */
+        .xdc-rpc-banner {
+            display: none;
+            margin: 0.4rem 1.25rem 0.8rem;
+            padding: 0.95rem 1.1rem;
+            border-radius: 14px;
+            background: #fef3c7;
+            border: 1px solid rgba(217,119,6,0.35);
+        }
+        .xdc-rpc-banner.show { display: block; }
+        .xdc-rpc-banner .xrb-title {
+            font-size: 0.95rem;
+            font-weight: 800;
+            color: #92400e;
+            margin-bottom: 0.35rem;
+        }
+        .xdc-rpc-banner .xrb-copy {
+            font-size: 0.8rem;
+            line-height: 1.5;
+            color: var(--text-dim);
+            margin-bottom: 0.75rem;
+        }
+        .xdc-rpc-banner .xrb-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+        }
+        .xdc-rpc-banner .xrb-btn {
+            background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+            color: var(--primary-button-text);
+            border: none;
+            border-radius: 40px;
+            padding: 0.6rem 1.3rem;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.28);
+        }
+        .xdc-rpc-banner .xrb-btn:disabled { opacity: 0.7; cursor: default; }
+        .xdc-rpc-banner .xrb-btn-ghost {
+            background: transparent;
+            color: #92400e;
+            border: 1px solid rgba(217,119,6,0.5);
+            box-shadow: none;
+        }
+        .xdc-rpc-banner .xrb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .xdc-rpc-banner .xrb-status {
+            margin-top: 0.6rem;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            color: var(--text-dim);
+        }
+
         /* ── Portfolio card: warm sunrise gradient (colored hero card) ── */
         .balance-card {
             background:
@@ -2298,6 +2352,23 @@
         <div class="jcb-title">🤝 Join the GoodMarket Community</div>
         <div class="jcb-copy">Connect with fellow G$ earners in our Telegram discussion group — community updates, tips, and support.</div>
         <button type="button" id="joinCommunityJoinBtn" class="jcb-btn" onclick="joinGoodMarketCommunity()">✈️ Join GoodMarket Community</button>
+    </div>
+
+    <!-- ── XDC wallet-RPC repair (proactive) ──
+         Shown only when the user's injected wallet is ALREADY on XDC and its
+         own RPC reads slowly/deadly (stale balance → red fee row + blocking
+         "Review alerts" on claim). Revealed by wallet-main.js
+         checkXdcRpcHealthProactively(); starts display:none so it cannot flash.
+         The fix is one tap: wallet_addEthereumChain updates the RPC list in
+         place (EIP-1193 always requires a user confirmation). -->
+    <div id="xdcRpcRepairBanner" class="xdc-rpc-banner" role="region" aria-label="XDC network RPC repair">
+        <div class="xrb-title">⚠️ XDC network needs a quick fix</div>
+        <div class="xrb-copy">Your wallet’s XDC RPC is slow or unresponsive, which can show a red network fee and block claiming. Tap below to update it automatically (your wallet will ask you to confirm once).</div>
+        <div class="xrb-actions">
+            <button type="button" id="xdcRpcRepairBtn" class="xrb-btn" onclick="repairXdcRpcNow()">🔧 Fix XDC network</button>
+            <button type="button" class="xrb-btn xrb-btn-ghost" onclick="dismissXdcRpcBanner()">Not now</button>
+        </div>
+        <div id="xdcRpcRepairStatus" class="xrb-status"></div>
     </div>
 
     <!-- Daily Voucher Banner -->
@@ -3382,6 +3453,29 @@
         </div>
     </div>
 
+    <!-- Discourse Task Modal — surfaced only from the "More Ways To Earn G$"
+         bottom sheet, same pattern as the Referral / Daily Task modals. Reuses
+         the existing /api/discourse-task/settings + /submit endpoints; all four
+         states (available / pending / approved / rejected) render inside this
+         single wallet-scoped (wl*) modal. -->
+    <div class="modal-overlay" id="discourseTaskModal">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title">💬 Discourse Community Task</div>
+
+            <div id="wlDiscourseTaskContent">
+                <div style="text-align:center;padding:1.25rem 0;">
+                    <div class="spinner"></div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">Loading Discourse Task…</div>
+                </div>
+            </div>
+
+            <div class="modal-sheet-footer">
+                <button class="btn-secondary" onclick="closeModal('discourseTaskModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Face Verification Intro — shown the FIRST time an unverified user taps
          the claim hero. Explains why verification is required (GoodDollar's
          KYC / one-account-per-person) and what the user unlocks after
@@ -3624,6 +3718,10 @@
             <div class="bn-sheet-item" onclick="bnGo(function(){ openReferralModal(); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;">🤝</div>
                 <div class="bn-sheet-name">Referral</div>
+            </div>
+            <div class="bn-sheet-item" onclick="bnGo(function(){ openDiscourseTaskModal(); })">
+                <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;">💬</div>
+                <div class="bn-sheet-name">Discourse Task</div>
             </div>
             <div class="bn-sheet-item" onclick="bnGo(function(){ openGdRafflePanel(); })">
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#f59e0b,#fcd34d);color:#fff;">🎟️</div>
