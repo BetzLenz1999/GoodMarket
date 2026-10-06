@@ -103,6 +103,63 @@ def display_name(wallet: str | None) -> str:
     return get_username(wallet) or short_wallet(wallet)
 
 
+def is_admin_wallet(wallet: str | None) -> bool:
+    """Whether this wallet is an admin (``user_data.is_admin``).
+
+    Admin status is decided SERVER-SIDE. The chatroom only ever exposes the
+    resulting boolean to the browser — the wallet address itself stays private.
+    """
+    if not wallet:
+        return False
+    supabase = _get_supabase()
+    if not supabase:
+        return False
+    try:
+        result = (
+            supabase.table("user_data")
+            .select("is_admin")
+            .ilike("wallet_address", wallet)
+            .limit(1)
+            .execute()
+        )
+        if result and result.data:
+            return bool(result.data[0].get("is_admin", False))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: admin lookup failed: %s", exc)
+    return False
+
+
+def _admin_wallets(wallets: list[str]) -> set[str]:
+    """Resolve a batch of wallets to the subset that are admins.
+
+    One query (not N+1) with an ``or_`` of ``ilike`` clauses — addresses are
+    hex-only so an ilike match can never widen unexpectedly, and it keeps the
+    lookup case-insensitive (the repo-wide checksummed/lowercase lesson).
+    """
+    cleaned = sorted({(w or "").strip().lower() for w in wallets if w})
+    if not cleaned:
+        return set()
+    supabase = _get_supabase()
+    if not supabase:
+        return set()
+    clauses = ",".join(f"wallet_address.ilike.{w}" for w in cleaned)
+    try:
+        result = (
+            supabase.table("user_data")
+            .select("wallet_address, is_admin")
+            .or_(clauses)
+            .execute()
+        )
+        return {
+            (r.get("wallet_address") or "").strip().lower()
+            for r in (result.data or [])
+            if r.get("is_admin")
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chatroom: admin batch lookup failed: %s", exc)
+        return set()
+
+
 def get_public_profile(username: str | None) -> dict:
     """Return the deliberately small public profile exposed by the chatroom.
 
@@ -257,13 +314,17 @@ def sanitize_message(raw: str | None) -> str:
     return text
 
 
-def _public_row(row: dict, viewer_wallet: str | None) -> dict:
+def _public_row(row: dict, viewer_wallet: str | None,
+                admin_wallets: set[str] | None = None) -> dict:
     """Shape a DB row for the browser — wallet address is dropped, ownership
     is reduced to a boolean ``is_me`` flag.
 
     Tip messages carry the token/amount/tx hash so the UI can render them as a
     gold card with a block-explorer link. The addresses behind them are still
     never included.
+
+    ``is_admin`` is a boolean computed from the server-side admin set — the UI
+    uses it for the ADMIN badge. It is never the wallet address.
     """
     owner = (row.get("wallet_address") or "").lower()
     message_type = row.get("message_type") or "text"
@@ -273,6 +334,7 @@ def _public_row(row: dict, viewer_wallet: str | None) -> dict:
         "message": row.get("message"),
         "created_at": row.get("created_at"),
         "is_me": bool(viewer_wallet) and owner == viewer_wallet.lower(),
+        "is_admin": bool(admin_wallets) and owner in admin_wallets,
         "message_type": message_type,
     }
     # Reply ownership is evaluated server-side so the recipient can be notified
@@ -296,10 +358,46 @@ def _public_row(row: dict, viewer_wallet: str | None) -> dict:
     return public
 
 
+def get_deleted_ids(since: str | None = None, limit: int = 200) -> dict:
+    """Messages deleted at/after ``since`` (ISO timestamp), for the polling
+    cursor. The UI removes any rendered row whose id is in this list, so a
+    deletion made by an admin disappears for every other viewer within a poll
+    tick — the ``after_id`` cursor alone never re-reads old rows."""
+    supabase = _get_supabase()
+    if not supabase:
+        return {"success": False, "error": "Database unavailable", "deleted_ids": []}
+    try:
+        query = (
+            supabase.table("community_chat_messages")
+            .select("id, deleted_at")
+            .eq("room", ROOM)
+            .eq("is_deleted", True)
+        )
+        if since:
+            query = query.gte("deleted_at", since)
+        # Ascending so the cursor advances monotonically — a burst larger than
+        # `limit` is fully drained over successive polls instead of being cut
+        # off. Re-fetching the boundary row is harmless (the UI dedupes by id).
+        result = query.order("deleted_at").limit(int(limit)).execute()
+        rows = list(result.data or [])
+        deleted_ids = sorted({int(r["id"]) for r in rows if r.get("id") is not None})
+        cursor = None
+        for r in rows:
+            if r.get("deleted_at"):
+                if cursor is None or str(r["deleted_at"]) > cursor:
+                    cursor = str(r["deleted_at"])
+        return {"success": True, "deleted_ids": deleted_ids, "deleted_cursor": cursor}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: get_deleted_ids failed: %s", exc)
+        return {"success": False, "error": "Failed to load deletions", "deleted_ids": []}
+
+
 def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
-                 viewer_wallet: str | None = None) -> dict:
+                 viewer_wallet: str | None = None,
+                 deleted_after: str | None = None) -> dict:
     """Messages in chronological order. With ``after_id`` only newer messages
-    are returned (polling cursor)."""
+    are returned (polling cursor). ``deleted_after`` additionally returns the
+    ids deleted since that timestamp so the UI can prune them live."""
     supabase = _get_supabase()
     if not supabase:
         return {"success": False, "error": "Database unavailable", "messages": []}
@@ -322,14 +420,25 @@ def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
         rows = list(result.data or [])
         if not after_id:
             rows.reverse()  # newest-first fetch → chronological for the UI
-        messages = [_public_row(r, viewer_wallet) for r in rows]
+        # Resolve admin badges in ONE batched query (never N+1).
+        admin_wallets = _admin_wallets([r.get("wallet_address") for r in rows])
+        messages = [_public_row(r, viewer_wallet, admin_wallets) for r in rows]
         latest_id = max([m["id"] for m in messages], default=after_id or 0)
-        return {
+        payload = {
             "success": True,
             "messages": messages,
             "latest_id": latest_id,
             "has_more": len(rows) >= size,
+            # Server clock, so the UI can seed its deletion cursor without
+            # trusting the device clock (which may be skewed).
+            "server_time": _now().isoformat(),
         }
+        if deleted_after:
+            deleted = get_deleted_ids(since=deleted_after)
+            if deleted.get("success"):
+                payload["deleted_ids"] = deleted["deleted_ids"]
+                payload["deleted_cursor"] = deleted.get("deleted_cursor")
+        return payload
     except Exception as exc:  # noqa: BLE001
         logger.error("chatroom: get_messages failed: %s", exc)
         return {"success": False, "error": "Failed to load messages", "messages": []}
