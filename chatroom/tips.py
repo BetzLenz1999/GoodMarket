@@ -561,7 +561,9 @@ def record_tip(sender_wallet: str, username: str, token: str, amount, tx_hash: s
     return {
         "success": True,
         "duplicate": False,
-        "message": svc._public_row(message_row, sender_wallet) if message_row else None,
+        "message": svc._public_row(
+            message_row, sender_wallet, svc._admin_wallets([sender_wallet])
+        ) if message_row else None,
         "tip": {
             "token": token_key,
             "token_label": meta["label"],
