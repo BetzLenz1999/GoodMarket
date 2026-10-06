@@ -9,12 +9,17 @@ from .service import (
     usd_to_gd, get_gd_usd_price,
     auto_detect_gd_payment, verify_gd_payment, refund_gd,
     create_order_record, update_order_record,
-    get_order_record, get_user_orders, sanitize_error
+    get_order_record, get_user_orders, sanitize_error,
+    get_refund_wallet_status,
 )
 
 logger = logging.getLogger(__name__)
 
 reloadly_bp = Blueprint("reloadly", __name__, url_prefix="/reloadly")
+
+# Statuses that mean an order is waiting on (or recovering from) a refund and
+# are therefore visible in the admin Refunds panel.
+_REFUND_STUCK_STATUSES = ("pending_refund", "refunding", "refund_failed")
 
 # Friendly message shown when a refund is parked because the refund wallet has
 # no CELO gas. The order moves to ``pending_refund`` and an automatic retry
@@ -68,6 +73,13 @@ def _process_refund_failure(order_id: str, wallet: str, gd_amount, failure_err: 
             "refund_error": refund_result.get("error"),
         })
         logger.warning(f"⏳ Refund parked (insufficient gas/balance or unconfirmed tx) for order {order_id}; will auto-retry.")
+        # Nudge the scheduler so the retry starts on the next tick, not after a
+        # full interval (best-effort; a missing scheduler is harmless).
+        try:
+            from .refund_retry import wake_refund_retry
+            wake_refund_retry()
+        except Exception:  # noqa: BLE001
+            pass
         return refund_result, {
             "success": False, "found": True, "status": "pending_refund",
             "error": _PENDING_REFUND_MSG, "order_id": order_id,
@@ -717,3 +729,108 @@ def api_cancel_order(order_id):
 
     update_order_record(order_id, {"status": new_status})
     return jsonify({"success": True, "status": new_status})
+
+
+# ─── ADMIN: REFUND MANAGEMENT ──────────────────────────────────────────────────
+# The refund-retry scheduler runs automatically, but an admin needs (a) to see
+# whether the REFUND_KEY wallet is actually funded and (b) a manual trigger to
+# push refunds through immediately after a top-up, without waiting for the next
+# scheduler tick.
+
+def _require_admin():
+    wallet = session.get("wallet") or session.get("wallet_address")
+    if not wallet or not (session.get("verified") or session.get("ubi_verified")):
+        return None, (jsonify({"success": False, "error": "Authentication required"}), 401)
+    from supabase_client import is_admin
+    if not is_admin(wallet):
+        return None, (jsonify({"success": False, "error": "Admin access required"}), 403)
+    return wallet, None
+
+
+@reloadly_bp.route("/api/admin/refunds/status", methods=["GET"])
+def api_admin_refund_status():
+    """Admin: REFUND_KEY wallet health + counts of orders awaiting a refund."""
+    _, err = _require_admin()
+    if err:
+        return err
+
+    from .refund_retry import is_refund_retry_enabled
+
+    wallet_status = get_refund_wallet_status()
+
+    counts = {"pending_refund": 0, "refunding": 0, "refund_failed": 0}
+    recent = []
+    try:
+        from supabase_client import get_supabase_admin_client, get_supabase_client
+        supabase = get_supabase_admin_client() or get_supabase_client()
+        if supabase:
+            result = (
+                supabase.table("reloadly_orders")
+                .select("id,wallet_address,gd_amount,status,refund_error,refund_tx_hash,created_at,updated_at")
+                .in_("status", list(_REFUND_STUCK_STATUSES))
+                .order("created_at", desc=False)
+                .limit(200)
+                .execute()
+            )
+            for row in (result.data or []):
+                st = row.get("status")
+                if st in counts:
+                    counts[st] += 1
+            recent = (result.data or [])[:100]
+    except Exception as e:
+        logger.error(f"❌ Admin refund status query failed: {e}")
+
+    return jsonify({
+        "success": True,
+        "scheduler_enabled": is_refund_retry_enabled(),
+        "wallet": wallet_status,
+        "counts": counts,
+        "total_stuck": sum(counts.values()),
+        "orders": recent,
+    })
+
+
+@reloadly_bp.route("/api/admin/refunds/process", methods=["POST"])
+def api_admin_process_refunds():
+    """Admin: run one refund-retry pass immediately (e.g. after a gas top-up)."""
+    _, err = _require_admin()
+    if err:
+        return err
+
+    from .refund_retry import run_refund_retry_once, wake_refund_retry
+    try:
+        summary = run_refund_retry_once()
+    except Exception as e:  # noqa: BLE001 - surface a clean error to the admin
+        logger.error(f"❌ Admin refund process failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    # Wake the background scheduler too, so a row that appears right after this
+    # pass is picked up promptly rather than at the next full interval.
+    wake_refund_retry()
+    return jsonify({"success": True, "summary": summary})
+
+
+@reloadly_bp.route("/api/admin/refunds/<order_id>/retry", methods=["POST"])
+def api_admin_retry_refund(order_id):
+    """Admin: retry a single order's refund regardless of the retry-after gate."""
+    _, err = _require_admin()
+    if err:
+        return err
+
+    from .refund_retry import retry_order_refund
+    try:
+        result = retry_order_refund(order_id)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"❌ Admin refund retry failed for {order_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    if result.get("already_refunded"):
+        return jsonify({"success": True, "message": result.get("message"),
+                        "already_refunded": True})
+    if not result.get("success"):
+        return jsonify({
+            "success": False,
+            "error": result.get("error") or "Refund retry did not complete.",
+            "summary": result.get("summary"),
+        }), 400 if result.get("error") else 200
+    return jsonify({"success": True, "summary": result.get("summary")})
