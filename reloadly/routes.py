@@ -21,6 +21,28 @@ reloadly_bp = Blueprint("reloadly", __name__, url_prefix="/reloadly")
 # are therefore visible in the admin Refunds panel.
 _REFUND_STUCK_STATUSES = ("pending_refund", "refunding", "refund_failed")
 
+# Statuses the admin Refunds panel may filter by. "refunded" is a terminal
+# success state (the scheduler writes it once the refund tx confirms) and is
+# deliberately NOT part of _REFUND_STUCK_STATUSES, so it never inflates the
+# "queued refunds" counter.
+_REFUND_VIEW_STATUSES = _REFUND_STUCK_STATUSES + ("refunded",)
+
+
+def _resolve_refund_view(requested: str) -> tuple:
+    """Map a ``?status=`` value to ``(view_statuses, order_desc, normalized)``.
+
+    No/unknown value keeps the stuck-only default (oldest-first); ``all`` shows
+    every refund status (newest-first); ``refunded`` shows successful refunds
+    newest-first; a stuck status shows just that state, oldest-first.
+    """
+    requested = (requested or "").strip().lower()
+    if requested == "all":
+        return list(_REFUND_VIEW_STATUSES), True, "all"
+    if requested in _REFUND_VIEW_STATUSES:
+        return [requested], requested == "refunded", requested
+    return list(_REFUND_STUCK_STATUSES), False, "stuck"
+
+
 # Friendly message shown when a refund is parked because the refund wallet has
 # no CELO gas. The order moves to ``pending_refund`` and an automatic retry
 # scheduler sends the refund once the admin refills the wallet.
@@ -749,7 +771,13 @@ def _require_admin():
 
 @reloadly_bp.route("/api/admin/refunds/status", methods=["GET"])
 def api_admin_refund_status():
-    """Admin: REFUND_KEY wallet health + counts of orders awaiting a refund."""
+    """Admin: REFUND_KEY wallet health + orders awaiting / completed refunds.
+
+    Optional ``?status=`` filter (one of ``pending_refund``, ``refunding``,
+    ``refund_failed``, ``refunded``, or ``all``). With no filter the panel shows
+    the stuck refunds (unchanged default), so the "queued refunds" focus is
+    preserved; ``status=refunded`` lists successfully refunded orders.
+    """
     _, err = _require_admin()
     if err:
         return err
@@ -758,24 +786,39 @@ def api_admin_refund_status():
 
     wallet_status = get_refund_wallet_status()
 
+    view_statuses, order_desc, requested = _resolve_refund_view(
+        request.args.get("status")
+    )
+    # Counts always describe the stuck states (not the current view) so the
+    # "Queued refunds" summary stays a stable workload indicator.
     counts = {"pending_refund": 0, "refunding": 0, "refund_failed": 0}
     recent = []
     try:
         from supabase_client import get_supabase_admin_client, get_supabase_client
         supabase = get_supabase_admin_client() or get_supabase_client()
         if supabase:
-            result = (
+            # Stuck counts are computed from the full stuck set, independent of
+            # the view filter.
+            count_result = (
                 supabase.table("reloadly_orders")
-                .select("id,wallet_address,gd_amount,status,refund_error,refund_tx_hash,created_at,updated_at")
+                .select("status")
                 .in_("status", list(_REFUND_STUCK_STATUSES))
-                .order("created_at", desc=False)
-                .limit(200)
+                .limit(1000)
                 .execute()
             )
-            for row in (result.data or []):
+            for row in (count_result.data or []):
                 st = row.get("status")
                 if st in counts:
                     counts[st] += 1
+
+            result = (
+                supabase.table("reloadly_orders")
+                .select("id,wallet_address,gd_amount,status,refund_error,refund_tx_hash,created_at,updated_at")
+                .in_("status", view_statuses)
+                .order("created_at", desc=order_desc)
+                .limit(200)
+                .execute()
+            )
             recent = (result.data or [])[:100]
     except Exception as e:
         logger.error(f"❌ Admin refund status query failed: {e}")
@@ -786,6 +829,7 @@ def api_admin_refund_status():
         "wallet": wallet_status,
         "counts": counts,
         "total_stuck": sum(counts.values()),
+        "filter": requested or "stuck",
         "orders": recent,
     })
 
