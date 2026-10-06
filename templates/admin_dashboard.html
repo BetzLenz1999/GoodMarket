@@ -3032,7 +3032,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
             <section id="reloadly-refunds-section" class="section">
                 <div class="page-header">
                     <h1 class="page-title">💳 Reloadly Refunds</h1>
-                    <p style="color: rgba(241, 245, 249, 0.7);">Refunds queued for users whose Reloadly order failed. They retry automatically once the refund wallet is topped up — use the manual buttons to push them through now.</p>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Refunds queued for users whose Reloadly order failed. They retry automatically once the refund wallet is topped up — use the manual buttons to push them through now. Switch the filter to <strong>Refunded</strong> to audit successfully refunded orders.</p>
                 </div>
 
                 <div class="admin-card" style="margin-bottom:1rem;">
@@ -3041,6 +3041,11 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
 
                 <div style="margin-bottom:1rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                    <select id="reloadlyRefundStatusFilter" onchange="loadReloadlyRefunds()" style="padding:0.5rem 0.75rem;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e2e8f0;font-size:0.85rem;">
+                        <option value="" selected>Awaiting refunds</option>
+                        <option value="refunded">✅ Refunded (successful)</option>
+                        <option value="all">All refund statuses</option>
+                    </select>
                     <button onclick="loadReloadlyRefunds()" class="btn btn-primary" style="padding:0.5rem 1rem;font-size:0.85rem;">🔄 Refresh</button>
                     <button onclick="processReloadlyRefunds()" id="reloadlyProcessBtn" class="btn" style="padding:0.5rem 1rem;font-size:0.85rem;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;">⚡ Process Refunds Now</button>
                     <span id="reloadlyRefundActionMsg" style="font-size:0.82rem;color:#34d399;"></span>
@@ -3727,11 +3732,13 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
         async function loadReloadlyRefunds() {
             const box = document.getElementById('reloadlyRefundWalletBox');
             const tbody = document.getElementById('reloadlyRefundsTableBody');
+            const filterEl = document.getElementById('reloadlyRefundStatusFilter');
             if (!box || !tbody) return;
+            const filter = filterEl ? filterEl.value : '';
             box.textContent = 'Loading…';
             tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">Loading…</td></tr>';
             try {
-                const res = await fetch('/reloadly/api/admin/refunds/status');
+                const res = await fetch('/reloadly/api/admin/refunds/status' + (filter ? '?status=' + encodeURIComponent(filter) : ''));
                 const data = await res.json();
                 if (!data.success) {
                     box.innerHTML = '<span style="color:#f87171;">❌ ' + _reloadlyEsc(data.error || 'Failed to load') + '</span>';
@@ -3765,25 +3772,34 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     + (w.error ? '<div style="margin-top:0.6rem;color:#fbbf24;font-size:0.8rem;">⚠️ ' + _reloadlyEsc(w.error) + '</div>' : '');
 
                 const orders = data.orders || [];
+                const showingRefunded = filter === 'refunded';
                 if (!orders.length) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">✅ No refunds waiting.</td></tr>';
+                    const emptyMsg = showingRefunded
+                        ? '✅ No successfully refunded orders yet.'
+                        : (filter === 'all' ? '✅ No refunds recorded yet.' : '✅ No refunds waiting.');
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">' + emptyMsg + '</td></tr>';
                     return;
                 }
-                const colors = {pending_refund: '#f59e0b', refunding: '#38bdf8', refund_failed: '#ef4444'};
+                const colors = {pending_refund: '#f59e0b', refunding: '#38bdf8', refund_failed: '#ef4444', refunded: '#34d399'};
                 tbody.innerHTML = orders.map(function(o) {
                     const color = colors[o.status] || '#94a3b8';
-                    const when = o.created_at ? new Date(o.created_at).toLocaleString() : '—';
+                    const isRefunded = o.status === 'refunded';
+                    const when = (isRefunded && o.updated_at ? o.updated_at : o.created_at);
+                    const whenLabel = when ? new Date(when).toLocaleString() : '—';
                     const err = o.refund_error ? _reloadlyEsc(String(o.refund_error).slice(0, 80)) : '—';
                     const tx = o.refund_tx_hash
-                        ? ' <a href="https://celoscan.io/tx/' + o.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">tx ↗</a>'
+                        ? ' <a href="https://celoscan.io/tx/' + o.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">' + (isRefunded ? 'Refund tx ↗' : 'tx ↗') + '</a>'
                         : '';
+                    const actions = isRefunded
+                        ? '<span style="color:rgba(241,245,249,0.4);font-size:0.72rem;">—</span>'
+                        : '<button onclick="retryReloadlyRefund(\'' + _reloadlyEsc(o.id) + '\')" style="padding:0.3rem 0.7rem;font-size:0.75rem;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">🔁 Retry</button>';
                     return '<tr>'
-                        + '<td>' + when + '</td>'
+                        + '<td>' + whenLabel + (isRefunded ? '<div style="font-size:0.68rem;color:rgba(241,245,249,0.45);">refunded</div>' : '') + '</td>'
                         + '<td style="font-family:monospace;font-size:0.75rem;">' + _reloadlyEsc((o.wallet_address || '').slice(0,10)) + '…</td>'
                         + '<td style="font-weight:600;">' + Number(o.gd_amount || 0).toLocaleString() + '</td>'
                         + '<td><span style="color:' + color + ';font-weight:700;text-transform:uppercase;font-size:0.72rem;">' + _reloadlyEsc(o.status) + '</span>' + tx + '</td>'
                         + '<td style="font-size:0.72rem;color:rgba(241,245,249,0.6);max-width:240px;">' + err + '</td>'
-                        + '<td><button onclick="retryReloadlyRefund(\'' + _reloadlyEsc(o.id) + '\')" style="padding:0.3rem 0.7rem;font-size:0.75rem;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">🔁 Retry</button></td>'
+                        + '<td>' + actions + '</td>'
                         + '</tr>';
                 }).join('');
             } catch (e) {
