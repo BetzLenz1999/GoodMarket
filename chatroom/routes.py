@@ -105,12 +105,16 @@ def api_state():
 
     gate = svc.can_post(wallet)
     username = svc.get_username(wallet)
+    is_admin_viewer = svc.is_admin_wallet(wallet)
     return jsonify({
         "success": True,
         "enabled": True,
         "username": username,
         "display_name": username or svc.short_wallet(wallet),
         "has_username": bool(username),
+        # Admin status drives the in-room delete affordance. Server-side truth:
+        # the UI only mirrors it, the delete endpoint re-checks anyway.
+        "is_admin": is_admin_viewer,
         "can_post": gate["allowed"],
         "reason": gate["reason"],
         "retry_after": gate["retry_after"],
@@ -136,7 +140,13 @@ def api_messages():
 
     after_id = request.args.get("after_id", type=int)
     limit = request.args.get("limit", type=int) or svc.DEFAULT_PAGE_SIZE
-    return jsonify(svc.get_messages(after_id=after_id, limit=limit, viewer_wallet=wallet))
+    # `deleted_after` (ISO ts) makes polling return the ids deleted since the
+    # last tick so other viewers' screens prune them without a full refresh.
+    deleted_after = (request.args.get("deleted_after") or "").strip() or None
+    return jsonify(svc.get_messages(
+        after_id=after_id, limit=limit, viewer_wallet=wallet,
+        deleted_after=deleted_after,
+    ))
 
 
 @chatroom_bp.route("/api/messages", methods=["POST"])
