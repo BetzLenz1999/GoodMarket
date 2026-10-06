@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from web3 import Web3
 from eth_account import Account
-from supabase_client import get_supabase_client
+from supabase_client import get_supabase_client, get_supabase_admin_client
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +311,67 @@ def check_refund_tx_status(tx_hash: str) -> str:
         return "pending"
 
 
+def get_refund_wallet_status() -> dict:
+    """Read-only health snapshot of the REFUND_KEY wallet.
+
+    Reports whether the refund signer has enough CELO to pay gas and enough G$
+    to cover refunds. Never raises — powers the admin dashboard panel and the
+    retry scheduler's "is it worth running now?" check.
+
+    ``celo_ok`` / ``gd_ok`` are False when the balance read fails, so an
+    unreachable RPC can never look like a funded wallet.
+    """
+    status = {
+        "configured": False,
+        "address": None,
+        "celo_balance": None,
+        "gd_balance": None,
+        "gas_required_celo": None,
+        "celo_ok": False,
+        "gd_ok": False,
+        "rpc_ok": False,
+        "error": None,
+    }
+    try:
+        refund_key = os.getenv("REFUND_KEY")
+        if not refund_key:
+            status["error"] = "REFUND_KEY not configured"
+            return status
+        if not refund_key.startswith("0x"):
+            refund_key = "0x" + refund_key
+
+        status["configured"] = True
+        refund_account = Account.from_key(refund_key)
+        status["address"] = refund_account.address
+
+        w3 = Web3(Web3.HTTPProvider(CELO_RPC_URL))
+        if not w3.is_connected():
+            status["error"] = "Cannot connect to Celo network"
+            return status
+        status["rpc_ok"] = True
+
+        gas_price = w3.eth.gas_price
+        required_gas_wei = REFUND_GAS_LIMIT * gas_price
+        celo_wei = w3.eth.get_balance(refund_account.address)
+        status["gas_required_celo"] = float(w3.from_wei(required_gas_wei, "ether"))
+        status["celo_balance"] = float(w3.from_wei(celo_wei, "ether"))
+        status["celo_ok"] = celo_wei >= required_gas_wei
+
+        token_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(GD_TOKEN_CONTRACT),
+            abi=ERC20_ABI,
+        )
+        gd_wei = token_contract.functions.balanceOf(refund_account.address).call()
+        status["gd_balance"] = float(
+            Decimal(gd_wei) / (Decimal(10) ** GD_DECIMALS)
+        )
+        status["gd_ok"] = gd_wei > 0
+    except Exception as e:  # noqa: BLE001 - status endpoint must never raise
+        logger.warning(f"⚠️ get_refund_wallet_status failed: {e}")
+        status["error"] = str(e)
+    return status
+
+
 def refund_gd(to_wallet: str, amount_gd: float, order_id: str) -> dict:
     """
     Send G$ refund from REFUND_KEY wallet to user.
@@ -465,13 +526,17 @@ def update_order_record(order_id: str, updates: dict) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def claim_order_for_refund(order_id: str) -> dict:
+def claim_order_for_refund(order_id: str, expected_status: str = "pending_refund") -> dict:
     """Atomically claim an order for refund retry (concurrency-safe CAS).
 
-    Flips status ``pending_refund`` -> ``refunding`` only if the row is still
-    ``pending_refund``. PostgREST applies the WHERE clause server-side, so the
+    Flips status ``expected_status`` -> ``refunding`` only if the row is still
+    ``expected_status``. PostgREST applies the WHERE clause server-side, so the
     returned rows are non-empty *only* when this caller won the compare-and-swap.
     Returns ``{"success": True, "claimed": bool, "order": dict|None}``.
+
+    ``expected_status`` defaults to ``pending_refund`` (the parked-for-retry
+    state). Pass ``refunding`` to recover a claim stranded by a worker that died
+    mid-refund, or ``refund_failed`` to retry a previously hard-failed refund.
 
     This prevents two workers (or the scheduler + a manual endpoint) from both
     sending a refund for the same order at the same time (double-refund).
@@ -484,7 +549,7 @@ def claim_order_for_refund(order_id: str) -> dict:
             supabase.table("reloadly_orders")
             .update({"status": "refunding"})
             .eq("id", order_id)
-            .eq("status", "pending_refund")
+            .eq("status", expected_status)
             .execute()
         )
         if result.data:
