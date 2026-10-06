@@ -744,8 +744,9 @@ else:
     logger.error("❌ Reloadly Store initialization failed")
 
 # Automatic refund retry for Reloadly orders parked as 'pending_refund' when
-# the refund wallet had no CELO gas. Env-gated (RELOADLY_REFUND_RETRY_ENABLED).
-# Retries the refund periodically; succeeds automatically once gas is refilled.
+# the refund wallet had no CELO gas / G$. Runs by default; set
+# RELOADLY_REFUND_RETRY_ENABLED=0 to disable. Retries the refund periodically;
+# succeeds automatically once gas/balance is refilled.
 try:
     from reloadly.refund_retry import init_refund_retry_scheduler
     if init_refund_retry_scheduler(app):
