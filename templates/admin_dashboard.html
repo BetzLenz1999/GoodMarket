@@ -841,6 +841,12 @@
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('reloadly-refunds-section')">
+                        <span class="menu-icon">💳</span>
+                        <span>Reloadly Refunds</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a class="menu-link" onclick="showSection('chatroom-moderation-section')">
                         <span class="menu-icon">💬</span>
                         <span>Chatroom Moderation</span>
@@ -3022,6 +3028,43 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
+            <!-- Reloadly Refunds Section -->
+            <section id="reloadly-refunds-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">💳 Reloadly Refunds</h1>
+                    <p style="color: rgba(241, 245, 249, 0.7);">Refunds queued for users whose Reloadly order failed. They retry automatically once the refund wallet is topped up — use the manual buttons to push them through now.</p>
+                </div>
+
+                <div class="admin-card" style="margin-bottom:1rem;">
+                    <h3 style="margin:0 0 0.5rem;color:#f1f5f9;">🔑 Refund Wallet (REFUND_KEY)</h3>
+                    <div id="reloadlyRefundWalletBox" style="color:rgba(241,245,249,0.7);font-size:0.9rem;">Loading…</div>
+                </div>
+
+                <div style="margin-bottom:1rem;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                    <button onclick="loadReloadlyRefunds()" class="btn btn-primary" style="padding:0.5rem 1rem;font-size:0.85rem;">🔄 Refresh</button>
+                    <button onclick="processReloadlyRefunds()" id="reloadlyProcessBtn" class="btn" style="padding:0.5rem 1rem;font-size:0.85rem;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;">⚡ Process Refunds Now</button>
+                    <span id="reloadlyRefundActionMsg" style="font-size:0.82rem;color:#34d399;"></span>
+                </div>
+
+                <div class="data-table-wrapper" style="overflow-x:auto;">
+                    <table class="data-table" id="reloadlyRefundsTable" style="width:100%;font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Wallet</th>
+                                <th>Amount G$</th>
+                                <th>Status</th>
+                                <th>Last error</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reloadlyRefundsTableBody">
+                            <tr><td colspan="6" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <!-- Daily Lotto Section -->
             <section id="daily-lotto-section" class="section">
                 <div class="page-header">
@@ -3375,6 +3418,9 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 case 'gcash-cashout':
                     loadGcashRequests();
                     break;
+                case 'reloadly-refunds':
+                    loadReloadlyRefunds();
+                    break;
                 case 'daily-lotto':
                     loadLottoAdmin();
                     break;
@@ -3669,6 +3715,130 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 }
                 loadGcashRequests();
             } catch (e) { alert('❌ Network error'); }
+        }
+
+        // ── Reloadly Refunds ───────────────────────────────────────────
+        function _reloadlyEsc(v) {
+            const d = document.createElement('div');
+            d.textContent = v == null ? '' : String(v);
+            return d.innerHTML;
+        }
+
+        async function loadReloadlyRefunds() {
+            const box = document.getElementById('reloadlyRefundWalletBox');
+            const tbody = document.getElementById('reloadlyRefundsTableBody');
+            if (!box || !tbody) return;
+            box.textContent = 'Loading…';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">Loading…</td></tr>';
+            try {
+                const res = await fetch('/reloadly/api/admin/refunds/status');
+                const data = await res.json();
+                if (!data.success) {
+                    box.innerHTML = '<span style="color:#f87171;">❌ ' + _reloadlyEsc(data.error || 'Failed to load') + '</span>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#ef4444;">❌ Failed to load refunds</td></tr>';
+                    return;
+                }
+                const w = data.wallet || {};
+                const celo = w.celo_balance == null ? '—' : Number(w.celo_balance).toFixed(4);
+                const gd = w.gd_balance == null ? '—' : Number(w.gd_balance).toLocaleString();
+                const need = w.gas_required_celo == null ? '—' : Number(w.gas_required_celo).toFixed(6);
+                const celoBadge = w.celo_ok
+                    ? '<span style="color:#34d399;font-weight:700;">✅ enough gas</span>'
+                    : '<span style="color:#f87171;font-weight:700;">❌ LOW — top up CELO</span>';
+                const gdBadge = w.gd_ok
+                    ? '<span style="color:#34d399;font-weight:700;">✅ funded</span>'
+                    : '<span style="color:#f87171;font-weight:700;">❌ EMPTY — top up G$</span>';
+                box.innerHTML =
+                    '<div style="display:flex;gap:2rem;flex-wrap:wrap;">'
+                    + '<div><div style="font-size:0.75rem;color:rgba(241,245,249,0.55);">Address</div>'
+                    + '<div style="font-family:monospace;font-size:0.82rem;">' + _reloadlyEsc(w.address || '—') + '</div></div>'
+                    + '<div><div style="font-size:0.75rem;color:rgba(241,245,249,0.55);">CELO (gas)</div>'
+                    + '<div style="font-size:1.1rem;font-weight:700;">' + celo + ' ' + celoBadge + '</div>'
+                    + '<div style="font-size:0.7rem;color:rgba(241,245,249,0.45);">needs ≈ ' + need + ' CELO</div></div>'
+                    + '<div><div style="font-size:0.75rem;color:rgba(241,245,249,0.55);">G$ balance</div>'
+                    + '<div style="font-size:1.1rem;font-weight:700;">' + gd + ' ' + gdBadge + '</div></div>'
+                    + '<div><div style="font-size:0.75rem;color:rgba(241,245,249,0.55);">Auto-retry scheduler</div>'
+                    + '<div style="font-size:1rem;font-weight:700;">' + (data.scheduler_enabled ? '✅ Enabled' : '⛔ Disabled') + '</div></div>'
+                    + '<div><div style="font-size:0.75rem;color:rgba(241,245,249,0.55);">Queued refunds</div>'
+                    + '<div style="font-size:1.1rem;font-weight:700;">' + (data.total_stuck || 0) + '</div></div>'
+                    + '</div>'
+                    + (w.error ? '<div style="margin-top:0.6rem;color:#fbbf24;font-size:0.8rem;">⚠️ ' + _reloadlyEsc(w.error) + '</div>' : '');
+
+                const orders = data.orders || [];
+                if (!orders.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:rgba(241,245,249,0.5);">✅ No refunds waiting.</td></tr>';
+                    return;
+                }
+                const colors = {pending_refund: '#f59e0b', refunding: '#38bdf8', refund_failed: '#ef4444'};
+                tbody.innerHTML = orders.map(function(o) {
+                    const color = colors[o.status] || '#94a3b8';
+                    const when = o.created_at ? new Date(o.created_at).toLocaleString() : '—';
+                    const err = o.refund_error ? _reloadlyEsc(String(o.refund_error).slice(0, 80)) : '—';
+                    const tx = o.refund_tx_hash
+                        ? ' <a href="https://celoscan.io/tx/' + o.refund_tx_hash + '" target="_blank" rel="noopener" style="color:#38bdf8;">tx ↗</a>'
+                        : '';
+                    return '<tr>'
+                        + '<td>' + when + '</td>'
+                        + '<td style="font-family:monospace;font-size:0.75rem;">' + _reloadlyEsc((o.wallet_address || '').slice(0,10)) + '…</td>'
+                        + '<td style="font-weight:600;">' + Number(o.gd_amount || 0).toLocaleString() + '</td>'
+                        + '<td><span style="color:' + color + ';font-weight:700;text-transform:uppercase;font-size:0.72rem;">' + _reloadlyEsc(o.status) + '</span>' + tx + '</td>'
+                        + '<td style="font-size:0.72rem;color:rgba(241,245,249,0.6);max-width:240px;">' + err + '</td>'
+                        + '<td><button onclick="retryReloadlyRefund(\'' + _reloadlyEsc(o.id) + '\')" style="padding:0.3rem 0.7rem;font-size:0.75rem;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">🔁 Retry</button></td>'
+                        + '</tr>';
+                }).join('');
+            } catch (e) {
+                box.innerHTML = '<span style="color:#f87171;">❌ Network error</span>';
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#ef4444;">❌ Network error</td></tr>';
+            }
+        }
+
+        async function processReloadlyRefunds() {
+            const btn = document.getElementById('reloadlyProcessBtn');
+            const msg = document.getElementById('reloadlyRefundActionMsg');
+            if (!confirm('Run a refund-retry pass now? Make sure the refund wallet has CELO gas + G$.')) return;
+            btn.disabled = true;
+            btn.textContent = '⏳ Processing…';
+            msg.textContent = '';
+            try {
+                const res = await fetch('/reloadly/api/admin/refunds/process', {method: 'POST'});
+                const data = await res.json();
+                if (data.success) {
+                    const s = data.summary || {};
+                    msg.style.color = '#34d399';
+                    msg.textContent = '✅ Refunded ' + (s.refunded || 0) + ', still pending ' + (s.still_pending || 0) + ', failed ' + (s.failed || 0);
+                } else {
+                    msg.style.color = '#f87171';
+                    msg.textContent = '❌ ' + (data.error || 'Failed');
+                }
+                loadReloadlyRefunds();
+            } catch (e) {
+                msg.style.color = '#f87171';
+                msg.textContent = '❌ Network error';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⚡ Process Refunds Now';
+            }
+        }
+
+        async function retryReloadlyRefund(orderId) {
+            const msg = document.getElementById('reloadlyRefundActionMsg');
+            if (!confirm('Retry the refund for this order now?')) return;
+            msg.textContent = '';
+            try {
+                const res = await fetch('/reloadly/api/admin/refunds/' + encodeURIComponent(orderId) + '/retry', {method: 'POST'});
+                const data = await res.json();
+                if (data.success) {
+                    msg.style.color = '#34d399';
+                    msg.textContent = data.already_refunded ? '✅ Already refunded.' : '✅ Refund sent.';
+                } else {
+                    msg.style.color = '#f87171';
+                    msg.textContent = '❌ ' + (data.error || 'Refund retry failed');
+                }
+                loadReloadlyRefunds();
+            } catch (e) {
+                msg.style.color = '#f87171';
+                msg.textContent = '❌ Network error';
+            }
         }
 
         async function loadPriceVisibility() {
