@@ -148,6 +148,23 @@
 .gm-chat-name.is-profile-link:hover { color: #fbbf24; }
 .gm-chat-name.is-profile-link:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; border-radius: 4px; }
 
+/* ADMIN badge — server-computed boolean (never a wallet address). Gold on a
+   dark chip so it stands apart from the green username without shouting. */
+.gm-chat-admin-badge {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #1f1300;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  border-radius: 5px;
+  padding: 1px 5px;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+.gm-chat-row.is-admin .gm-chat-name { color: #fbbf24; }
+
 .gm-chat-time { color: #94a3b8; }
 
 .gm-chat-bubble {
@@ -183,6 +200,20 @@
 }
 
 .gm-chat-report:hover { color: #fca5a5; }
+
+/* Admin-only delete action, shown on every message when the viewer is admin. */
+.gm-chat-delete {
+  border: 0;
+  background: transparent;
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.gm-chat-delete:hover { color: #fecaca; }
+.gm-chat-delete:disabled { color: #94a3b8; cursor: default; }
 
 /* ── Tipping ─────────────────────────────────────────────────────────── */
 .gm-chat-tip {
