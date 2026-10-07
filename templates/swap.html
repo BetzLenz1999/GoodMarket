@@ -629,6 +629,39 @@
             color: #fff;
         }
         .bridge-sub-pane.hidden-tab { display: none !important; }
+        /* LI.FI (Celo → Base) step indicator. The route needs two signatures
+           on two chains; this bar is the primary way the user tracks where they
+           are, so it stays visible through the whole flow. */
+        .lifi-step-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.9rem;
+            padding: 0.5rem 0.65rem;
+            border-radius: 10px;
+            background: rgba(2,132,199,0.07);
+            border: 1px solid rgba(2,132,199,0.25);
+            font-size: 0.8rem;
+            color: #0e7490;
+        }
+        .lifi-step-dot {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(148,163,184,0.35);
+            color: #e2e8f0;
+            font-weight: 700;
+            font-size: 0.78rem;
+            flex: 0 0 auto;
+        }
+        .lifi-step-dot.active { background: #0ea5e9; color: #fff; }
+        .lifi-step-dot.done { background: #22c55e; color: #fff; }
+        .lifi-step-line { flex: 1; height: 2px; background: rgba(148,163,184,0.35); border-radius: 2px; }
+        .lifi-step-line.done { background: #22c55e; }
+        .lifi-step-label { font-weight: 600; }
         /* GoodSwap sub-tabs (Uniswap V3 | GoodReserve). Same visual rhythm
            as the Bridge sub-tabs so users learn one pattern across the
            page. Each sub-pane keeps its existing design 1:1 — this is
@@ -1374,6 +1407,9 @@
             <div id="bridgeSubTabSwitcher" class="bridge-sub-tabs" role="tablist" aria-label="Bridge direction">
                 <button type="button" id="bridgeSubBtnCeloToXdc" class="bridge-sub-tab-btn active" role="tab" aria-selected="true" onclick="setBridgeSubTab('celo_to_xdc')">Celo → XDC</button>
                 <button type="button" id="bridgeSubBtnXdcToCelo" class="bridge-sub-tab-btn" role="tab" aria-selected="false" onclick="setBridgeSubTab('xdc_to_celo')">XDC → Celo</button>
+                {% if lifi_bridge_enabled %}
+                <button type="button" id="bridgeSubBtnCeloToBase" class="bridge-sub-tab-btn" role="tab" aria-selected="false" onclick="setBridgeSubTab('celo_to_base')">Celo → Base</button>
+                {% endif %}
             </div>
 
             <!-- Celo → XDC sub-pane (existing, unchanged content) -->
@@ -1580,6 +1616,100 @@
             </div>
             </div><!-- /#bridgeSubPaneXdcToCelo -->
 
+            {% if lifi_bridge_enabled %}
+            <!-- Celo → Base sub-pane (LI.FI / Jumper). Native CELO → native ETH.
+                 This route is TWO steps (bridge + destination swap), so the user
+                 signs once on Celo and once on Base. The step bar + copy below
+                 exist specifically to keep that from being confusing. -->
+            <div id="bridgeSubPaneCeloToBase" class="bridge-sub-pane hidden-tab">
+            <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
+
+                <div class="network-badge">
+                    <span class="network-dot"></span>
+                    🌉 Celo Mainnet → Base · LI.FI (Jumper) Bridge
+                </div>
+
+                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
+                    Bridging <strong>native CELO → native ETH on Base</strong>. This takes
+                    <strong>2 steps</strong> — you confirm once on <strong>Celo</strong>, then once on
+                    <strong>Base</strong>. Keep a little <strong>ETH on Base</strong> for the final step's gas.
+                </div>
+
+                <!-- Step progress bar — the whole flow keys off this. -->
+                <div id="lifiStepBar" class="lifi-step-bar" aria-live="polite">
+                    <span class="lifi-step-dot active" id="lifiStepDot1">1</span>
+                    <span class="lifi-step-line" id="lifiStepLine"></span>
+                    <span class="lifi-step-dot" id="lifiStepDot2">2</span>
+                    <span class="lifi-step-label" id="lifiStepLabel">Step 1 of 2 — confirm on Celo</span>
+                </div>
+
+                <!-- From: native CELO -->
+                <div class="token-box">
+                    <div class="token-box-label">You bridge (native CELO on Celo)</div>
+                    <div class="token-row">
+                        <div class="token-selector" style="cursor:default;">
+                            <div class="token-icon celo">CE</div>
+                            <span>CELO</span>
+                            <span class="token-chevron" style="opacity:0;">▾</span>
+                        </div>
+                        <input
+                            type="number"
+                            class="amount-input"
+                            id="lifiAmountCelo"
+                            placeholder="10"
+                            min="0"
+                            step="any"
+                            oninput="updateLifiBridgeSummary(); scheduleLifiQuote();"
+                        >
+                    </div>
+                    <div class="token-balance">
+                        <span>Balance: <span id="lifiFromBalanceCelo">—</span></span>
+                        <button class="max-btn" onclick="setLifiMaxCelo()">MAX</button>
+                    </div>
+                </div>
+
+                <!-- Destination + Summary -->
+                <div class="info-box-bridge" style="margin-top:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:#fbfaf8; border:1px solid #e9e2d6; color:#3a3226; font-size:0.83rem; line-height:1.6;">
+                    Destination wallet: <code id="lifiDestinationWallet" style="color:#7c3aed;">{{ wallet }}</code><br>
+                    Destination chain: <strong>Base (Chain ID {{ lifi_base_chain_id }})</strong><br>
+                    <div style="font-size:0.74rem; color:#8a8378; text-transform:uppercase; letter-spacing:0.05em; margin-top:0.55rem; margin-bottom:0.35rem;">Bridge Summary</div>
+                    <div id="lifiRouteSummary" style="color:#8a8378; font-size:0.79rem; margin-bottom:0.25rem;">Enter an amount to see the route.</div>
+                    <div style="color:#6b5d48;">You send: <strong id="lifiSendDisplay" style="color:#2b241a;">0 CELO</strong></div>
+                    <div style="color:#6b5d48;">You receive (est.): <strong id="lifiReceiveDisplay" style="color:#a7f3d0;">0 ETH</strong></div>
+                    <div style="color:#3a3226;">Minimum received: <strong id="lifiReceiveMinDisplay" style="color:#a7f3d0;">0 ETH</strong></div>
+                    <div id="lifiGasDisplay" style="color:#6b5d48; margin-top:0.2rem;"></div>
+                </div>
+
+                <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.9rem;">
+                    <button class="swap-btn" id="btnLifiBridge" onclick="executeLifiBridge()" style="flex:1 1 220px; margin-top:0;">
+                        Bridge to Base
+                    </button>
+                    <!-- Shown only when a previous attempt already bridged on
+                         Celo but the Base leg was never signed (closed tab).
+                         Without this the user's bridged funds sit on Base with
+                         no in-app way to finish. -->
+                    <button class="swap-btn" id="btnLifiResume" onclick="resumeLifiBridge()" style="flex:1 1 220px; margin-top:0; display:none;">
+                        Finish on Base
+                    </button>
+                </div>
+
+                <div class="alert" id="lifiBridgeAlert"></div>
+            </div>
+
+            <div class="info-card" style="margin-top:1rem;">
+                <div class="info-card-title">About this bridge</div>
+                Routed by
+                <a class="info-link" href="https://jumper.exchange/" target="_blank" rel="noopener">Jumper ↗</a>
+                (powered by
+                <a class="info-link" href="https://li.fi/" target="_blank" rel="noopener">LI.FI ↗</a>),
+                aggregating bridges and DEXs across chains. The Celo → Base route
+                bridges with one provider, then swaps to native ETH on Base — hence
+                the two confirmations. Track it on
+                <a class="info-link" href="https://scan.li.fi/" target="_blank" rel="noopener">LI.FI Scan ↗</a>.
+            </div>
+            </div><!-- /#bridgeSubPaneCeloToBase -->
+            {% endif %}
+
         </div><!-- /.pane-bridge -->
 
     </div>
@@ -1636,7 +1766,10 @@
             celoGdTokenContract: {{ celo_gd_token_contract|tojson }},
             xdcGdTokenContract: {{ xdc_gd_token_contract|tojson }},
             xdcChainId: {{ xdc_chain_id }},
-            celoChainId: {{ celo_chain_id }}
+            celoChainId: {{ celo_chain_id }},
+            lifiBridgeEnabled: {{ (lifi_bridge_enabled | default(false)) | tojson }},
+            lifiBaseChainId: {{ lifi_base_chain_id | default(8453) }},
+            lifiCeloErc20: {{ lifi_celo_erc20 | default('0x471EcE3750Da237f93B8E339c536989b8978a438', true) | tojson }}
         };
     </script>
     <script src="{{ url_for('static', filename='js/swap-core.js', v=ASSET_VERSION) }}"></script>
