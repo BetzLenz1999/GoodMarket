@@ -49,9 +49,9 @@
     }
 
     // Chains the in-app wallet can sign on. EVM keys are chain-agnostic;
-    // the restriction to these two is a product choice — the app only has
-    // Celo + XDC features (claim/send/swap bridge) so no other chain is ever
-    // offered to the user (and an injected MetaMask is never prompted).
+    // the restriction is a product choice — the app only offers Celo, XDC and
+    // (signing-only, for the LI.FI Celo → Base bridge) Base, so no other chain
+    // is ever offered to the user (and an injected MetaMask is never prompted).
     var SUPPORTED_CHAINS = {
         celo: {
             hex: '0xa4ec',
@@ -71,6 +71,22 @@
                 'https://earpc.xinfin.network',
                 'https://rpc.ankr.com/xdc',
                 'https://erpc.xdcrpc.com'
+            ]
+        },
+        // Base is signing-only for now: the LI.FI Celo → Base bridge delivers
+        // native ETH to the user's own in-app wallet, and the destination
+        // (second) step of that route is signed on Base. EVM keys are
+        // chain-agnostic, so enabling it is a registry entry — but every
+        // Celo-bound flow on a page must switch back to 0xa4ec first (the
+        // provider's active-chain pointer persists within a page).
+        base: {
+            hex: '0x2105',
+            id: 8453,
+            label: 'Base',
+            rpcs: [
+                'https://mainnet.base.org',
+                'https://base-rpc.publicnode.com',
+                'https://1rpc.io/base'
             ]
         }
     };
@@ -317,7 +333,11 @@
         var labels = Object.keys(SUPPORTED_CHAINS).map(function (k) {
             return SUPPORTED_CHAINS[k].label.split(' ')[0]; // 'Celo', 'XDC'
         });
-        return labels.join(' and ') + ' only.';
+        // 'Celo, XDC and Base only.' — a bare join(' and ') reads wrong at 3+.
+        if (labels.length > 1) {
+            return labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1] + ' only.';
+        }
+        return labels.join('') + ' only.';
     }
 
     async function _handleRequest(args) {
