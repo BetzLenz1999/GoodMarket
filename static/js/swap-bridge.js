@@ -1,4 +1,3 @@
-
 /* GoodMarket Swap — page logic extracted from templates/swap.html.
  *
  * Extracted from the inline <script> on /swap so the ~290 KB of JS is served
@@ -1766,3 +1765,467 @@ function _prewarmXdcBridgeTab() {
     } catch (_) {}
 }
 window._prewarmXdcBridgeTab = _prewarmXdcBridgeTab;
+
+// ══════════════════════════════════════════════════════════════════════
+// LI.FI (Jumper) bridge — native CELO (Celo) → native ETH (Base).
+//
+// This route is TWO steps on TWO chains (bridge, then a destination swap),
+// so the user signs twice. The UI exists to make that obvious, not hidden:
+// a persistent step bar, per-step button labels, and an explicit
+// destination-gas preflight (without ETH on Base the second signature can
+// never be paid for — better to stop before the Celo leg is sent).
+//
+// Reads (quote, status) go through our own /api/bridge/lifi/* proxy so the
+// integrator id never ships to the browser. Signing uses the SAME
+// getConnectedSwapSigner() resolver as every other swap flow (local PIN
+// wallet / WalletConnect / Privy / injected, bound to the session wallet).
+// ══════════════════════════════════════════════════════════════════════
+const LIFI_BASE_CHAIN_ID = Number(window.GM_SWAP_BOOT.lifiBaseChainId || 8453);
+const LIFI_BASE_CHAIN_HEX = '0x' + LIFI_BASE_CHAIN_ID.toString(16);
+const LIFI_CELO_CHAIN_HEX = '0xa4ec';
+const LIFI_NATIVE_ETH = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+// Base RPCs used for read-only destination-gas checks (never the wallet
+// provider — a mobile wallet node can lag and would block a valid bridge).
+// Multiple endpoints so one lagging node cannot falsely report "no ETH".
+const LIFI_BASE_READ_RPCS = [
+    'https://mainnet.base.org',
+    'https://base-rpc.publicnode.com',
+    'https://1rpc.io/base',
+];
+const LIFI_BASE_READ_RPC = LIFI_BASE_READ_RPCS[0];
+const LIFI_MIN_DEST_ETH_GAS = 0.0001; // ETH; below this the 2nd step can't pay gas
+
+let _lifiQuote = null;
+let _lifiQuoteTimer = null;
+let _lifiBridgeInFlight = false;
+let _lifiPrewarmed = false;
+
+function showLifiAlert(type, msg) {
+    const el = document.getElementById('lifiBridgeAlert');
+    if (!el) return;
+    el.className = 'alert ' + (type || 'alert-info') + ' show';
+    el.innerHTML = msg;
+}
+function clearLifiAlert() {
+    const el = document.getElementById('lifiBridgeAlert');
+    if (!el) return;
+    el.className = 'alert';
+    el.innerHTML = '';
+}
+
+function _lifiSetStep(step, label) {
+    // step: 1 = on Celo, 2 = on Base, 'done' = finished
+    const dot1 = document.getElementById('lifiStepDot1');
+    const dot2 = document.getElementById('lifiStepDot2');
+    const line = document.getElementById('lifiStepLine');
+    const lbl  = document.getElementById('lifiStepLabel');
+    if (!dot1 || !dot2) return;
+    dot1.classList.toggle('active', step === 1);
+    dot1.classList.toggle('done',   step === 2 || step === 'done');
+    dot2.classList.toggle('active', step === 2);
+    dot2.classList.toggle('done',   step === 'done');
+    if (line) line.classList.toggle('done', step === 2 || step === 'done');
+    if (lbl) lbl.textContent = label || (step === 1 ? 'Step 1 of 2 — confirm on Celo'
+        : step === 2 ? 'Step 2 of 2 — confirm on Base' : 'Done');
+}
+
+function _lifiFmtEth(weiStr) {
+    try { return parseFloat(ethers.formatUnits(BigInt(weiStr), 18)).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' ETH'; }
+    catch (_) { return '—'; }
+}
+
+function _lifiFmtCelo(amountStr) {
+    const n = parseFloat(amountStr);
+    if (!isFinite(n)) return '—';
+    return n.toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' CELO';
+}
+
+async function loadLifiCeloBalance() {
+    const el = document.getElementById('lifiFromBalanceCelo');
+    if (!el || !WALLET_ADDRESS) return;
+    try {
+        const provider = new ethers.JsonRpcProvider(CELO_RPC);
+        const bal = await provider.getBalance(WALLET_ADDRESS);
+        el.textContent = parseFloat(ethers.formatEther(bal)).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' CELO';
+    } catch (_) {
+        el.textContent = '—';
+    }
+}
+
+function setLifiMaxCelo() {
+    const el = document.getElementById('lifiFromBalanceCelo');
+    const input = document.getElementById('lifiAmountCelo');
+    if (!el || !input) return;
+    // Leave a gas reserve so the source tx can still be paid.
+    const bal = parseFloat(String(el.textContent).replace(/[^0-9.]/g, '')) || 0;
+    const usable = Math.max(0, bal - 0.2);
+    input.value = usable > 0 ? String(Math.floor(usable * 10000) / 10000) : '';
+    updateLifiBridgeSummary();
+    scheduleLifiQuote();
+}
+
+function updateLifiBridgeSummary() {
+    const amountEl = document.getElementById('lifiAmountCelo');
+    const sendEl = document.getElementById('lifiSendDisplay');
+    if (sendEl && amountEl) sendEl.textContent = _lifiFmtCelo(amountEl.value);
+    if (!_lifiQuote) return;
+    const recv = document.getElementById('lifiReceiveDisplay');
+    const recvMin = document.getElementById('lifiReceiveMinDisplay');
+    const gas = document.getElementById('lifiGasDisplay');
+    const summary = document.getElementById('lifiRouteSummary');
+    if (recv) recv.textContent = _lifiFmtEth(_lifiQuote.to_amount);
+    if (recvMin) recvMin.textContent = _lifiFmtEth(_lifiQuote.to_amount_min);
+    if (summary) {
+        const tools = (_lifiQuote.steps || []).map(s => s.tool_name).filter(Boolean).join(' + ');
+        summary.textContent = `${_lifiQuote.step_count} step${_lifiQuote.step_count === 1 ? '' : 's'} via ${tools || 'LI.FI'}` +
+            (_lifiQuote.execution_duration ? ` · ~${Math.ceil(_lifiQuote.execution_duration / 60)} min` : '');
+    }
+    if (gas) {
+        const parts = (_lifiQuote.steps || []).flatMap(s => (s.gas_costs || []).map(g => `${g.amount ? parseFloat(ethers.formatUnits(BigInt(g.amount), 18)).toFixed(6) : '?'} ${g.token || ''}`));
+        gas.innerHTML = parts.length ? `Est. gas: ${parts.join(' + ')}` : '';
+    }
+}
+
+function scheduleLifiQuote() {
+    if (_lifiQuoteTimer) clearTimeout(_lifiQuoteTimer);
+    _lifiQuoteTimer = setTimeout(() => { fetchLifiQuote(); }, 450);
+}
+
+async function fetchLifiQuote() {
+    const amountEl = document.getElementById('lifiAmountCelo');
+    const summary = document.getElementById('lifiRouteSummary');
+    if (!amountEl) return;
+    const amount = parseFloat(amountEl.value);
+    if (!isFinite(amount) || amount <= 0) {
+        _lifiQuote = null;
+        if (summary) summary.textContent = 'Enter an amount to see the route.';
+        return;
+    }
+    if (summary) summary.textContent = 'Finding the best route…';
+    let amountWei;
+    try { amountWei = ethers.parseEther(amountEl.value).toString(); }
+    catch (_) { if (summary) summary.textContent = 'Enter a valid amount.'; return; }
+
+    try {
+        const resp = await fetch('/api/bridge/lifi/quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount_wei: amountWei, to_address: WALLET_ADDRESS })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) {
+            _lifiQuote = null;
+            // Surface LI.FI's own reason verbatim — the CELO route is
+            // liquidity-limited ("price impact too high — try a smaller
+            // amount") and that is actionable.
+            if (summary) summary.textContent = data.error || 'No route available for this amount.';
+            return;
+        }
+        _lifiQuote = data.quote;
+        updateLifiBridgeSummary();
+    } catch (err) {
+        _lifiQuote = null;
+        if (summary) summary.textContent = 'Could not fetch a route. Please retry.';
+    }
+}
+
+async function _lifiSwitchChain(provider, chainHex) {
+    // Same pattern as ensureXDCNetwork(): switch, add-then-switch on 4902, and
+    // VERIFY where the wallet landed. An injected wallet that silently does
+    // not switch would send the destination tx on the wrong chain, so a failed
+    // switch must throw here rather than surface as a confusing send error.
+    const want = parseInt(chainHex, 16);
+    try {
+        const cur = await provider.request({ method: 'eth_chainId' }).catch(() => null);
+        if (cur && parseInt(cur, 16) === want) return true;
+    } catch (_) { /* fall through to the switch attempt */ }
+    try {
+        await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainHex }] });
+    } catch (err) {
+        if (err && (err.code === 4902 || err.code === -32603)) {
+            const chainMeta = chainHex === LIFI_BASE_CHAIN_HEX
+                ? { chainId: LIFI_BASE_CHAIN_HEX, chainName: 'Base',
+                    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                    rpcUrls: [LIFI_BASE_READ_RPC], blockExplorerUrls: ['https://basescan.org'] }
+                : { chainId: LIFI_CELO_CHAIN_HEX, chainName: 'Celo Mainnet',
+                    nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
+                    rpcUrls: ['https://forno.celo.org'], blockExplorerUrls: ['https://celoscan.io'] };
+            await provider.request({ method: 'wallet_addEthereumChain', params: [chainMeta] });
+            await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainHex }] });
+        } else {
+            throw err;
+        }
+    }
+    for (let i = 0; i < 5; i++) {
+        const cur = await provider.request({ method: 'eth_chainId' }).catch(() => null);
+        if (cur && parseInt(cur, 16) === want) return true;
+        await _delay(400);
+    }
+    return false;
+}
+
+async function _lifiEnsureAllowance(signer, step) {
+    // Native CELO is exposed as an ERC-20 by LI.FI; the source step pulls it
+    // via transferFrom, so an exact-amount approval to the LI.FI diamond is
+    // required first. Non-ERC20 source tokens (or a missing approval address)
+    // skip this.
+    const token = step.from_token_address;
+    const spender = step.approval_address;
+    if (!token || !spender || token.toLowerCase() === LIFI_NATIVE_ETH.toLowerCase()) return;
+    const amount = BigInt(step.from_amount || '0');
+    if (amount <= 0n) return;
+    const erc20 = new ethers.Contract(token, CELO_TO_XDC_ERC20_ABI, signer);
+    let allowance = 0n;
+    try { allowance = await erc20.allowance(WALLET_ADDRESS, spender); } catch (_) { allowance = 0n; }
+    if (allowance >= amount) return;
+    const approveTx = await erc20.approve(spender, amount);
+    await approveTx.wait();
+}
+
+async function _lifiSendStepTx(signer, step) {
+    // /advanced/routes omits transaction data — fetch it per step.
+    const resp = await fetch('/api/bridge/lifi/step-tx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: step.raw })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.success || !data.transaction_request) {
+        throw new Error(data.error || 'Could not build the transaction.');
+    }
+    const txReq = data.transaction_request;
+    const tx = { to: txReq.to, data: txReq.data, value: txReq.value ? BigInt(txReq.value) : 0n };
+    if (txReq.gasLimit) tx.gasLimit = BigInt(txReq.gasLimit);
+    if (txReq.gasPrice) tx.gasPrice = BigInt(txReq.gasPrice);
+    const sent = await signer.sendTransaction(tx);
+    return sent.hash;
+}
+
+// ── Resume support ────────────────────────────────────────────────────────
+// The Celo leg (step 1) broadcasts and then the tab can close before the Base
+// leg (step 2) is signed. The bridged funds would sit on Base with no in-app
+// way to finish, so the pending leg is persisted and offered as "Finish on
+// Base". The LI.FI route is deterministic for (from,to,amount), so re-fetching
+// the quote yields the same step 2 — no raw step needs to be stored.
+const LIFI_PENDING_KEY = 'gm_lifi_pending_bridge_v1';
+
+function _lifiSavePending(hash1, amountWei) {
+    try {
+        localStorage.setItem(LIFI_PENDING_KEY, JSON.stringify({
+            wallet: WALLET_ADDRESS, hash1: hash1, amountWei: String(amountWei), at: Date.now()
+        }));
+    } catch (_) {}
+}
+
+function _lifiClearPending() {
+    // Runs at the END of a successful bridge — a DOM hiccup here must never
+    // bubble into the caller's catch and report a completed bridge as failed.
+    try { localStorage.removeItem(LIFI_PENDING_KEY); } catch (_) {}
+    try {
+        const b = document.getElementById('btnLifiResume');
+        if (b && b.style) b.style.display = 'none';
+    } catch (_) {}
+}
+
+function _lifiGetPending() {
+    try {
+        const p = JSON.parse(localStorage.getItem(LIFI_PENDING_KEY) || 'null');
+        if (!p || !p.hash1 || !p.wallet) return null;
+        if (String(p.wallet).toLowerCase() !== String(WALLET_ADDRESS).toLowerCase()) return null;
+        if (Date.now() - (p.at || 0) > 7 * 24 * 60 * 60 * 1000) { _lifiClearPending(); return null; }
+        return p;
+    } catch (_) { return null; }
+}
+
+// Shared step-2 executor: switch to Base, fetch step 2's tx, sign it.
+async function _lifiExecuteStep2(signer, provider, step2) {
+    _lifiSetStep(2, 'Step 2 of 2 — confirm on Base');
+    const btn = document.getElementById('btnLifiBridge');
+    if (provider) { try { await _lifiSwitchChain(provider, LIFI_BASE_CHAIN_HEX); } catch (_) {} }
+    if (btn) btn.innerHTML = '<span class="spinner-inline"></span> Confirm on Base (2 of 2)…';
+    showLifiAlert('alert-info', 'Step 2 of 2 — this is the <strong>last</strong> confirmation. Approve it on <strong>Base</strong> to receive your ETH.');
+    const hash2 = await _lifiSendStepTx(signer, step2);
+    showLifiAlert('alert-success',
+        `✅ Bridged! Your ETH is on Base.<br>` +
+        `<a class="info-link" href="https://basescan.org/tx/${hash2}" target="_blank" rel="noopener">View on BaseScan ↗</a>`);
+    _lifiSetStep('done', 'Done');
+    _lifiClearPending();
+    try { loadLifiCeloBalance(); } catch (_) {}
+}
+
+function _lifiShowResumeIfPending() {
+    const b = document.getElementById('btnLifiResume');
+    if (b && b.style) b.style.display = _lifiGetPending() ? '' : 'none';
+}
+
+async function resumeLifiBridge() {
+    const pending = _lifiGetPending();
+    if (!pending) { _lifiClearPending(); return showLifiAlert('alert-error', '❌ Nothing to finish — start a new bridge.'); }
+    const btn = document.getElementById('btnLifiResume');
+    if (btn) btn.disabled = true;
+    try {
+        showLifiAlert('alert-info', 'Checking whether your CELO has arrived on Base…');
+        // The amount input is empty after a reload — restore it from the
+        // pending record, otherwise the quote request has nothing to price and
+        // the resume would fail on a blank field. Never CLEAR the pending
+        // marker here: a transient rebuild failure must stay retryable.
+        const amountEl = document.getElementById('lifiAmountCelo');
+        if (amountEl && !parseFloat(amountEl.value) && pending.amountWei) {
+            try { amountEl.value = ethers.formatEther(pending.amountWei); } catch (_) {}
+        }
+        await fetchLifiQuote();
+        // Only the destination step is left — the Celo leg already broadcast.
+        const step2 = _lifiQuote && _lifiQuote.steps && _lifiQuote.steps[1];
+        if (!step2) {
+            return showLifiAlert('alert-error', '❌ Could not rebuild the destination step right now. Your funds are safe on Base — retry in a moment, or contact support.');
+        }
+        const signer = await getConnectedSwapSigner();
+        const signerAddr = await signer.getAddress();
+        if (signerAddr.toLowerCase() !== WALLET_ADDRESS.toLowerCase()) {
+            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+        }
+        const provider = (signer.provider && typeof signer.provider.request === 'function') ? signer.provider : null;
+        await _lifiExecuteStep2(signer, provider, step2);
+    } catch (err) {
+        const friendly = (window.GMTxError && GMTxError.format)
+            ? GMTxError.format(err, { nativeSymbol: 'CELO' })
+            : (err && (err.shortMessage || err.message) || 'Could not finish the bridge.');
+        showLifiAlert('alert-error', '❌ ' + friendly);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function _lifiPollStatus(txHash, onUpdate) {
+    // Poll until DONE/FAILED. A bridge is not "done" when the source tx
+    // confirms — LI.FI knows when the destination leg has actually landed.
+    const deadline = Date.now() + 15 * 60 * 1000;
+    while (Date.now() < deadline) {
+        try {
+            const resp = await fetch('/api/bridge/lifi/status?tx_hash=' + encodeURIComponent(txHash));
+            const data = await resp.json().catch(() => ({}));
+            if (data.success && data.status) {
+                const s = data.status.status;
+                if (onUpdate) onUpdate(data.status);
+                if (s === 'DONE' || s === 'FAILED') return data.status;
+            }
+        } catch (_) { /* transient */ }
+        await _delay(6000);
+    }
+    return null;
+}
+
+async function executeLifiBridge() {
+    if (_lifiBridgeInFlight) return;
+    clearLifiAlert();
+    const btn = document.getElementById('btnLifiBridge');
+    const amountEl = document.getElementById('lifiAmountCelo');
+    const amount = parseFloat(amountEl && amountEl.value);
+
+    if (!isFinite(amount) || amount <= 0) {
+        return showLifiAlert('alert-error', '❌ Enter a valid CELO amount.');
+    }
+    if (!_lifiQuote) {
+        await fetchLifiQuote();
+    }
+    if (!_lifiQuote || !_lifiQuote.steps || !_lifiQuote.steps.length) {
+        return showLifiAlert('alert-error', '❌ No route available for this amount. Try a smaller amount.');
+    }
+
+    _lifiBridgeInFlight = true;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-inline"></span> Preparing…'; }
+
+    try {
+        // Destination-gas preflight — the 2nd step is signed on Base and needs
+        // ETH there. Stop BEFORE the Celo leg is sent so the user isn't left
+        // with a half-finished bridge.
+        // Try each Base RPC; only a confirmed low balance (a successful read
+        // from ANY node) blocks. An unreadable endpoint is skipped so a single
+        // lagging node cannot falsely stop a valid bridge.
+        let destGasShort = false;
+        let destBalEth = 0;
+        for (const rpc of LIFI_BASE_READ_RPCS) {
+            try {
+                const baseProvider = new ethers.JsonRpcProvider(rpc, LIFI_BASE_CHAIN_ID);
+                const destBal = await baseProvider.getBalance(WALLET_ADDRESS);
+                destBalEth = parseFloat(ethers.formatEther(destBal));
+                if (destBalEth < LIFI_MIN_DEST_ETH_GAS) destGasShort = true;
+                break; // a successful read is authoritative
+            } catch (_) { /* try the next endpoint */ }
+        }
+        if (destGasShort) {
+            throw new Error(`You need a little ETH on Base to pay for the final step's gas. ` +
+                `Your Base wallet has ${destBalEth.toFixed(6)} ETH — ` +
+                `add a small amount of ETH on Base, then retry.`);
+        }
+
+        const signer = await getConnectedSwapSigner();
+        const signerAddr = await signer.getAddress();
+        if (signerAddr.toLowerCase() !== WALLET_ADDRESS.toLowerCase()) {
+            throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet.');
+        }
+        // Step 1 signs on Celo. For the local in-app wallet this switch is a
+        // no-op (its provider routes by the tx chain); for injected/WC it
+        // prompts. The provider is the wallet's, so both work.
+        const provider = (signer.provider && typeof signer.provider.request === 'function')
+            ? signer.provider : null;
+        if (provider) { try { await _lifiSwitchChain(provider, LIFI_CELO_CHAIN_HEX); } catch (_) {} }
+
+        _lifiSetStep(1, 'Step 1 of 2 — confirm on Celo');
+        if (btn) btn.innerHTML = '<span class="spinner-inline"></span> Confirm on Celo (1 of 2)…';
+        showLifiAlert('alert-info', 'Step 1 of 2 — confirm the bridge transaction in your wallet (on Celo).');
+
+        const step1 = _lifiQuote.steps[0];
+        await _lifiEnsureAllowance(signer, step1);
+        const hash1 = await _lifiSendStepTx(signer, step1);
+
+        // Persist the pending Base leg NOW — if the tab closes before step 2
+        // signs, the user gets a "Finish on Base" button instead of stranded
+        // funds. The route's from_amount is the wei the quote was built from.
+        _lifiSavePending(hash1, _lifiQuote.from_amount || '');
+
+        showLifiAlert('alert-info',
+            `✅ Step 1 confirmed on Celo. Now switch your wallet to <strong>Base</strong> to finish.<br>` +
+            `<a class="info-link" href="https://celoscan.io/tx/${hash1}" target="_blank" rel="noopener">View on CeloScan ↗</a>`);
+
+        if (_lifiQuote.steps.length > 1) {
+            if (btn) btn.innerHTML = '<span class="spinner-inline"></span> Waiting for the bridge…';
+
+            // Wait for the bridge to deliver before the destination swap can
+            // execute — LI.FI's status tells us when the funds have arrived.
+            const delivered = await _lifiPollStatus(hash1, (st) => {
+                if (btn && st && st.substatus_message) {
+                    btn.innerHTML = '<span class="spinner-inline"></span> ' + st.substatus_message;
+                }
+            });
+            if (delivered && delivered.status === 'FAILED') {
+                _lifiClearPending();
+                throw new Error('The bridge failed on the way to Base. Your CELO was not swapped. Please retry.');
+            }
+
+            await _lifiExecuteStep2(signer, provider, _lifiQuote.steps[1]);
+        } else {
+            _lifiSetStep('done', 'Done');
+        }
+
+        try { loadLifiCeloBalance(); } catch (_) {}
+    } catch (err) {
+        const friendly = (window.GMTxError && GMTxError.format)
+            ? GMTxError.format(err, { nativeSymbol: 'CELO' })
+            : (err && (err.shortMessage || err.message) || 'Bridge failed.');
+        showLifiAlert('alert-error', '❌ ' + friendly);
+        _lifiSetStep(1, 'Step 1 of 2 — confirm on Celo');
+    } finally {
+        _lifiBridgeInFlight = false;
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Bridge to Base'; }
+    }
+}
+
+function _prewarmLifiBridgeTab() {
+    if (_lifiPrewarmed) return;
+    _lifiPrewarmed = true;
+    try { loadLifiCeloBalance(); } catch (_) {}
+    // Offer to finish a previously-interrupted bridge (see LIFI_PENDING_KEY).
+    try { _lifiShowResumeIfPending(); } catch (_) {}
+}
+window._prewarmLifiBridgeTab = _prewarmLifiBridgeTab;
