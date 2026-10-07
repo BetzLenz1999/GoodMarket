@@ -35,6 +35,9 @@ html = env.get_template("swap.html").render(
     fuse_gd_decimals=2,
     fuse_wfuse_contract="0x0BE9e53fd7EDaC9F859882AfdDa116645287C629",
     voltage_router_contract="0xE3F85aAd0c8DD7337427B9dF5d0fB741d65EEEB5",
+    lifi_bridge_enabled=True,
+    lifi_base_chain_id=8453,
+    lifi_celo_erc20="0x471EcE3750Da237f93B8E339c536989b8978a438",
 )
 
 # 1. all three bundles referenced
