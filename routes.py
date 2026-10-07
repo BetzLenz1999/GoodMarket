@@ -83,6 +83,20 @@ def _is_privy_login_enabled() -> bool:
     return _env_bool("ENABLE_PRIVY_LOGIN", False)
 
 
+def _lifi_bridge_enabled() -> bool:
+    """Feature flag for the LI.FI (Jumper) Celo → Base bridge pane.
+
+    Ships dark by default so the new pane can be enabled per-environment
+    without a code change. Delegates to lifi_bridge so the flag has a single
+    source of truth (the API endpoints check the same helper).
+    """
+    try:
+        import lifi_bridge
+        return lifi_bridge.bridge_enabled()
+    except Exception:
+        return _env_bool("LIFI_BRIDGE_ENABLED", False)
+
+
 def _env_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
     raw = os.getenv(name)
     try:
@@ -7321,6 +7335,7 @@ def claim_availability():
                 "claimable": float(xdc.get("claimable") or 0),
                 "claimable_formatted": f"{float(xdc.get('claimable') or 0):.2f}",
                 "chain_id": 50,
+                "reason": xdc.get("reason"),
                 "error": xdc.get("error"),
             },
         }
@@ -7644,6 +7659,84 @@ def wallet_page():
     )
 
 
+# ── LI.FI (Jumper) bridge — Celo → Base ────────────────────────────────────
+# Native CELO → native ETH on Base. Server-side proxy so the integrator id /
+# API key never reach the browser, and the client only talks to our endpoints.
+# LI.FI details + the verified 2-step route are documented in lifi_bridge.py.
+@routes.route("/api/bridge/lifi/quote", methods=["POST"])
+@auth_required
+def lifi_bridge_quote():
+    """Return a normalized LI.FI route for CELO (Celo) → ETH (Base)."""
+    import lifi_bridge
+
+    if not lifi_bridge.bridge_enabled():
+        return jsonify({"success": False, "error": "Bridge is currently unavailable."}), 503
+
+    data = request.get_json(silent=True) or {}
+    amount_wei = str(data.get("amount_wei") or "").strip()
+    if not amount_wei.isdigit() or int(amount_wei) <= 0:
+        return jsonify({"success": False, "error": "Enter a valid amount."}), 400
+
+    # The destination is always the signed-in wallet — never a client-supplied
+    # address — so a caller can never bridge funds to a third party.
+    wallet = session.get("wallet")
+    to_address = (data.get("to_address") or wallet or "").strip()
+    if to_address.lower() != (wallet or "").lower():
+        return jsonify({"success": False, "error": "Destination must be your own wallet."}), 400
+
+    quote, err = lifi_bridge.get_quote(wallet, to_address, amount_wei, force=bool(data.get("force")))
+    if err or not quote:
+        return jsonify({"success": False, "error": err or "No route available."}), 502
+    return jsonify({"success": True, "quote": quote})
+
+
+@routes.route("/api/bridge/lifi/step-tx", methods=["POST"])
+@auth_required
+def lifi_bridge_step_tx():
+    """Fetch the transactionRequest for one LI.FI route step.
+
+    /advanced/routes omits transaction data, so the client posts the step back
+    here and we relay it to /advanced/stepTransaction. We re-stamp from/to with
+    the session wallet so a tampered step can never redirect funds.
+    """
+    import lifi_bridge
+
+    if not lifi_bridge.bridge_enabled():
+        return jsonify({"success": False, "error": "Bridge is currently unavailable."}), 503
+
+    data = request.get_json(silent=True) or {}
+    step = data.get("step")
+    if not isinstance(step, dict) or not step:
+        return jsonify({"success": False, "error": "Missing route step."}), 400
+
+    wallet = session.get("wallet")
+    action = step.get("action")
+    if isinstance(action, dict):
+        action["fromAddress"] = wallet
+        action["toAddress"] = wallet
+
+    tx, err = lifi_bridge.get_step_transaction(step)
+    if err or not tx:
+        return jsonify({"success": False, "error": err or "Could not build the transaction."}), 502
+    return jsonify({"success": True, "transaction_request": tx})
+
+
+@routes.route("/api/bridge/lifi/status", methods=["GET"])
+@auth_required
+def lifi_bridge_status():
+    """Poll bridge status for a source tx hash."""
+    import lifi_bridge
+
+    tx_hash = (request.args.get("tx_hash") or "").strip()
+    if not tx_hash.startswith("0x") or len(tx_hash) != 66:
+        return jsonify({"success": False, "error": "Invalid transaction hash."}), 400
+
+    status, err = lifi_bridge.get_status(tx_hash, from_chain=lifi_bridge.CELO_CHAIN_ID, to_chain=lifi_bridge.BASE_CHAIN_ID)
+    if err or not status:
+        return jsonify({"success": False, "error": err or "Status unavailable."}), 502
+    return jsonify({"success": True, "status": status})
+
+
 @routes.route("/swap")
 def swap_page():
     """Swap page: DEX (Uniswap V3 on Celo) and GoodReserve (Mento) tabs"""
@@ -7722,6 +7815,12 @@ def swap_page():
         fuse_gd_decimals=fuse_gd_decimals,
         fuse_wfuse_contract=fuse_wfuse_contract,
         voltage_router_contract=voltage_router_contract,
+        # LI.FI (Jumper) bridge — Celo → Base. The pane ships dark unless the
+        # operator flips LIFI_BRIDGE_ENABLED; the client only ever calls our
+        # own /api/bridge/lifi/* proxy (no integrator key in the browser).
+        lifi_bridge_enabled=_lifi_bridge_enabled(),
+        lifi_base_chain_id=get_env_int("BASE_CHAIN_ID", 8453),
+        lifi_celo_erc20=os.getenv("CELO_ERC20_TOKEN", "0x471EcE3750Da237f93B8E339c536989b8978a438"),
     )
 
 
