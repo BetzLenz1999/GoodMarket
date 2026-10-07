@@ -1881,7 +1881,18 @@ function updateLifiBridgeSummary() {
             (_lifiQuote.execution_duration ? ` · ~${Math.ceil(_lifiQuote.execution_duration / 60)} min` : '');
     }
     if (gas) {
-        const parts = (_lifiQuote.steps || []).flatMap(s => (s.gas_costs || []).map(g => `${g.amount ? parseFloat(ethers.formatUnits(BigInt(g.amount), 18)).toFixed(6) : '?'} ${g.token || ''}`));
+        // Label each cost with the chain it is paid on. The destination step's
+        // gas is on Base and (for a self-submitted route) must be paid in ETH —
+        // showing "0.19 CELO + 0.000005 ETH" as one line made users think it was
+        // all CELO. Be explicit about which chain each amount belongs to.
+        const parts = [];
+        for (const [i, s] of (_lifiQuote.steps || []).entries()) {
+            for (const g of (s.gas_costs || [])) {
+                const amt = g.amount ? parseFloat(ethers.formatUnits(BigInt(g.amount), 18)).toFixed(6) : '?';
+                const chain = (s.to_chain_id === LIFI_BASE_CHAIN_ID) ? 'Base' : 'Celo';
+                parts.push(`${amt} ${g.token || ''} (${chain})`);
+            }
+        }
         gas.innerHTML = parts.length ? `Est. gas: ${parts.join(' + ')}` : '';
     }
 }
@@ -2154,9 +2165,9 @@ async function executeLifiBridge() {
             } catch (_) { /* try the next endpoint */ }
         }
         if (destGasShort) {
-            throw new Error(`You need a little ETH on Base to pay for the final step's gas. ` +
-                `Your Base wallet has ${destBalEth.toFixed(6)} ETH — ` +
-                `add a small amount of ETH on Base, then retry.`);
+            throw new Error(`This route finishes with a swap on Base, so it needs a little ETH on Base for that step's gas — ` +
+                `it cannot be paid in CELO. Your Base wallet has ${destBalEth.toFixed(6)} ETH. ` +
+                `Add a small amount of ETH (a few cents) on Base, then retry.`);
         }
 
         const signer = await getConnectedSwapSigner();
