@@ -161,6 +161,52 @@ def build_quote_request(from_address: str, to_address: str, amount_wei: str) -> 
     }
 
 
+def _is_transient_error(err: str | None) -> bool:
+    """True when LI.FI did not give a real verdict (rate limit / network).
+
+    A transient failure must never reject a route: we cannot tell whether the
+    route is buildable, so we fail OPEN and let the user try (the per-step send
+    reports the real error at that point).
+    """
+    if not err:
+        return False
+    low = err.lower()
+    return any(k in low for k in ("rate limit", "too many requests", "could not reach", "timed out", "timeout"))
+
+
+def preflight_route(route: dict):
+    """Build step 0 so we never hand the UI a route that cannot execute.
+
+    Returns (ok, error). `ok` is True when step 0 produced a transactionRequest,
+    OR when LI.FI was transiently unavailable (fail open). It is False only when
+    LI.FI gave a definite simulation failure — which is what surfaced to users
+    as `TransferFromFailed` only AFTER they had already seen a gas estimate.
+    """
+    steps = (route or {}).get("steps") or []
+    if not steps:
+        return False, "This route has no executable step."
+    tx, err = get_step_transaction(steps[0])
+    if tx:
+        return True, None
+    if _is_transient_error(err):
+        # Unknown, not broken — do not block the user on a rate limit.
+        return True, None
+    return False, err or "This route could not be prepared right now."
+
+
+def _friendly_preflight_error(err: str | None) -> str:
+    """Translate LI.FI's internal simulation error into something a user can act on."""
+    raw = (err or "").strip()
+    low = raw.lower()
+    if "transferfromfailed" in low or "transfer_from_failed" in low:
+        return ("The bridge route for native CELO is temporarily unavailable on LI.FI's side "
+                "(its own simulation of the transfer fails). Please try again later, or bridge a "
+                "stablecoin / use Jumper directly meanwhile.")
+    if "insufficient" in low and "balance" in low:
+        return "You do not have enough CELO for this amount plus gas."
+    return raw or "This route could not be prepared right now. Please try again."
+
+
 def get_quote(from_address: str, to_address: str, amount_wei: str, force: bool = False):
     """Return (quote, error). `quote` is a normalized dict the frontend renders."""
     cache_key = f"{from_address.lower()}:{(to_address or from_address).lower()}:{amount_wei}"
@@ -186,8 +232,23 @@ def get_quote(from_address: str, to_address: str, amount_wei: str, force: bool =
         reason = _first_route_reason(data) or "No bridge route is available for this amount right now."
         return None, reason
 
-    route = routes[0]
-    normalized = normalize_route(route)
+    # Pre-build the first step before showing anything. /advanced/routes can
+    # return a route whose calldata fails LI.FI's own simulation (native-CELO
+    # source is a known case); without this the user only finds out after
+    # tapping Bridge, having already seen a gas estimate. Try each candidate so
+    # one broken route does not hide a working alternative.
+    chosen = None
+    reason = None
+    for candidate in routes:
+        ok, pre_err = preflight_route(candidate)
+        if ok:
+            chosen = candidate
+            break
+        reason = pre_err
+    if chosen is None:
+        return None, _friendly_preflight_error(reason)
+
+    normalized = normalize_route(chosen)
     with _quote_cache_lock:
         _quote_cache[cache_key] = {"quote": normalized, "expires": now + _QUOTE_CACHE_TTL}
     return normalized, None
