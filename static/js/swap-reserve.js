@@ -87,6 +87,8 @@ const RESERVE_SLIPPAGE_BPS = 50n; // 0.5% safety margin between quote and tx
             bridgeDir = "xdc_to_celo";
         } else if (dirRaw === "celo_to_xdc" || dirRaw === "celo-to-xdc" || dirRaw === "celotoxdc") {
             bridgeDir = "celo_to_xdc";
+        } else if (dirRaw === "celo_to_base" || dirRaw === "celo-to-base" || dirRaw === "celotobase") {
+            bridgeDir = "celo_to_base";
         }
 
         if (!target && !goodswapPane && !bridgeDir) return;
@@ -255,14 +257,27 @@ window._checkReservePaused = _checkReservePaused;
 // moment the user clicks the Bridge button, matching today's
 // behavior on both /swap and /xdc-wallet.
 function setBridgeSubTab(name) {
-    const activeName  = name === "xdc_to_celo" ? "xdc_to_celo" : "celo_to_xdc";
-    const isXdcToCelo = activeName === "xdc_to_celo";
+    // Only one of the three directions is active at a time. "celo_to_base"
+    // (LI.FI / Jumper) is optional — its button/pane exist only when the
+    // operator enabled the feature, so fall back to celo_to_xdc if absent.
+    const baseBtn  = document.getElementById("bridgeSubBtnCeloToBase");
+    const basePane = document.getElementById("bridgeSubPaneCeloToBase");
+    let activeName = name;
+    if (activeName === "xdc_to_celo" && !document.getElementById("bridgeSubPaneXdcToCelo")) {
+        activeName = "celo_to_xdc";
+    }
+    if (activeName === "celo_to_base" && !basePane) {
+        activeName = "celo_to_xdc";
+    }
+    const isXdcToCelo  = activeName === "xdc_to_celo";
+    const isCeloToBase = activeName === "celo_to_base";
     const celoPane    = document.getElementById("bridgeSubPaneCeloToXdc");
     const xdcPane     = document.getElementById("bridgeSubPaneXdcToCelo");
     const celoBtn     = document.getElementById("bridgeSubBtnCeloToXdc");
     const xdcBtn      = document.getElementById("bridgeSubBtnXdcToCelo");
     if (celoPane) celoPane.classList.toggle("hidden-tab",  activeName !== "celo_to_xdc");
     if (xdcPane)  xdcPane.classList.toggle("hidden-tab",   activeName !== "xdc_to_celo");
+    if (basePane) basePane.classList.toggle("hidden-tab",  !isCeloToBase);
     if (celoBtn) {
         celoBtn.classList.toggle("active", activeName === "celo_to_xdc");
         celoBtn.setAttribute("aria-selected", String(activeName === "celo_to_xdc"));
@@ -270,6 +285,10 @@ function setBridgeSubTab(name) {
     if (xdcBtn) {
         xdcBtn.classList.toggle("active", isXdcToCelo);
         xdcBtn.setAttribute("aria-selected", String(isXdcToCelo));
+    }
+    if (baseBtn) {
+        baseBtn.classList.toggle("active", isCeloToBase);
+        baseBtn.setAttribute("aria-selected", String(isCeloToBase));
     }
     if (isXdcToCelo) {
         // Pre-warm balances + fee estimate + wallet provider ONLY now that
@@ -280,6 +299,13 @@ function setBridgeSubTab(name) {
         } else {
             if (typeof loadXdcGdBalance === "function") loadXdcGdBalance();
             if (typeof loadXdcNativeBalance === "function") loadXdcNativeBalance();
+        }
+    } else if (isCeloToBase) {
+        // Cross-bundle: this function lives in swap-reserve.js, the LI.FI
+        // helpers in swap-bridge.js (loaded AFTER). Guard the call — a missing
+        // bundle must not throw and abort the tab switch.
+        if (typeof window._prewarmLifiBridgeTab === "function") {
+            window._prewarmLifiBridgeTab();
         }
     } else {
         if (typeof updateCeloBridgeBalanceDisplay === "function") updateCeloBridgeBalanceDisplay();
