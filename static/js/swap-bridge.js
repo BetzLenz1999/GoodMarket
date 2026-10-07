@@ -1796,6 +1796,7 @@ const LIFI_BASE_READ_RPC = LIFI_BASE_READ_RPCS[0];
 const LIFI_MIN_DEST_ETH_GAS = 0.0001; // ETH; below this the 2nd step can't pay gas
 
 let _lifiQuote = null;
+let _lifiQuoteError = null;
 let _lifiQuoteTimer = null;
 let _lifiBridgeInFlight = false;
 let _lifiPrewarmed = false;
@@ -1913,6 +1914,7 @@ async function fetchLifiQuote() {
         return;
     }
     if (summary) summary.textContent = 'Finding the best route…';
+    _lifiQuoteError = null;
     let amountWei;
     try { amountWei = ethers.parseEther(amountEl.value).toString(); }
     catch (_) { if (summary) summary.textContent = 'Enter a valid amount.'; return; }
@@ -1926,17 +1928,20 @@ async function fetchLifiQuote() {
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || !data.success) {
             _lifiQuote = null;
-            // Surface LI.FI's own reason verbatim — the CELO route is
-            // liquidity-limited ("price impact too high — try a smaller
-            // amount") and that is actionable.
-            if (summary) summary.textContent = data.error || 'No route available for this amount.';
+            // Surface LI.FI's own reason verbatim — it is actionable, whether
+            // that is "price impact too high — try a smaller amount", a
+            // rate limit, or a route that cannot build. Keep it so the Bridge
+            // button reports the REAL cause instead of a generic guess.
+            _lifiQuoteError = data.error || 'No route available for this amount.';
+            if (summary) summary.textContent = _lifiQuoteError;
             return;
         }
         _lifiQuote = data.quote;
         updateLifiBridgeSummary();
     } catch (err) {
         _lifiQuote = null;
-        if (summary) summary.textContent = 'Could not fetch a route. Please retry.';
+        _lifiQuoteError = 'Could not fetch a route. Please retry.';
+        if (summary) summary.textContent = _lifiQuoteError;
     }
 }
 
@@ -2140,7 +2145,8 @@ async function executeLifiBridge() {
         await fetchLifiQuote();
     }
     if (!_lifiQuote || !_lifiQuote.steps || !_lifiQuote.steps.length) {
-        return showLifiAlert('alert-error', '❌ No route available for this amount. Try a smaller amount.');
+        const reason = _lifiQuoteError || 'No route available for this amount. Try a smaller amount.';
+        return showLifiAlert('alert-error', '❌ ' + reason);
     }
 
     _lifiBridgeInFlight = true;
