@@ -44,6 +44,9 @@ def main():
         # the live app hides the agent by default and the room while OFF.
         goodmarket_agent_visible=True,
         chatroom_visible=True,
+        # Rendered ON so the connect-dApp surfaces can be inspected; the live
+        # app keeps dapp_connect_feature hidden by default.
+        dapp_connect_visible=True,
     )
     out = os.path.join(OUT, "wallet.html")
     with open(out, "w", encoding="utf-8") as fh:
