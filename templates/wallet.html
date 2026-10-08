@@ -2308,6 +2308,7 @@
         .fv-deverify-btn:focus-visible { outline-color: #b91c1c; }
         .fv-deverify-note { background: rgba(22,163,74,0.08); border-color: rgba(22,163,74,0.34); color: #15803d; }
 
+
     </style>
 </head>
 <body>
@@ -2353,6 +2354,19 @@
         <div class="jcb-copy">Connect with fellow G$ earners in our Telegram discussion group — community updates, tips, and support.</div>
         <button type="button" id="joinCommunityJoinBtn" class="jcb-btn" onclick="joinGoodMarketCommunity()">✈️ Join GoodMarket Community</button>
     </div>
+
+    {% if dapp_connect_visible %}
+    <!-- ── Connected-dApp status strip ──
+         A live WalletConnect session from an external dApp is security-relevant,
+         so it is always visible (and revocable) without opening a sheet. Starts
+         hidden; GMDappConnect.refreshStatusStrip() reveals it when ≥1 session is
+         active. -->
+    <div id="dappConnectStrip" class="dapp-strip" role="region" aria-label="Connected dApps">
+        <span id="dappStripLabel" class="dapp-strip-label"></span>
+        <button type="button" class="dapp-strip-btn" onclick="GMDappConnect.open()">Manage</button>
+    </div>
+    <div id="dappToast" role="status" aria-live="polite"></div>
+    {% endif %}
 
     <!-- ── XDC wallet-RPC repair (proactive) ──
          Shown only when the user's injected wallet is ALREADY on XDC and its
@@ -3547,6 +3561,59 @@
             </div>
         </div>
     </div>
+
+    {% if dapp_connect_visible %}
+    <!-- ── Connect a dApp (WalletConnect wallet role) — Phase 1 ──
+         Local-login users paste a WalletConnect link copied from an external
+         dApp and sign for it from inside GoodMarket. DOM-ordered after every
+         other modal so it stacks above them; #lwUnlockModal keeps its higher
+         z-index so the PIN prompt still stacks over the approval sheet. -->
+    <div class="modal-overlay" id="dappConnectModal" role="dialog" aria-modal="true" aria-labelledby="dappConnectTitle">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title" id="dappConnectTitle">🔗 Connect a dApp</div>
+
+            <div class="dapp-hint">
+                Open the dApp you want to use, choose <strong>WalletConnect</strong>, then
+                <strong>copy its link</strong> (a <code>wc:</code> URL) and paste it below.
+                Your GoodMarket wallet stays in control — you approve every action individually.
+            </div>
+
+            <label class="dapp-label" for="dappUriInput">WalletConnect link</label>
+            <textarea id="dappUriInput" class="dapp-uri-input" rows="3"
+                      placeholder="wc:…@2?relay-protocol=irn&symKey=…" spellcheck="false" autocomplete="off"></textarea>
+            <div class="dapp-actions">
+                <button type="button" id="dappConnectBtn" class="btn-primary" onclick="GMDappConnect.connectFromLink(document.getElementById('dappUriInput').value)">Connect</button>
+                <button type="button" class="btn-secondary" onclick="GMDappConnect.close()">Close</button>
+            </div>
+
+            <div id="dappConnectStatus" class="dapp-status" style="display:none;"></div>
+
+            <div id="dappProposalBox" class="dapp-proposal"></div>
+            <div id="dappProposalActions" class="dapp-actions" style="display:none;">
+                <button type="button" id="dappApproveBtn" class="btn-primary" onclick="GMDappConnect.approveProposal()">Approve connection</button>
+                <button type="button" id="dappRejectBtn" class="btn-secondary" onclick="GMDappConnect.rejectProposal()">Decline</button>
+            </div>
+
+            <div class="dapp-divider">Connected dApps</div>
+            <div id="dappSessionList" class="dapp-session-list"></div>
+        </div>
+    </div>
+
+    <!-- Per-request approval sheet (rendered when a connected dApp asks to sign). -->
+    <div class="modal-overlay" id="dappRequestModal" role="dialog" aria-modal="true" aria-labelledby="dappRequestTitle">
+        <div class="modal-sheet">
+            <div class="modal-handle"></div>
+            <div class="modal-title" id="dappRequestTitle">✍️ Sign request</div>
+            <div id="dappRequestBody" class="dapp-proposal"></div>
+            <div class="dapp-actions">
+                <button type="button" id="dappApproveReqBtn" class="btn-primary" onclick="GMDappConnect.approveRequest()">Approve &amp; Sign</button>
+                <button type="button" class="btn-secondary" onclick="GMDappConnect.rejectRequest()">Decline</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- lz-string for GoodDollar FV link generation -->
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"
             integrity="sha384-0d+Gr7vM4Drod8E3hXKgciWJSWbjD/opKLLygI9ktiWbuvlDwQLzU46wJ9s5gsp7"
@@ -3556,6 +3623,15 @@
     <!-- Shared WalletConnect bridge (claim / send / FV signing fallback for WC users). -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+    {% if dapp_connect_visible %}
+    <!-- Connect a dApp (WalletConnect wallet role) — styles live in their own
+         static file so wallet.html stays inside its size budget. Included only
+         when dapp_connect_feature is ON. -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='js/dapp-connect.css', v=ASSET_VERSION) }}">
+    <!-- Connect a dApp logic. Loaded after local-wallet.js so
+         GMLocalWallet.getProvider() is available for signing. -->
+    <script src="{{ url_for('static', filename='js/dapp-connect.js', v=ASSET_VERSION) }}"></script>
+    {% endif %}
     <!--
         MiniPay gas top-up: detect users with CELO but no stablecoin and
         auto-prompt a CELO -> cUSD swap before tx-bound actions (claim, etc.)
@@ -3809,6 +3885,12 @@
                 <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#f97316,#ef4444);color:#fff;">📱</div>
                 <div class="bn-sheet-name">Mobile Top-Up</div>
             </div>
+            {% if dapp_connect_visible %}
+            <div class="bn-sheet-item" onclick="bnGo(function(){ GMDappConnect.open(); })">
+                <div class="bn-sheet-circle" style="background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff;">🔗</div>
+                <div class="bn-sheet-name">Connect dApp</div>
+            </div>
+            {% endif %}
         </div>
     </div>
 
