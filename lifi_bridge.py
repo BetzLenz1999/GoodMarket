@@ -1,6 +1,10 @@
 """LI.FI (Jumper) cross-chain bridge — server-side helper.
 
-Phase 1 scope: bridge **native CELO (Celo) → native ETH (Base)**.
+Phase 1 scope: bridge **Celo → native ETH (Base)**, from a selectable Celo
+source token (native CELO / USDC / USDT / cUSD). Native CELO is the default,
+but LI.FI's own step-0 simulation currently reverts `TransferFromFailed` for a
+native-CELO source, so the ERC-20 stablecoins are the working fallback (USDC /
+USDT route in a single step). See docs/JUMPER_LIFI_CELO_SOURCE_FIX_PLAN.md.
 
 Why a server-side proxy instead of calling LI.FI from the browser:
   * the integrator id / optional API key never ship to the client,
@@ -48,6 +52,42 @@ BASE_CHAIN_ID = get_env_int("BASE_CHAIN_ID", 8453)
 NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
 # Celo's native CELO is exposed by LI.FI as this ERC-20 (NOT 0xeeee).
 CELO_ERC20 = os.getenv("CELO_ERC20_TOKEN", "0x471EcE3750Da237f93B8E339c536989b8978a438")
+
+# ── Source tokens on Celo ───────────────────────────────────────────────────
+# A native-CELO source is broken on LI.FI's side (its own step-0 simulation
+# reverts TransferFromFailed — verified live 2026-10-07), while the ERC-20
+# stablecoins build cleanly. USDC/USDT route Celo→Base in a SINGLE step (one
+# signature); cUSD routes in two. See
+# docs/JUMPER_LIFI_CELO_SOURCE_FIX_PLAN.md for the live evidence.
+CELO_USDC = os.getenv("LIFI_CELO_USDC_TOKEN", "0xcebA9300f2b948710d2653dD7B07f33A8B32118C")
+CELO_USDT = os.getenv("LIFI_CELO_USDT_TOKEN", "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e")
+CELO_CUSD = os.getenv("LIFI_CELO_CUSD_TOKEN", "0x765DE816845861e75A25fCA122bb6898B8B1282a")
+
+SOURCE_TOKENS = {
+    "CELO": {"address": CELO_ERC20, "decimals": 18, "symbol": "CELO", "native": True},
+    "USDC": {"address": CELO_USDC, "decimals": 6, "symbol": "USDC", "native": False},
+    "USDT": {"address": CELO_USDT, "decimals": 6, "symbol": "USDT", "native": False},
+    "cUSD": {"address": CELO_CUSD, "decimals": 18, "symbol": "cUSD", "native": False},
+}
+DEFAULT_SOURCE_TOKEN = "CELO"
+
+
+def resolve_source_token(key: str | None):
+    """Return (token_dict, canonical_key) for a source token key, else (None, None).
+
+    Lookup is case-insensitive so a client can send `usdc` or `USDC`.
+    """
+    wanted = (key or DEFAULT_SOURCE_TOKEN).strip().lower()
+    for name, token in SOURCE_TOKENS.items():
+        if name.lower() == wanted:
+            return token, name
+    return None, None
+
+
+def source_token_list() -> list:
+    """Serializable source-token list for the UI (no secrets, no RPC)."""
+    return [{"key": name, **token} for name, token in SOURCE_TOKENS.items()]
+
 
 # Optional integrator fee (fraction, e.g. 0.003 = 0.3%). Default 0 = disabled.
 # NOTE: LI.FI rejects any non-zero fee until the integrator is configured at
@@ -132,13 +172,21 @@ def _get_json(path: str, params: dict):
         return None, "Could not reach the bridge service. Please try again."
 
 
-def build_quote_request(from_address: str, to_address: str, amount_wei: str) -> dict:
-    """Build the POST /advanced/routes body for native CELO → native ETH (Base).
+def build_quote_request(from_address: str, to_address: str, amount_wei: str,
+                        from_token: str = DEFAULT_SOURCE_TOKEN) -> dict:
+    """Build the POST /advanced/routes body for Celo → native ETH (Base).
 
-    `allowSwitchChain` is what unlocks the 2-step route; without it LI.FI
-    filters every candidate out (verified). `allowDestinationCall` lets the
-    second (Base) step be a swap into native ETH.
+    `from_token` selects the Celo source asset (CELO / USDC / USDT / cUSD). The
+    default is native CELO; an ERC-20 stablecoin source builds a working route
+    while a native-CELO source does not (LI.FI-side simulation failure).
+
+    `allowSwitchChain` is what unlocks a destination-signature route; without it
+    LI.FI filters every candidate out (verified). `allowDestinationCall` lets
+    the destination (Base) step be a swap into native ETH.
     """
+    token, _ = resolve_source_token(from_token)
+    if token is None:
+        token = SOURCE_TOKENS[DEFAULT_SOURCE_TOKEN]
     options = {
         "integrator": LI_FI_INTEGRATOR,
         "allowSwitchChain": True,
@@ -152,7 +200,7 @@ def build_quote_request(from_address: str, to_address: str, amount_wei: str) -> 
     return {
         "fromChainId": CELO_CHAIN_ID,
         "toChainId": BASE_CHAIN_ID,
-        "fromTokenAddress": CELO_ERC20,
+        "fromTokenAddress": token["address"],
         "toTokenAddress": NATIVE_TOKEN,
         "fromAmount": str(amount_wei),
         "fromAddress": from_address,
@@ -194,6 +242,27 @@ def preflight_route(route: dict):
     return False, err or "This route could not be prepared right now."
 
 
+# Structured error codes the frontend keys off (never string-match the copy).
+ERROR_NATIVE_CELO_UNAVAILABLE = "native_celo_unavailable"
+ERROR_INSUFFICIENT_BALANCE = "insufficient_balance"
+ERROR_ROUTE_UNAVAILABLE = "route_unavailable"
+
+
+def _preflight_error_code(err: str | None, from_token: str | None = None) -> str:
+    """Classify a preflight failure so the UI can offer the right fallback."""
+    raw = (err or "").strip().lower()
+    if "transferfromfailed" in raw or "transfer_from_failed" in raw:
+        # The native-CELO source is the one LI.FI cannot simulate. An ERC-20
+        # source that also hits TransferFromFailed is usually a missing
+        # allowance, so only label it "native" when native was requested.
+        if (from_token or DEFAULT_SOURCE_TOKEN).upper() == "CELO":
+            return ERROR_NATIVE_CELO_UNAVAILABLE
+        return ERROR_INSUFFICIENT_BALANCE
+    if "insufficient" in raw and "balance" in raw:
+        return ERROR_INSUFFICIENT_BALANCE
+    return ERROR_ROUTE_UNAVAILABLE
+
+
 def _friendly_preflight_error(err: str | None) -> str:
     """Translate LI.FI's internal simulation error into something a user can act on."""
     raw = (err or "").strip()
@@ -207,22 +276,69 @@ def _friendly_preflight_error(err: str | None) -> str:
     return raw or "This route could not be prepared right now. Please try again."
 
 
-def get_quote(from_address: str, to_address: str, amount_wei: str, force: bool = False):
-    """Return (quote, error). `quote` is a normalized dict the frontend renders."""
-    cache_key = f"{from_address.lower()}:{(to_address or from_address).lower()}:{amount_wei}"
+def diagnostics() -> dict:
+    """Safe config snapshot for troubleshooting. NEVER returns the API key.
+
+    Distinguishes "my env var did not load" from "LI.FI is failing" — the two
+    look identical from the UI otherwise.
+    """
+    key = LI_FI_API_KEY or ""
+    return {
+        "enabled": bridge_enabled(),
+        "api_key_configured": bool(key),
+        "api_key_length": len(key),
+        "api_key_prefix": (key[:6] + "…") if key else "",
+        "base_url": LI_FI_BASE_URL,
+        "integrator": LI_FI_INTEGRATOR,
+        "fee": LI_FI_FEE,
+        "from_chain_id": CELO_CHAIN_ID,
+        "to_chain_id": BASE_CHAIN_ID,
+        "from_token": CELO_ERC20,
+        "to_token": NATIVE_TOKEN,
+        "source_tokens": source_token_list(),
+    }
+
+
+def probe_source_token(from_address: str, from_token: str, amount_wei: str = "1000000000000000000") -> str:
+    """Human-readable preflight result for ONE source token.
+
+    Used by the diagnostics endpoint so an operator can see, per token, whether
+    LI.FI will actually build the route (native CELO currently does not).
+    """
+    quote, err, code = get_quote_ex(from_address, from_address, amount_wei, force=True, from_token=from_token)
+    if quote:
+        tools = [s.get("tool_name") or s.get("tool") for s in (quote.get("steps") or [])]
+        return f"OK — {len(quote.get('steps') or [])} step(s) via {' + '.join([t for t in tools if t])}"
+    return f"no quote [{code}] — {err}"
+
+
+def get_quote_ex(from_address: str, to_address: str, amount_wei: str, force: bool = False,
+                 from_token: str = DEFAULT_SOURCE_TOKEN):
+    """Return (quote, error, error_code).
+
+    `error_code` is one of the ERROR_* constants (or None) so the frontend can
+    offer a fallback without string-matching the user-facing copy.
+    """
+    token, canonical = resolve_source_token(from_token)
+    if token is None:
+        return None, "Unsupported source token.", ERROR_ROUTE_UNAVAILABLE
+    cache_key = (
+        f"{from_address.lower()}:{(to_address or from_address).lower()}:"
+        f"{amount_wei}:{canonical}"
+    )
     now = time.time()
     if not force:
         with _quote_cache_lock:
             hit = _quote_cache.get(cache_key)
             if hit and hit["expires"] > now:
-                return hit["quote"], None
+                return hit["quote"], None, None
 
-    body = build_quote_request(from_address, to_address, amount_wei)
+    body = build_quote_request(from_address, to_address, amount_wei, from_token=canonical)
     data, err = _post_json("/advanced/routes", body)
     if err and not (data and data.get("routes")):
-        return None, err
+        return None, err, ERROR_ROUTE_UNAVAILABLE
     if not data:
-        return None, err or "No route available."
+        return None, err or "No route available.", ERROR_ROUTE_UNAVAILABLE
 
     routes = data.get("routes") or []
     if not routes:
@@ -230,7 +346,7 @@ def get_quote(from_address: str, to_address: str, amount_wei: str, force: bool =
         # limited and "price impact too high" is actionable ("try a smaller
         # amount"), unlike a generic failure.
         reason = _first_route_reason(data) or "No bridge route is available for this amount right now."
-        return None, reason
+        return None, reason, ERROR_ROUTE_UNAVAILABLE
 
     # Pre-build the first step before showing anything. /advanced/routes can
     # return a route whose calldata fails LI.FI's own simulation (native-CELO
@@ -246,12 +362,20 @@ def get_quote(from_address: str, to_address: str, amount_wei: str, force: bool =
             break
         reason = pre_err
     if chosen is None:
-        return None, _friendly_preflight_error(reason)
+        return None, _friendly_preflight_error(reason), _preflight_error_code(reason, canonical)
 
     normalized = normalize_route(chosen)
+    normalized["from_token_key"] = canonical
     with _quote_cache_lock:
         _quote_cache[cache_key] = {"quote": normalized, "expires": now + _QUOTE_CACHE_TTL}
-    return normalized, None
+    return normalized, None, None
+
+
+def get_quote(from_address: str, to_address: str, amount_wei: str, force: bool = False,
+              from_token: str = DEFAULT_SOURCE_TOKEN):
+    """Back-compat wrapper around get_quote_ex — returns (quote, error)."""
+    quote, err, _code = get_quote_ex(from_address, to_address, amount_wei, force=force, from_token=from_token)
+    return quote, err
 
 
 def _first_route_reason(data: dict) -> str:
