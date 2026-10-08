@@ -7677,6 +7677,13 @@ def lifi_bridge_quote():
     if not amount_wei.isdigit() or int(amount_wei) <= 0:
         return jsonify({"success": False, "error": "Enter a valid amount."}), 400
 
+    # Source token is an allowlist key (CELO / USDC / USDT / cUSD) — never a
+    # free-form address, which could be pointed at an arbitrary contract.
+    from_token = (data.get("from_token") or lifi_bridge.DEFAULT_SOURCE_TOKEN).strip()
+    token, canonical = lifi_bridge.resolve_source_token(from_token)
+    if token is None:
+        return jsonify({"success": False, "error": "Unsupported source token."}), 400
+
     # The destination is always the signed-in wallet — never a client-supplied
     # address — so a caller can never bridge funds to a third party.
     wallet = session.get("wallet")
@@ -7684,9 +7691,14 @@ def lifi_bridge_quote():
     if to_address.lower() != (wallet or "").lower():
         return jsonify({"success": False, "error": "Destination must be your own wallet."}), 400
 
-    quote, err = lifi_bridge.get_quote(wallet, to_address, amount_wei, force=bool(data.get("force")))
+    quote, err, code = lifi_bridge.get_quote_ex(
+        wallet, to_address, amount_wei, force=bool(data.get("force")), from_token=canonical,
+    )
     if err or not quote:
-        return jsonify({"success": False, "error": err or "No route available."}), 502
+        payload = {"success": False, "error": err or "No route available."}
+        if code:
+            payload["error_code"] = code
+        return jsonify(payload), 502
     return jsonify({"success": True, "quote": quote})
 
 
@@ -7735,6 +7747,34 @@ def lifi_bridge_status():
     if err or not status:
         return jsonify({"success": False, "error": err or "Status unavailable."}), 502
     return jsonify({"success": True, "status": status})
+
+
+@routes.route("/api/bridge/lifi/diagnostics", methods=["GET"])
+@auth_required
+def lifi_bridge_diagnostics():
+    """Config snapshot + a LIVE route probe. Never returns the API key.
+
+    Lets an operator tell "my LI_FI_API_KEY did not load" apart from "LI.FI's
+    route is failing" without shell access to the server.
+    """
+    import lifi_bridge
+
+    info = lifi_bridge.diagnostics()
+    wallet = session.get("wallet") or ""
+    info["probe"] = "skipped (no wallet in session)"
+    info["token_probes"] = {}
+    if wallet:
+        # Probe EVERY source token: native CELO currently fails LI.FI's own
+        # simulation while the stablecoins build, and an operator needs to see
+        # exactly which sources work without shell access.
+        for entry in lifi_bridge.source_token_list():
+            key = entry["key"]
+            try:
+                info["token_probes"][key] = lifi_bridge.probe_source_token(wallet, key)
+            except Exception as exc:  # never 500 a diagnostic
+                info["token_probes"][key] = f"probe error: {exc}"
+        info["probe"] = info["token_probes"].get(lifi_bridge.DEFAULT_SOURCE_TOKEN, "no probe")
+    return jsonify({"success": True, "diagnostics": info})
 
 
 @routes.route("/swap")
@@ -7821,7 +7861,20 @@ def swap_page():
         lifi_bridge_enabled=_lifi_bridge_enabled(),
         lifi_base_chain_id=get_env_int("BASE_CHAIN_ID", 8453),
         lifi_celo_erc20=os.getenv("CELO_ERC20_TOKEN", "0x471EcE3750Da237f93B8E339c536989b8978a438"),
+        lifi_source_tokens=_lifi_source_tokens(),
     )
+
+
+def _lifi_source_tokens():
+    """Source-token registry for the Celo → Base pane (CELO/USDC/USDT/cUSD).
+
+    Imported lazily so routes.py keeps importing when lifi_bridge is absent.
+    """
+    try:
+        import lifi_bridge
+        return lifi_bridge.source_token_list()
+    except Exception:
+        return []
 
 
 # ── GoodReserve (Mento) constants on Celo mainnet ��─────────────────────────
