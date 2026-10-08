@@ -1470,6 +1470,35 @@ def prepare_usdt_transfer_data(to_address: str, amount_usdt: float) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def prepare_usdc_transfer_data(to_address: str, amount_usdc: float) -> dict:
+    """
+    Return the ABI-encoded calldata for a USDC ERC-20 transfer(address,uint256) call.
+    USDC on Celo uses 6 decimals (same as USDT).
+    """
+    try:
+        from web3 import Web3
+        from eth_abi import encode as abi_encode
+        token_addr = Web3.to_checksum_address(USDC_CONTRACT)
+        to_checksum = Web3.to_checksum_address(to_address)
+        amount_raw = int(amount_usdc * (10 ** 6))
+        selector = Web3.keccak(text="transfer(address,uint256)")[:4]
+        encoded_args = abi_encode(["address", "uint256"], [to_checksum, amount_raw])
+        data = "0x" + (selector + encoded_args).hex()
+        return {
+            "success": True,
+            "to": token_addr,
+            "data": data,
+            "value": "0x0",
+            "chain_id": CELO_CHAIN_ID,
+            "token": "USDC",
+            "recipient": to_checksum,
+            "amount": amount_usdc,
+        }
+    except Exception as e:
+        logger.error(f"prepare_usdc_transfer_data error: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def prepare_cusd_transfer_data(to_address: str, amount_cusd: float) -> dict:
     """
     Return the ABI-encoded calldata for a cUSD ERC-20 transfer(address,uint256) call.
@@ -2068,12 +2097,16 @@ def _build_xdc_rpc_urls() -> list:
     if env_multi:
         urls.extend(u.strip() for u in env_multi.split(",") if u.strip())
     # Public mainnet endpoints verified to respond (chainId 0x32).
+    # NOTE: https://rpc.xdc.org returns HTTP 502 (dead) and MUST NOT be listed
+    # — a wallet that adopts our rpcUrls list would then fail its own balance
+    # read, which MetaMask surfaces as a red "Insufficient funds" fee row plus
+    # a blocking "Review alerts" button on the XDC claim.
     urls.extend([
         "https://earpc.xinfin.network",
         "https://rpc.ankr.com/xdc",
         "https://erpc.xdcrpc.com",
         "https://rpc.xdcrpc.com",
-        "https://rpc.xdc.org",
+        "https://rpc.xinfin.network",
     ])
     seen = set()
     deduped = []
@@ -2723,11 +2756,30 @@ def check_xdc_ubi_entitlement(wallet_address: str) -> dict:
         except Exception:
             raw = contract.functions.checkEntitlement().call({'from': checksum})
         claimable = raw / (10 ** XDC_GD_DECIMALS)
+        can_claim = claimable > 0
+        reason = None
+        if not can_claim:
+            # Distinguish "not verified" from "already claimed today" so the
+            # frontend can explain the block instead of opening a wallet that
+            # would only show a red "Network fee unavailable" + security alert
+            # on a claim() that reverts.
+            try:
+                id_addr = Web3.to_checksum_address(XDC_IDENTITY)
+                id_abi = [{"inputs": [{"name": "_user", "type": "address"}], "name": "isWhitelisted",
+                           "outputs": [{"name": "", "type": "bool"}], "stateMutability": "view", "type": "function"}]
+                id_contract = w3.eth.contract(address=id_addr, abi=id_abi)
+                if not id_contract.functions.isWhitelisted(checksum).call():
+                    reason = "This wallet is not yet face-verified on XDC, so there is no UBI to claim here. Complete Face Verification first."
+                else:
+                    reason = "No XDC UBI is available for this wallet right now — you may have already claimed today. Come back tomorrow."
+            except Exception:
+                reason = "No XDC UBI is available for this wallet right now. You may have already claimed today — come back tomorrow."
         return {
             "success": True,
             "claimable": float(claimable),
             "claimable_raw": str(raw),
-            "can_claim": claimable > 0,
+            "can_claim": can_claim,
+            "reason": reason,
             "network": "xdc",
         }
     except Exception as e:
