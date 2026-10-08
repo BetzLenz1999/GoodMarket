@@ -8521,6 +8521,10 @@ def wallet_prepare_send():
             from blockchain import prepare_usdt_transfer_data
             result = prepare_usdt_transfer_data(to_address, amount)
             return jsonify(result)
+        elif token == "USDC":
+            from blockchain import prepare_usdc_transfer_data
+            result = prepare_usdc_transfer_data(to_address, amount)
+            return jsonify(result)
         elif token == "CELO":
             w3 = Web3(Web3.HTTPProvider(CELO_RPC))
             to_checksum = Web3.to_checksum_address(to_address)
