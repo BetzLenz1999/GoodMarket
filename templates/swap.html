@@ -1617,10 +1617,12 @@
             </div><!-- /#bridgeSubPaneXdcToCelo -->
 
             {% if lifi_bridge_enabled %}
-            <!-- Celo → Base sub-pane (LI.FI / Jumper). Native CELO → native ETH.
-                 This route is TWO steps (bridge + destination swap), so the user
-                 signs once on Celo and once on Base. The step bar + copy below
-                 exist specifically to keep that from being confusing. -->
+            <!-- Celo → Base sub-pane (LI.FI / Jumper). Celo → native ETH on Base.
+                 The source token is selectable: native CELO routes in TWO steps
+                 (bridge + destination swap, 2 signatures), while USDC/USDT route
+                 in a SINGLE step. Native CELO is currently rejected by LI.FI's
+                 own step-0 simulation (TransferFromFailed), so the pane offers a
+                 stablecoin fallback. See docs/JUMPER_LIFI_CELO_SOURCE_FIX_PLAN.md. -->
             <div id="bridgeSubPaneCeloToBase" class="bridge-sub-pane hidden-tab">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
 
@@ -1629,13 +1631,16 @@
                     🌉 Celo Mainnet → Base · LI.FI (Jumper) Bridge
                 </div>
 
-                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
-                    Bridging <strong>native CELO → native ETH on Base</strong>. This takes
-                    <strong>2 steps</strong> — you confirm once on <strong>Celo</strong>, then once on
-                    <strong>Base</strong>. Keep a little <strong>ETH on Base</strong> for the final step's gas.
+                <div class="info-box-bridge" id="lifiIntroNote" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
+                    Bridging <strong>Celo → native ETH on Base</strong>. You can send
+                    <strong>CELO</strong> or a <strong>stablecoin (USDC / USDT / cUSD)</strong>.
+                    CELO takes <strong>2 steps</strong> (confirm once on Celo, once on Base);
+                    USDC / USDT usually take just <strong>1 step</strong>. Keep a little
+                    <strong>ETH on Base</strong> for the final step's gas.
                 </div>
 
-                <!-- Step progress bar — the whole flow keys off this. -->
+                <!-- Step progress bar — the whole flow keys off this. Hidden for
+                     a 1-step (stablecoin) route. -->
                 <div id="lifiStepBar" class="lifi-step-bar" aria-live="polite">
                     <span class="lifi-step-dot active" id="lifiStepDot1">1</span>
                     <span class="lifi-step-line" id="lifiStepLine"></span>
@@ -1643,14 +1648,14 @@
                     <span class="lifi-step-label" id="lifiStepLabel">Step 1 of 2 — confirm on Celo</span>
                 </div>
 
-                <!-- From: native CELO -->
+                <!-- From: selectable Celo source token -->
                 <div class="token-box">
-                    <div class="token-box-label">You bridge (native CELO on Celo)</div>
+                    <div class="token-box-label">You bridge (from Celo)</div>
                     <div class="token-row">
-                        <div class="token-selector" style="cursor:default;">
-                            <div class="token-icon celo">CE</div>
-                            <span>CELO</span>
-                            <span class="token-chevron" style="opacity:0;">▾</span>
+                        <div class="token-selector" id="lifiFromTokenSelector" onclick="openLifiSourcePicker()">
+                            <div class="token-icon celo" id="lifiFromTokenIcon">CE</div>
+                            <span id="lifiFromTokenSymbol">CELO</span>
+                            <span class="token-chevron">▾</span>
                         </div>
                         <input
                             type="number"
@@ -1684,6 +1689,11 @@
                     <button class="swap-btn" id="btnLifiBridge" onclick="executeLifiBridge()" style="flex:1 1 220px; margin-top:0;">
                         Bridge to Base
                     </button>
+                    <!-- Shown only when the current source token has no working
+                         route (e.g. native CELO) and another source does. -->
+                    <button class="swap-btn" id="btnLifiFallback" onclick="lifiUseFallbackToken()" style="flex:1 1 220px; margin-top:0; display:none; background:linear-gradient(135deg,#0ea5e9,#2563eb);">
+                        Bridge USDC instead
+                    </button>
                     <!-- Shown only when a previous attempt already bridged on
                          Celo but the Base leg was never signed (closed tab).
                          Without this the user's bridged funds sit on Base with
@@ -1691,6 +1701,12 @@
                     <button class="swap-btn" id="btnLifiResume" onclick="resumeLifiBridge()" style="flex:1 1 220px; margin-top:0; display:none;">
                         Finish on Base
                     </button>
+                </div>
+
+                <!-- Last-resort escape hatch when no route builds in-app. -->
+                <div id="lifiJumperFallback" style="display:none; margin-top:0.6rem; text-align:center; font-size:0.82rem; color:#6b5d48;">
+                    Still stuck? Bridge directly on
+                    <a class="info-link" id="lifiJumperLink" href="https://jumper.exchange/?fromChain=42220&toChain=8453" target="_blank" rel="noopener">Jumper ↗</a>.
                 </div>
 
                 <div class="alert" id="lifiBridgeAlert"></div>
@@ -1702,9 +1718,9 @@
                 <a class="info-link" href="https://jumper.exchange/" target="_blank" rel="noopener">Jumper ↗</a>
                 (powered by
                 <a class="info-link" href="https://li.fi/" target="_blank" rel="noopener">LI.FI ↗</a>),
-                aggregating bridges and DEXs across chains. The Celo → Base route
-                bridges with one provider, then swaps to native ETH on Base — hence
-                the two confirmations. Track it on
+                aggregating bridges and DEXs across chains. A CELO source bridges
+                with one provider, then swaps to native ETH on Base — hence the two
+                confirmations; a stablecoin source usually settles in one. Track it on
                 <a class="info-link" href="https://scan.li.fi/" target="_blank" rel="noopener">LI.FI Scan ↗</a>.
             </div>
             </div><!-- /#bridgeSubPaneCeloToBase -->
@@ -1722,6 +1738,18 @@
             <button class="token-picker-close" onclick="closeTokenPicker()">Cancel</button>
         </div>
     </div>
+
+    {% if lifi_bridge_enabled %}
+    <!-- LI.FI Celo source-token picker (CELO / USDC / USDT / cUSD). Kept
+         separate from the GoodSwap picker so the two tabs never share state. -->
+    <div class="token-picker-overlay" id="lifiSourcePickerOverlay" onclick="closeLifiSourcePickerOnOverlay(event)">
+        <div class="token-picker-modal">
+            <div class="token-picker-title">Select the token to bridge (on Celo)</div>
+            <div class="token-picker-list" id="lifiSourcePickerList"></div>
+            <button class="token-picker-close" onclick="closeLifiSourcePicker()">Cancel</button>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- ethers.js v6 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
@@ -1769,7 +1797,8 @@
             celoChainId: {{ celo_chain_id }},
             lifiBridgeEnabled: {{ (lifi_bridge_enabled | default(false)) | tojson }},
             lifiBaseChainId: {{ lifi_base_chain_id | default(8453) }},
-            lifiCeloErc20: {{ lifi_celo_erc20 | default('0x471EcE3750Da237f93B8E339c536989b8978a438', true) | tojson }}
+            lifiCeloErc20: {{ lifi_celo_erc20 | default('0x471EcE3750Da237f93B8E339c536989b8978a438', true) | tojson }},
+            lifiSourceTokens: {{ (lifi_source_tokens | default([])) | tojson }}
         };
     </script>
     <script src="{{ url_for('static', filename='js/swap-core.js', v=ASSET_VERSION) }}"></script>
