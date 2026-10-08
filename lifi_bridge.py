@@ -63,13 +63,18 @@ CELO_USDC = os.getenv("LIFI_CELO_USDC_TOKEN", "0xcebA9300f2b948710d2653dD7B07f33
 CELO_USDT = os.getenv("LIFI_CELO_USDT_TOKEN", "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e")
 CELO_CUSD = os.getenv("LIFI_CELO_CUSD_TOKEN", "0x765DE816845861e75A25fCA122bb6898B8B1282a")
 
+# Ordered so the WORKING single-step sources (USDT/USDC) come first and the
+# broken native-CELO source last — the picker renders in this order and the
+# default is USDT (a native-CELO default would send every first-time user down
+# the failure + fallback path). cUSD stays because it is the Phase-2 pre-swap
+# target; CELO stays because it is the entry point for "I only hold CELO".
 SOURCE_TOKENS = {
-    "CELO": {"address": CELO_ERC20, "decimals": 18, "symbol": "CELO", "native": True},
-    "USDC": {"address": CELO_USDC, "decimals": 6, "symbol": "USDC", "native": False},
     "USDT": {"address": CELO_USDT, "decimals": 6, "symbol": "USDT", "native": False},
+    "USDC": {"address": CELO_USDC, "decimals": 6, "symbol": "USDC", "native": False},
     "cUSD": {"address": CELO_CUSD, "decimals": 18, "symbol": "cUSD", "native": False},
+    "CELO": {"address": CELO_ERC20, "decimals": 18, "symbol": "CELO", "native": True},
 }
-DEFAULT_SOURCE_TOKEN = "CELO"
+DEFAULT_SOURCE_TOKEN = "USDT"
 
 
 def resolve_source_token(key: str | None):
