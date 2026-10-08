@@ -1,0 +1,922 @@
+/**
+ * GoodMarket — Connect a dApp (WalletConnect WALLET role, Phase 1)
+ * ---------------------------------------------------------------------------
+ * This is the *other side* of wc-bridge.js. wc-bridge.js makes our app act as
+ * a dApp (it opens sessions OUT to the user's wallet). This module makes our
+ * app act as a WALLET: the user copies a WalletConnect link from an external
+ * dApp, pastes it here, approves a session, and then signs for that dApp from
+ * inside GoodMarket.
+ *
+ * Phase 1 is deliberately scoped to LOCAL-login users (GMLocalWallet), because
+ * that is the only login method where the app holds the private key and can
+ * sign on-device with a PIN — no external wallet app to wake, no relay round
+ * trip. Any other login method gets a clear "use your in-app wallet" message.
+ *
+ * SECURITY INVARIANTS (do not weaken):
+ *   - NEVER auto-sign. Every session_request opens an approval sheet showing
+ *     the chain and the full request. Only eth_accounts / eth_chainId are
+ *     answered silently (they expose nothing and dApps need them).
+ *   - Allowlist. Only Celo/XDC/Base and a small method set; eth_sign (blind
+ *     signing) and anything unknown are auto-rejected.
+ *   - Show the dApp's real origin (peer.metadata.url) and warn on mismatch.
+ *   - Signing always goes through GMLocalWallet.getProvider() for local
+ *     logins; never fall back to an injected provider (a different account).
+ *
+ * Exposes window.GMDappConnect with:
+ *   init()                       -> wire events once (idempotent)
+ *   isEligible()                 -> true when the login method can sign here
+ *   open() / close()             -> the connect modal
+ *   connectFromLink(uri)         -> pair() from a pasted wc: URI
+ *   approveProposal() / rejectProposal()
+ *   approveRequest() / rejectRequest()
+ *   revoke(topic)
+ *   sessions()                   -> active sessions (metadata only)
+ *   refreshStatusStrip()         -> show/hide the wallet-page status strip
+ */
+(function (global) {
+    "use strict";
+
+    if (global.GMDappConnect) return;
+
+    var BOOT = (global.GM_WALLET_BOOT || {});
+    var LOGIN_METHOD = String(BOOT.loginMethod || "").toLowerCase();
+    var WALLET = BOOT.wallet || "";
+    var PROJECT_ID = BOOT.walletConnectProjectId || "";
+    var ASSET_VERSION = BOOT.assetVersion || "";
+
+    // Chains and methods we will ever accept. Everything else is rejected at
+    // proposal time and at request time.
+    var ALLOWED_METHODS = [
+        "personal_sign",
+        "eth_signTypedData",
+        "eth_signTypedData_v3",
+        "eth_signTypedData_v4",
+        "eth_sendTransaction",
+        "eth_accounts",
+        "eth_chainId",
+        "wallet_switchEthereumChain"
+    ];
+    // Methods answered WITHOUT a user prompt (they reveal nothing).
+    var SILENT_METHODS = ["eth_accounts", "eth_chainId"];
+    // Read-only JSON-RPC forwarded straight to the chain's public RPC by the
+    // in-app wallet. No signature, no key material, no user prompt — but a
+    // dApp cannot render a balance or estimate gas without them.
+    var READ_METHODS = [
+        "eth_call", "eth_estimateGas", "eth_getBalance", "eth_getCode",
+        "eth_getStorageAt", "eth_getTransactionCount", "eth_getBlockByNumber",
+        "eth_getBlockByHash", "eth_getTransactionByHash",
+        "eth_getTransactionReceipt", "eth_getLogs", "eth_blockNumber",
+        "eth_gasPrice", "eth_feeHistory", "eth_maxPriorityFeePerGas",
+        "eth_syncing", "net_version", "web3_clientVersion"
+    ];
+    // Wallet-scoped methods we answer ourselves instead of forwarding.
+    var WALLET_METHODS = ["wallet_switchEthereumChain", "wallet_addEthereumChain"];
+
+    var ALLOWED_CHAINS = {
+        "eip155:42220": { label: "Celo", hex: "0xa4ec" },
+        "eip155:50": { label: "XDC Network", hex: "0x32" },
+        "eip155:8453": { label: "Base", hex: "0x2105" }
+    };
+
+    var MAX_SESSIONS = 10;
+
+    var WC_CDN_URL = "https://cdn.jsdelivr.net/npm/@walletconnect/sign-client@2.17.0/dist/index.umd.js";
+
+    var _state = {
+        client: null,
+        sdkLoading: null,
+        pendingProposal: null,
+        pendingRequest: null,
+        inited: false
+    };
+
+    var _log = function () {};
+
+    // ── small helpers ────────────────────────────────────────────────────
+
+    function _el(id) { return global.document ? global.document.getElementById(id) : null; }
+
+    function _esc(s) {
+        return String(s == null ? "" : s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function _shortAddr(a) {
+        var s = String(a || "");
+        return s.length > 12 ? (s.slice(0, 6) + "…" + s.slice(-4)) : s;
+    }
+
+    function isEligible() {
+        return LOGIN_METHOD === "local" &&
+            typeof global.GMLocalWallet !== "undefined" &&
+            typeof global.GMLocalWallet.getProvider === "function";
+    }
+
+    // ── SignClient (wallet role) ─────────────────────────────────────────
+
+    function _appendScript(src) {
+        return new Promise(function (resolve, reject) {
+            var s = document.createElement("script");
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = function () { reject(new Error("Failed to load " + src)); };
+            document.head.appendChild(s);
+        });
+    }
+
+    function _loadSdk() {
+        if (_state.sdkLoading) return _state.sdkLoading;
+        var localSrc = "/static/js/wc-bundle.js" + (ASSET_VERSION ? ("?v=" + encodeURIComponent(ASSET_VERSION)) : "");
+        function pick() {
+            var ns = global["@walletconnect/sign-client"];
+            return (ns && ns.SignClient) || null;
+        }
+        _state.sdkLoading = Promise.resolve()
+            .then(function () {
+                if (pick()) return pick();
+                return _appendScript(localSrc).then(pick, function () { return null; });
+            })
+            .then(function (sc) {
+                if (sc) return sc;
+                return _appendScript(WC_CDN_URL).then(function () {
+                    var sc2 = pick();
+                    if (!sc2) throw new Error("WalletConnect SDK unavailable");
+                    return sc2;
+                });
+            });
+        return _state.sdkLoading;
+    }
+
+    function _getClient() {
+        if (_state.client) return Promise.resolve(_state.client);
+        if (!PROJECT_ID) {
+            return Promise.reject(new Error("WalletConnect is not configured (missing project id)."));
+        }
+        return _loadSdk().then(function (SignClient) {
+            return SignClient.init({
+                projectId: PROJECT_ID,
+                // Separate storage namespace so our wallet-role sessions never
+                // collide with the dApp-role login session managed by
+                // wc-bridge.js (different encryption keys, same origin).
+                customStoragePrefix: "gmdapp",
+                metadata: {
+                    name: "GoodMarket",
+                    description: "GoodMarket in-app wallet",
+                    url: (global.location ? global.location.origin : ""),
+                    icons: [(global.location ? global.location.origin : "") + "/static/icons/icon-192x192.png"]
+                }
+            });
+        }).then(function (client) {
+            _state.client = client;
+            _wireClientEvents(client);
+            return client;
+        });
+    }
+
+    function _wireClientEvents(client) {
+        client.on("session_proposal", function (proposal) {
+            _state.pendingProposal = proposal;
+            _renderProposal(proposal);
+            _renderSessions();
+            _openModal("dappConnectModal");
+        });
+        client.on("session_request", function (event) {
+            _handleSessionRequest(event);
+        });
+        client.on("session_delete", function () {
+            refreshStatusStrip();
+            if (_el("dappSessionList")) _renderSessions();
+        });
+        client.on("session_expire", function () {
+            refreshStatusStrip();
+            if (_el("dappSessionList")) _renderSessions();
+        });
+    }
+
+    function init() {
+        if (_state.inited) return;
+        // Only local logins can sign here, so never pay for the SignClient
+        // (SDK load + relay connection) for WalletConnect/injected sessions.
+        if (!isEligible()) return;
+        _state.inited = true;
+        _wireLogout();
+        try {
+            _getClient().then(function () {
+                _dropForeignSessions();
+                refreshStatusStrip();
+            }).catch(function (e) { _log("[dapp-connect] init:", e && e.message); });
+        } catch (e) {
+            _log("[dapp-connect] init failed:", e && e.message);
+        }
+    }
+
+    // ── connect modal ────────────────────────────────────────────────────
+
+    // Reuse wallet-main.js's openModal (it also closes other overlays and
+    // locks body scroll). A sign request SHOULD take over the screen — the
+    // user must deal with it. #lwUnlockModal is exempted inside openModal,
+    // so the PIN prompt still stacks above the approval sheet.
+    function _openModal(id) {
+        if (typeof global.openModal === "function") {
+            global.openModal(id);
+            return;
+        }
+        var el = _el(id);
+        if (el) el.classList.add("open");
+    }
+
+    function _closeModal(id) {
+        if (typeof global.closeModal === "function") {
+            global.closeModal(id);
+            return;
+        }
+        var el = _el(id);
+        if (el) el.classList.remove("open");
+    }
+
+    function open() {
+        if (!isEligible()) {
+            _setConnectStatus(
+                "🔒 Connect a dApp works with your in-app GoodMarket wallet (email + PIN) only. " +
+                "Log in with your GoodMarket wallet to use it." , "error");
+            _openModal("dappConnectModal");
+            return;
+        }
+        _setConnectStatus("", "");
+        // Lazily boot the wallet-role client on first open. A session_request
+        // can arrive at any time after that, so the client stays alive.
+        init();
+        _renderSessions();
+        _openModal("dappConnectModal");
+    }
+
+    function close() {
+        _closeModal("dappConnectModal");
+    }
+
+    function _setConnectStatus(msg, kind) {
+        var el = _el("dappConnectStatus");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.style.display = msg ? "block" : "none";
+        el.className = "dapp-status" + (kind ? (" is-" + kind) : "");
+    }
+
+    function connectFromLink(rawUri) {
+        var uri = String(rawUri || "").trim();
+        if (!uri) {
+            _setConnectStatus("Paste the WalletConnect link from the dApp first.", "error");
+            return Promise.resolve();
+        }
+        // Accept a full wc: URI pasted from a dApp, or a URL that contains it.
+        var m = uri.match(/wc:[^\s"']+/);
+        if (m) uri = m[0];
+        if (uri.indexOf("wc:") !== 0) {
+            _setConnectStatus("That doesn't look like a WalletConnect link (it should start with wc:).", "error");
+            return Promise.resolve();
+        }
+        if (!isEligible()) {
+            _setConnectStatus("Connect a dApp is only available for the in-app GoodMarket wallet.", "error");
+            return Promise.resolve();
+        }
+
+        var btn = _el("dappConnectBtn");
+        if (btn) { btn.disabled = true; btn.textContent = "Connecting…"; }
+        _setConnectStatus("⏳ Connecting to the dApp…", "info");
+
+        return _getClient().then(function (client) {
+            return client.pair({ uri: uri });
+        }).then(function () {
+            _setConnectStatus("📲 Waiting for the dApp to send its connection request…", "info");
+        }).catch(function (e) {
+            _setConnectStatus("❌ Could not connect: " + (e && e.message ? e.message : e), "error");
+        }).then(function () {
+            if (btn) { btn.disabled = false; btn.textContent = "Connect"; }
+        });
+    }
+
+    // ── proposal review ──────────────────────────────────────────────────
+
+    function _proposalChains(proposal) {
+        try {
+            var ns = proposal.params.requiredNamespaces || {};
+            var out = [];
+            Object.keys(ns).forEach(function (key) {
+                (ns[key].chains || []).forEach(function (c) {
+                    if (out.indexOf(c) < 0) out.push(c);
+                });
+            });
+            return out;
+        } catch (_) { return []; }
+    }
+
+    function _proposalMethods(proposal) {
+        try {
+            var ns = proposal.params.requiredNamespaces || {};
+            var out = [];
+            Object.keys(ns).forEach(function (key) {
+                (ns[key].methods || []).forEach(function (m) {
+                    if (out.indexOf(m) < 0) out.push(m);
+                });
+            });
+            return out;
+        } catch (_) { return []; }
+    }
+
+    function _methodSupported(m) {
+        return ALLOWED_METHODS.indexOf(m) >= 0 ||
+            READ_METHODS.indexOf(m) >= 0 ||
+            WALLET_METHODS.indexOf(m) >= 0;
+    }
+
+    function _proposalSupported(proposal) {
+        var chains = _proposalChains(proposal);
+        var methods = _proposalMethods(proposal);
+        var chainsOk = chains.length > 0 && chains.every(function (c) { return !!ALLOWED_CHAINS[c]; });
+        var methodsOk = methods.length > 0 && methods.every(_methodSupported);
+        return chainsOk && methodsOk;
+    }
+
+    function _proposalMeta(proposal) {
+        try {
+            var md = proposal.params.proposer.metadata || {};
+            return { name: md.name || "Unknown dApp", url: md.url || "", icons: md.icons || [] };
+        } catch (_) {
+            return { name: "Unknown dApp", url: "", icons: [] };
+        }
+    }
+
+    function _renderProposal(proposal) {
+        var box = _el("dappProposalBox");
+        if (!box) return;
+        var meta = _proposalMeta(proposal);
+        var chains = _proposalChains(proposal).map(function (c) {
+            return (ALLOWED_CHAINS[c] && ALLOWED_CHAINS[c].label) || c;
+        });
+        var methods = _proposalMethods(proposal);
+        var ok = _proposalSupported(proposal);
+        var overCap = sessions().length >= MAX_SESSIONS;
+        if (overCap) ok = false;
+        var iconUrl = (meta.icons && meta.icons[0]) || "";
+        var safeIcon = /^https:\/\//i.test(iconUrl);
+
+        box.innerHTML =
+            '<div class="dapp-peer">' +
+                (safeIcon ? '<img class="dapp-peer-icon" src="' + _esc(iconUrl) + '" alt="" onerror="this.style.display=\'none\'">' : '<div class="dapp-peer-icon dapp-peer-icon--ph">🔗</div>') +
+                '<div>' +
+                    '<div class="dapp-peer-name">' + _esc(meta.name) + '</div>' +
+                    '<div class="dapp-peer-url">' + _esc(meta.url || "unknown origin") + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="dapp-req-row"><span>Chains</span><b>' + _esc(chains.join(", ") || "—") + '</b></div>' +
+            '<div class="dapp-req-row"><span>Methods</span><b>' + _esc(methods.join(", ") || "—") + '</b></div>' +
+            (overCap
+                ? '<div class="dapp-warn bad">🚫 You already have ' + sessions().length + ' connected dApps. Revoke one before connecting another.</div>'
+                : (ok
+                    ? '<div class="dapp-warn ok">✅ This dApp only asks for supported chains and actions.</div>'
+                    : '<div class="dapp-warn bad">🚫 This dApp asks for chains or actions GoodMarket does not support. Approving is disabled.</div>')) +
+            '<div class="dapp-warn">⚠️ Only connect with dApps you trust. Approving gives this dApp permission to ask you to sign — you still approve every action individually.</div>';
+
+        var approve = _el("dappApproveBtn");
+        var reject = _el("dappRejectBtn");
+        if (approve) {
+            approve.disabled = !ok;
+            approve.style.opacity = ok ? "" : "0.5";
+            approve.style.cursor = ok ? "" : "not-allowed";
+        }
+        if (reject) reject.disabled = false;
+        _setConnectStatus("", "");
+    }
+
+    function approveProposal() {
+        var proposal = _state.pendingProposal;
+        if (!proposal) return;
+        if (!_proposalSupported(proposal)) {
+            _setConnectStatus("This dApp asks for unsupported chains or actions.", "error");
+            return;
+        }
+        _getClient().then(function (client) {
+            return client.approve({
+                id: proposal.id,
+                namespaces: _buildNamespaces(proposal)
+            });
+        }).then(function () {
+            _state.pendingProposal = null;
+            _markUsed();
+            _setConnectStatus("✅ dApp connected.", "ok");
+            _renderSessions();
+            refreshStatusStrip();
+        }).catch(function (e) {
+            _setConnectStatus("❌ Could not approve: " + (e && e.message ? e.message : e), "error");
+        });
+    }
+
+    // Build the approved namespaces, keeping only chains we support. The
+    // SignClient needs at least one account per namespace in the form
+    // eip155:<chainId>:<address>.
+    function _buildNamespaces(proposal) {
+        // Always advertise the basics a dApp cannot work without: account and
+        // chain reads (silent), the read-only RPCs and the chain switch.
+        var methods = SILENT_METHODS.concat(READ_METHODS, WALLET_METHODS);
+        // Plus only the SIGNING methods the dApp actually asked for — never
+        // hand a dApp a signing permission it did not request.
+        _proposalMethods(proposal).forEach(function (m) {
+            if (ALLOWED_METHODS.indexOf(m) >= 0 && methods.indexOf(m) < 0) methods.push(m);
+        });
+
+        var chains = _proposalChains(proposal).filter(function (c) { return !!ALLOWED_CHAINS[c]; });
+        var accounts = [];
+        chains.forEach(function (c) {
+            accounts.push(c + ":" + WALLET);
+        });
+        return {
+            eip155: {
+                chains: chains,
+                methods: methods,
+                events: ["chainChanged", "accountsChanged"],
+                accounts: accounts
+            }
+        };
+    }
+
+    function rejectProposal() {
+        var proposal = _state.pendingProposal;
+        if (!proposal) return;
+        _getClient().then(function (client) {
+            return client.reject({ id: proposal.id, reason: { code: 4001, message: "User rejected." } });
+        }).catch(function () {}).then(function () {
+            _state.pendingProposal = null;
+            _el("dappProposalBox").innerHTML = "";
+            _setConnectStatus("Connection request declined.", "info");
+        });
+    }
+
+    // ── session_request handling ─────────────────────────────────────────
+
+    function _chainIdFromEvent(event) {
+        // event.params.chainId is "eip155:<id>"
+        return String((event.params && event.params.chainId) || "");
+    }
+
+    function _handleSessionRequest(event) {
+        var method = event.params && event.params.request && event.params.request.method;
+        var chainId = _chainIdFromEvent(event);
+
+        // Chain not allowed? Reject immediately — never sign.
+        if (!ALLOWED_CHAINS[chainId]) {
+            _respond(event, null, { code: 4200, message: "Unsupported chain: " + chainId });
+            return;
+        }
+
+        if (SILENT_METHODS.indexOf(method) >= 0) {
+            _answerSilently(event, method);
+            return;
+        }
+
+        if (READ_METHODS.indexOf(method) >= 0) {
+            _forwardRead(event, chainId, method);
+            return;
+        }
+
+        if (WALLET_METHODS.indexOf(method) >= 0) {
+            _answerWalletMethod(event, method);
+            return;
+        }
+
+        if (ALLOWED_METHODS.indexOf(method) < 0) {
+            _respond(event, null, { code: 4200, message: "Unsupported method: " + method });
+            _toast("🚫 The dApp asked for an unsupported action (“" + method + "”) — declined automatically.");
+            return;
+        }
+
+        _state.pendingRequest = { event: event, chainId: chainId, method: method };
+        _renderRequest(event, chainId, method);
+        _openModal("dappRequestModal");
+    }
+
+    function _answerSilently(event, method) {
+        var result;
+        if (method === "eth_accounts") {
+            result = [WALLET];
+        } else {
+            result = ALLOWED_CHAINS[_chainIdFromEvent(event)].hex;
+        }
+        _respond(event, result, null);
+    }
+
+    // Read-only: hand it to the in-app wallet, which routes eth_call /
+    // eth_getBalance / … to the chain's public RPC (see local-wallet.js
+    // _chainJsonRpc). The active-chain pointer is moved to the dApp's chain
+    // first so a read never lands on the wrong network. Nothing is signed.
+    function _forwardRead(event, chainId, method) {
+        var provider = global.GMLocalWallet && global.GMLocalWallet.getProvider
+            ? global.GMLocalWallet.getProvider() : null;
+        if (!provider) {
+            _respond(event, null, { code: 4900, message: "Wallet unavailable." });
+            return;
+        }
+        var hex = ALLOWED_CHAINS[chainId].hex;
+        Promise.resolve()
+            .then(function () {
+                return provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] });
+            })
+            .then(function () { return provider.request({ method: method, params: (event.params.request.params) || [] }); })
+            .then(function (result) { _respond(event, result, null); })
+            .catch(function (e) {
+                _respond(event, null, { code: -32603, message: (e && e.message) || "Read failed." });
+            });
+    }
+
+    // wallet_switchEthereumChain / wallet_addEthereumChain. The in-app wallet
+    // only knows Celo / XDC / Base, so a supported chain moves its pointer and
+    // anything else is refused (the dApp then knows to stop asking).
+    function _answerWalletMethod(event, method) {
+        var params = (event.params.request.params) || [];
+        var wanted = params[0] && params[0].chainId;
+        var key = _chainKeyForId(wanted);
+        // EIP-3326/3085: 4902 means "we don't know this chain". The in-app
+        // wallet only holds Celo / XDC / Base, so everything else is refused.
+        if (!key || !ALLOWED_CHAINS[key]) {
+            _respond(event, null, { code: 4902, message: "Unrecognized chain ID " + wanted + "." });
+            return;
+        }
+        var provider = global.GMLocalWallet && global.GMLocalWallet.getProvider
+            ? global.GMLocalWallet.getProvider() : null;
+        if (!provider) {
+            _respond(event, null, { code: 4900, message: "Wallet unavailable." });
+            return;
+        }
+        Promise.resolve()
+            .then(function () { return provider.request({ method: method, params: params }); })
+            .then(function (result) { _respond(event, result === undefined ? null : result, null); })
+            .catch(function (e) {
+                _respond(event, null, { code: -32603, message: (e && e.message) || "Chain switch failed." });
+            });
+    }
+
+    function _chainKeyForId(chainId) {
+        var s = String(chainId == null ? "" : chainId).toLowerCase();
+        if (!s) return null;
+        if (s.indexOf("0x") === 0) {
+            var n = parseInt(s, 16);
+            return "eip155:" + n;
+        }
+        return "eip155:" + parseInt(s, 10);
+    }
+
+    function _sessionFor(event) {
+        if (!_state.client) return null;
+        try {
+            var sessions = _state.client.session.getAll();
+            var topic = event.topic;
+            for (var i = 0; i < sessions.length; i++) {
+                if (sessions[i].topic === topic) return sessions[i];
+            }
+        } catch (_) {}
+        return null;
+    }
+
+    function _peerMetaFor(event) {
+        var s = _sessionFor(event);
+        var md = s && s.peer && s.peer.metadata;
+        return { name: (md && md.name) || "dApp", url: (md && md.url) || "" };
+    }
+
+    function _renderRequest(event, chainId, method) {
+        var box = _el("dappRequestBody");
+        if (!box) return;
+        var meta = _peerMetaFor(event);
+        var params = (event.params.request.params) || [];
+        var rows = "";
+
+        function row(label, value) {
+            return '<div class="dapp-req-row"><span>' + _esc(label) + '</span><b>' + _esc(value) + '</b></div>';
+        }
+
+        rows += row("dApp", meta.name);
+        if (meta.url) rows += row("Origin", meta.url);
+        rows += row("Chain", (ALLOWED_CHAINS[chainId] && ALLOWED_CHAINS[chainId].label) || chainId);
+        rows += row("Action", _friendlyMethod(method));
+
+        var mismatch = "";
+        if (method === "eth_sendTransaction" && params[0]) {
+            var tx = params[0];
+            if (tx.to) rows += row("To", tx.to);
+            if (tx.value) rows += row("Value", _formatNative(tx.value, chainId));
+            if (tx.data && tx.data !== "0x") rows += row("Data", _shortData(tx.data));
+            // The in-app wallet always signs with its own key, so a `from` that
+            // points elsewhere is either a dApp bug or an attempt to confuse
+            // the user about whose funds move.
+            if (tx.from && WALLET && String(tx.from).toLowerCase() !== WALLET.toLowerCase()) {
+                mismatch = '<div class="dapp-warn bad">🚫 This request is for a DIFFERENT address (' +
+                    _esc(_shortAddr(tx.from)) + '). Your in-app wallet signs only for ' +
+                    _esc(_shortAddr(WALLET)) + '. Decline it.</div>';
+            }
+        } else if (method === "personal_sign") {
+            rows += row("Message", _decodePersonalSign(params));
+        } else if (method.indexOf("eth_signTypedData") === 0) {
+            var typed = params[1];
+            try {
+                var parsed = typeof typed === "string" ? JSON.parse(typed) : typed;
+                rows += row("Typed data", (parsed && parsed.primaryType) || "EIP-712");
+            } catch (_) {
+                rows += row("Typed data", "EIP-712");
+            }
+        }
+
+        box.innerHTML =
+            '<div class="dapp-warn">🔎 Review carefully. GoodMarket will sign this on your in-app wallet only after you approve.</div>' +
+            mismatch + rows +
+            '<div class="dapp-warn">⚠️ If you did not expect this request, tap Decline.</div>';
+    }
+
+    // Show wei as a human-readable native amount when the value is plausible.
+    function _formatNative(value, chainId) {
+        var raw = String(value == null ? "" : value).trim();
+        var wei;
+        try { wei = BigInt(raw); } catch (_) { return raw + " wei"; }
+        var whole = wei / 1000000000000000000n;
+        var frac = (wei % 1000000000000000000n).toString().padStart(18, "0").replace(/0+$/, "");
+        var symbol = chainId === "eip155:50" ? "XDC" : "CELO";
+        var shown = frac ? (whole + "." + frac) : whole.toString();
+        return shown + " " + symbol + " (" + raw + " wei)";
+    }
+
+    function _friendlyMethod(method) {
+        var map = {
+            personal_sign: "Sign a message",
+            eth_signTypedData: "Sign typed data",
+            eth_signTypedData_v3: "Sign typed data (v3)",
+            eth_signTypedData_v4: "Sign typed data (v4)",
+            eth_sendTransaction: "Send a transaction"
+        };
+        return map[method] || method;
+    }
+
+    function _shortData(data) {
+        var s = String(data || "");
+        return s.length > 74 ? (s.slice(0, 40) + "…" + s.slice(-14)) : s;
+    }
+
+    function _decodePersonalSign(params) {
+        // Message is params[0]; it may be hex-encoded.
+        var msg = params[0];
+        if (typeof msg === "string" && msg.indexOf("0x") === 0) {
+            try {
+                var hex = msg.slice(2);
+                var bytes = [];
+                for (var i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+                var text = new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+                if (/^[\x09\x0a\x0d\x20-\x7e\u00a0-\uffff]*$/.test(text)) {
+                    return text.length > 200 ? text.slice(0, 200) + "…" : text;
+                }
+            } catch (_) {}
+        }
+        return String(msg);
+    }
+
+    function _respond(event, result, error) {
+        _getClient().then(function (client) {
+            return client.respond({
+                topic: event.topic,
+                response: {
+                    id: event.id,
+                    jsonrpc: "2.0",
+                    result: error ? undefined : result,
+                    error: error || undefined
+                }
+            });
+        }).catch(function (e) {
+            _log("[dapp-connect] respond failed:", e && e.message);
+        });
+    }
+
+    // ── request approval (local signing) ─────────────────────────────────
+
+    function approveRequest() {
+        var pending = _state.pendingRequest;
+        if (!pending) return;
+        var event = pending.event;
+        var method = pending.method;
+        var params = (event.params.request.params) || [];
+
+        if (!isEligible()) {
+            _respond(event, null, { code: 4001, message: "Signing is not available for this login method." });
+            _closeRequestSheet();
+            return;
+        }
+
+        var btn = _el("dappApproveReqBtn");
+        if (btn) { btn.disabled = true; btn.textContent = "Signing…"; }
+
+        // Make sure the in-app wallet is unlocked (PIN) before signing.
+        var unlock = (global.GMLocalWallet.isUnlocked && global.GMLocalWallet.isUnlocked())
+            ? Promise.resolve()
+            : (typeof global._lwUnlockIfNeeded === "function" ? global._lwUnlockIfNeeded() : Promise.resolve());
+
+        unlock.then(function () {
+            var provider = global.GMLocalWallet.getProvider();
+            return provider.request({ method: method, params: params });
+        }).then(function (result) {
+            _respond(event, result, null);
+            _toast("✅ Signed for " + _peerMetaFor(event).name + ".");
+        }).catch(function (e) {
+            var code = (e && (e.code === 4001 || /reject|cancel|denied/i.test(e.message || ""))) ? 4001 : -32603;
+            _respond(event, null, { code: code, message: (e && e.message) || "Request failed." });
+            if (code !== 4001) {
+                _toast("❌ Could not sign: " + ((e && e.message) || e));
+            }
+        }).then(function () {
+            if (btn) { btn.disabled = false; btn.textContent = "Approve & Sign"; }
+            _closeRequestSheet();
+        });
+    }
+
+    function rejectRequest() {
+        var pending = _state.pendingRequest;
+        if (!pending) return;
+        _respond(pending.event, null, { code: 4001, message: "User rejected." });
+        _closeRequestSheet();
+    }
+
+    function _closeRequestSheet() {
+        _state.pendingRequest = null;
+        _closeModal("dappRequestModal");
+        var body = _el("dappRequestBody");
+        if (body) body.innerHTML = "";
+    }
+
+    // ── sessions list + revoke ───────────────────────────────────────────
+
+    function sessions() {
+        if (!_state.client) return [];
+        try {
+            return _state.client.session.getAll() || [];
+        } catch (_) { return []; }
+    }
+
+    function _renderSessions() {
+        var list = _el("dappSessionList");
+        var proposals = _el("dappProposalActions");
+        if (proposals) proposals.style.display = _state.pendingProposal ? "flex" : "none";
+        if (!list) return;
+        var all = sessions();
+        if (!all.length) {
+            list.innerHTML = '<div class="dapp-empty">No dApps connected yet.</div>';
+            return;
+        }
+        list.innerHTML = all.map(function (s) {
+            var md = (s.peer && s.peer.metadata) || {};
+            var topic = _esc(s.topic);
+            return '<div class="dapp-session">' +
+                '<div class="dapp-session-meta">' +
+                    '<div class="dapp-session-name">🔗 ' + _esc(md.name || "dApp") + '</div>' +
+                    '<div class="dapp-session-url">' + _esc(md.url || "") + '</div>' +
+                '</div>' +
+                '<button type="button" class="dapp-revoke-btn" onclick="GMDappConnect.revoke(\'' + topic + '\')">Revoke</button>' +
+            '</div>';
+        }).join("");
+    }
+
+    function revoke(topic) {
+        _getClient().then(function (client) {
+            return client.disconnect({
+                topic: topic,
+                reason: { code: 6000, message: "User revoked the session." }
+            });
+        }).catch(function () {}).then(function () {
+            _renderSessions();
+            refreshStatusStrip();
+        });
+    }
+
+    function revokeAll() {
+        var all = sessions();
+        all.forEach(function (s) { revoke(s.topic); });
+    }
+
+    // A session's account is bound to the wallet that approved it. SignClient
+    // persists sessions in localStorage, so after a logout + login as a
+    // DIFFERENT wallet the old sessions would still be live and a dApp could
+    // ask the new account to sign for them. Drop anything that does not match
+    // the current session wallet.
+    function _dropForeignSessions() {
+        if (!WALLET) return;
+        sessions().forEach(function (s) {
+            var accts = (s.namespaces && s.namespaces.eip155 && s.namespaces.eip155.accounts) || [];
+            var mine = accts.some(function (a) {
+                return String(a).toLowerCase().indexOf(WALLET.toLowerCase()) >= 0;
+            });
+            if (!mine) {
+                _log("[dapp-connect] dropping session bound to another wallet:", s.topic);
+                revoke(s.topic);
+            }
+        });
+    }
+
+    // Logout is a plain <a href="/logout"> full-page navigation, so the SDK's
+    // persisted sessions would outlive the session. Disconnect them first, then
+    // let the navigation continue (capped, so a dead relay can't block logout).
+    function _disconnectAllThen(done) {
+        var all = sessions();
+        if (!all.length) { done(); return; }
+        var pending = all.map(function (s) {
+            return _getClient()
+                .then(function (client) {
+                    return client.disconnect({
+                        topic: s.topic,
+                        reason: { code: 6000, message: "User logged out." }
+                    });
+                })
+                .catch(function () {});
+        });
+        var finished = false;
+        var go = function () { if (!finished) { finished = true; done(); } };
+        Promise.all(pending).then(go, go);
+        setTimeout(go, 1500);
+    }
+
+    function _wireLogout() {
+        if (!global.document || !global.document.addEventListener) return;
+        global.document.addEventListener("click", function (ev) {
+            var node = ev.target;
+            while (node && node.tagName !== "A") node = node.parentNode;
+            if (!node || !node.getAttribute) return;
+            var href = node.getAttribute("href") || "";
+            if (href.indexOf("/logout") !== 0) return;
+            if (!sessions().length) return;
+            ev.preventDefault();
+            _disconnectAllThen(function () { global.location.href = href; });
+        }, true);
+    }
+
+    // ── wallet-page status strip ─────────────────────────────────────────
+
+    function refreshStatusStrip() {
+        var strip = _el("dappConnectStrip");
+        if (!strip) return;
+        var all = sessions();
+        if (!all.length) {
+            strip.classList.remove("show");
+            return;
+        }
+        var first = all[0];
+        var md = (first.peer && first.peer.metadata) || {};
+        var name = md.name || "dApp";
+        var who = all.length === 1 ? name : (name + " +" + (all.length - 1) + " more");
+        var label = _el("dappStripLabel");
+        if (label) {
+            label.textContent = "🔗 " + all.length + " dApp" + (all.length > 1 ? "s" : "") + " connected — " + who;
+        }
+        strip.classList.add("show");
+    }
+
+    function _toast(msg) {
+        try {
+            if (typeof global.showToast === "function") { global.showToast(msg); return; }
+        } catch (_) {}
+        var el = _el("dappToast");
+        if (!el) return;
+        el.textContent = msg;
+        el.classList.add("show");
+        setTimeout(function () { el.classList.remove("show"); }, 4000);
+    }
+
+    global.GMDappConnect = {
+        init: init,
+        isEligible: isEligible,
+        open: open,
+        close: close,
+        connectFromLink: connectFromLink,
+        approveProposal: approveProposal,
+        rejectProposal: rejectProposal,
+        approveRequest: approveRequest,
+        rejectRequest: rejectRequest,
+        revoke: revoke,
+        revokeAll: revokeAll,
+        sessions: sessions,
+        refreshStatusStrip: refreshStatusStrip,
+        _dropForeignSessions: _dropForeignSessions
+    };
+
+    // Auto-boot on load ONLY if the user has connected a dApp before (we
+    // stamp a flag on a successful connect). Otherwise the SignClient — SDK
+    // download + relay websocket — would load on every wallet visit for a
+    // feature most users never open; instead it boots lazily on first open().
+    var USED_KEY = "gm_dapp_connect_used_v1";
+    function _hasUsedBefore() {
+        try { return localStorage.getItem(USED_KEY) === "1"; } catch (_) { return false; }
+    }
+    function _markUsed() {
+        try { localStorage.setItem(USED_KEY, "1"); } catch (_) {}
+    }
+
+    if (global.document) {
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", function () { if (_hasUsedBefore()) init(); });
+        } else if (_hasUsedBefore()) {
+            init();
+        }
+    }
+})(typeof window !== "undefined" ? window : this);
