@@ -1797,11 +1797,24 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             usdtUsdValue = 0;
         }
 
-        // USDC is not displayed as a main wallet tile yet, but MiniPay can use
-        // it as a CIP-64 gas fee currency. Keep it in memory so send/claim
-        // attempts prioritize the stablecoin balances the user actually has.
-        usdcBal = (data.usdc && data.usdc.success) ? (data.usdc.balance || 0) : 0;
-        usdcUsdValue = (data.usdc && data.usdc.success) ? (Number(data.usdc.usd_value) || 0) : 0;
+        // USDC is a displayed tile + a sendable token now. It is also a
+        // MiniPay CIP-64 gas fee currency, so it feeds the stablecoin
+        // preference list as well.
+        if (data.usdc && data.usdc.success) {
+            usdcBal = data.usdc.balance || 0;
+            usdcUsdValue = Number(data.usdc.usd_value) || 0;
+            const usdcEl = document.getElementById('usdcBal');
+            const usdcUsdEl = document.getElementById('usdcBalUSD');
+            if (usdcEl) usdcEl.textContent = fmt(usdcBal, 4) + ' USDC';
+            if (usdcUsdEl) usdcUsdEl.textContent = '$' + fmt(usdcUsdValue, 2);
+        } else {
+            usdcBal = 0;
+            usdcUsdValue = 0;
+            const usdcEl = document.getElementById('usdcBal');
+            const usdcUsdEl = document.getElementById('usdcBalUSD');
+            if (usdcEl) usdcEl.textContent = '0 USDC';
+            if (usdcUsdEl) usdcUsdEl.textContent = '$0.00';
+        }
 
         updateTotalBalanceInGd();
     }
@@ -1992,6 +2005,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             GD:      { label: 'G$',      network: 'celo', chainId: 42220, explorer: 'https://explorer.celo.org/mainnet/tx/' },
             CUSD:    { label: 'cUSD',    network: 'celo', chainId: 42220, explorer: 'https://explorer.celo.org/mainnet/tx/' },
             USDT:    { label: 'USDT',    network: 'celo', chainId: 42220, explorer: 'https://explorer.celo.org/mainnet/tx/' },
+            USDC:    { label: 'USDC',    network: 'celo', chainId: 42220, explorer: 'https://explorer.celo.org/mainnet/tx/' },
             CELO:    { label: 'CELO',    network: 'celo', chainId: 42220, explorer: 'https://explorer.celo.org/mainnet/tx/' },
             XDC_GD:  { label: 'XDC G$',  network: 'xdc',  chainId: 50,    explorer: 'https://xdcscan.io/tx/' },
             XDC:     { label: 'XDC',     network: 'xdc',  chainId: 50,    explorer: 'https://xdcscan.io/tx/' },
@@ -2023,7 +2037,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
     function setMaxSend() {
         const vals = {
-            GD: gdBal, CUSD: cusdBal, USDT: usdtBal,
+            GD: gdBal, CUSD: cusdBal, USDT: usdtBal, USDC: usdcBal,
             CELO: Math.max(0, celoBal - 0.001),
             XDC: Math.max(0, xdcBal - 0.01),
             XDC_GD: xdcGdBal,
