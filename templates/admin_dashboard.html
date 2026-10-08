@@ -2421,6 +2421,13 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                                 <span id="chatroom-status-badge" style="padding: 0.3rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem;"></span>
                             </div>
                         </div>
+                        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: rgba(255,255,255,0.05); border-radius: 10px; flex: 1; min-width: 200px;">
+                            <span style="font-size: 1.5rem;">🔗</span>
+                            <div>
+                                <div style="font-weight: 600; color: #f1f5f9; margin-bottom: 0.25rem;">Connect a dApp</div>
+                                <span id="dapp-status-badge" style="padding: 0.3rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem;"></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2603,6 +2610,24 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         💾 Save GoodMarket Agent Setting
                     </button>
                     <div id="agent-visibility-result" style="margin-top: 1rem; display: none;"></div>
+                </div>
+
+                <div class="content-box">
+                    <h2 style="margin-bottom: 1rem;">🔗 Connect a dApp</h2>
+                    <div style="margin-bottom: 0.75rem; padding: 0.75rem 1rem; background: rgba(59,130,246,0.10); border-radius: 8px; border-left: 3px solid #3b82f6; font-size: 0.88rem; color: rgba(241,245,249,0.85);">
+                        Lets a <strong>GoodMarket wallet (in-app) user</strong> paste a WalletConnect link copied from an external dApp and sign for that dApp from inside GoodMarket. <strong>Local-login users only</strong> — the in-app wallet holds the key, so signing happens on-device with a PIN. Every request needs an explicit approval; nothing is auto-signed. <strong>Off by default</strong> — no database setup needed, just flip it to Visible (the toggle creates the setting row itself).
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Visibility</label>
+                        <select id="dapp-visibility-select" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #f1f5f9; font-size: 1rem;">
+                            <option value="true">✅ Visible — "Connect dApp" shown in the wallet Services sheet</option>
+                            <option value="false" selected>🚫 Hidden — the entry and modals are not rendered</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveFeatureVisibility('dapp_connect_feature', 'dapp-visibility-select', 'dapp-visibility-result')" style="width: 100%; padding: 0.9rem; font-size: 1rem;">
+                        💾 Save Connect dApp Setting
+                    </button>
+                    <div id="dapp-visibility-result" style="margin-top: 1rem; display: none;"></div>
                 </div>
             </section>
 
@@ -3938,6 +3963,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 _applyVisibilityBadge('reserve-swap-status-badge', data.reserve_swap_visible);
                 _applyVisibilityBadge('buy-eth-status-badge', data.buy_eth_visible);
                 _applyVisibilityBadge('chatroom-status-badge', data.chatroom_visible);
+                _applyVisibilityBadge('dapp-status-badge', data.dapp_connect_visible);
 
                 document.getElementById('swap-visibility-select').value = data.swap_visible !== false ? 'true' : 'false';
                 document.getElementById('wallet-visibility-select').value = data.wallet_visible !== false ? 'true' : 'false';
@@ -3950,6 +3976,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 document.getElementById('buy-eth-visibility-select').value = data.buy_eth_visible !== false ? 'true' : 'false';
                 document.getElementById('chatroom-visibility-select').value = data.chatroom_visible === true ? 'true' : 'false';
                 document.getElementById('agent-visibility-select').value = data.goodmarket_agent_visible === true ? 'true' : 'false';
+                document.getElementById('dapp-visibility-select').value = data.dapp_connect_visible === true ? 'true' : 'false';
             } catch (e) {
                 statusDiv.innerHTML = '<p style="color:#ef4444;">❌ Failed to load settings</p>';
             }
@@ -3983,7 +4010,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         reserve_swap_feature: 'GoodReserve tab',
                         wallet_buy_eth: 'Buy Crypto wallet button',
                         chatroom_feature: 'Community Chatroom',
-                        goodmarket_agent_feature: 'GoodMarket Agent'
+                        goodmarket_agent_feature: 'GoodMarket Agent',
+                        dapp_connect_feature: 'Connect a dApp'
                     };
                     const featureLabel = labelMap[feature] || feature;
                     resultDiv.textContent = visible
