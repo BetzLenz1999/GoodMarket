@@ -1653,8 +1653,8 @@
                     <div class="token-box-label">You bridge (from Celo)</div>
                     <div class="token-row">
                         <div class="token-selector" id="lifiFromTokenSelector" onclick="openLifiSourcePicker()">
-                            <div class="token-icon celo" id="lifiFromTokenIcon">CE</div>
-                            <span id="lifiFromTokenSymbol">CELO</span>
+                            <div class="token-icon usdt" id="lifiFromTokenIcon">₮</div>
+                            <span id="lifiFromTokenSymbol">USDT</span>
                             <span class="token-chevron">▾</span>
                         </div>
                         <input
@@ -1679,7 +1679,7 @@
                     Destination chain: <strong>Base (Chain ID {{ lifi_base_chain_id }})</strong><br>
                     <div style="font-size:0.74rem; color:#8a8378; text-transform:uppercase; letter-spacing:0.05em; margin-top:0.55rem; margin-bottom:0.35rem;">Bridge Summary</div>
                     <div id="lifiRouteSummary" style="color:#8a8378; font-size:0.79rem; margin-bottom:0.25rem;">Enter an amount to see the route.</div>
-                    <div style="color:#6b5d48;">You send: <strong id="lifiSendDisplay" style="color:#2b241a;">0 CELO</strong></div>
+                    <div style="color:#6b5d48;">You send: <strong id="lifiSendDisplay" style="color:#2b241a;">0 USDT</strong></div>
                     <div style="color:#6b5d48;">You receive (est.): <strong id="lifiReceiveDisplay" style="color:#a7f3d0;">0 ETH</strong></div>
                     <div style="color:#3a3226;">Minimum received: <strong id="lifiReceiveMinDisplay" style="color:#a7f3d0;">0 ETH</strong></div>
                     <div id="lifiGasDisplay" style="color:#6b5d48; margin-top:0.2rem;"></div>
@@ -1692,7 +1692,7 @@
                     <!-- Shown only when the current source token has no working
                          route (e.g. native CELO) and another source does. -->
                     <button class="swap-btn" id="btnLifiFallback" onclick="lifiUseFallbackToken()" style="flex:1 1 220px; margin-top:0; display:none; background:linear-gradient(135deg,#0ea5e9,#2563eb);">
-                        Bridge USDC instead
+                        Bridge USDT instead
                     </button>
                     <!-- Shown only when a previous attempt already bridged on
                          Celo but the Base leg was never signed (closed tab).
