@@ -1804,16 +1804,18 @@ const LIFI_MIN_DEST_ETH_GAS = 0.0001; // ETH; below this the 2nd step can't pay 
 const LIFI_SOURCE_TOKENS = (window.GM_SWAP_BOOT.lifiSourceTokens || []).length
     ? window.GM_SWAP_BOOT.lifiSourceTokens
     : [
-        { key: 'CELO', symbol: 'CELO', address: window.GM_SWAP_BOOT.lifiCeloErc20 || '0x471EcE3750Da237f93B8E339c536989b8978a438', decimals: 18, native: true },
-        { key: 'USDC', symbol: 'USDC', address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6, native: false },
         { key: 'USDT', symbol: 'USDT', address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6, native: false },
+        { key: 'USDC', symbol: 'USDC', address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6, native: false },
         { key: 'cUSD', symbol: 'cUSD', address: '0x765DE816845861e75A25fCA122bb6898B8B1282a', decimals: 18, native: false },
+        { key: 'CELO', symbol: 'CELO', address: window.GM_SWAP_BOOT.lifiCeloErc20 || '0x471EcE3750Da237f93B8E339c536989b8978a438', decimals: 18, native: true },
     ];
 const LIFI_SOURCE_ICONS = { CELO: 'celo', USDC: 'usdc', USDT: 'usdt', cUSD: 'cusd' };
 const LIFI_SOURCE_GLYPHS = { CELO: 'CE', USDC: '$', USDT: '₮', cUSD: '$' };
-const LIFI_DEFAULT_SOURCE_KEY = 'CELO';
+// Default to USDT — a single-step route that actually builds. Native CELO is
+// the ONE source LI.FI cannot simulate, so it is never the default.
+const LIFI_DEFAULT_SOURCE_KEY = 'USDT';
 // Stablecoins that can bridge in a single step (used to pick a fallback).
-const LIFI_FALLBACK_PREFERENCE = ['USDC', 'USDT', 'cUSD'];
+const LIFI_FALLBACK_PREFERENCE = ['USDT', 'USDC', 'cUSD'];
 // Uniswap fee tiers tried when pre-swapping CELO → cUSD (Phase 2).
 const LIFI_PRESWAP_FEE_TIERS = [100, 500, 3000, 10000];
 const LIFI_PRESWAP_TARGET_KEY = 'cUSD';
@@ -1876,7 +1878,7 @@ function _lifiSourceToken(key) {
     const wanted = (key || _lifiSourceKey || LIFI_DEFAULT_SOURCE_KEY);
     return LIFI_SOURCE_TOKENS.find(t => t.key === wanted)
         || LIFI_SOURCE_TOKENS.find(t => t.key === LIFI_DEFAULT_SOURCE_KEY)
-        || { key: LIFI_DEFAULT_SOURCE_KEY, symbol: 'CELO', address: '', decimals: 18, native: true };
+        || { key: LIFI_DEFAULT_SOURCE_KEY, symbol: LIFI_DEFAULT_SOURCE_KEY, address: '', decimals: 6, native: false };
 }
 
 function _lifiRenderSourceToken() {
