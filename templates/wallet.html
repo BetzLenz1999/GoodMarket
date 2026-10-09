@@ -3574,9 +3574,19 @@
             <div class="modal-handle"></div>
             <div class="modal-title" id="dappConnectTitle">🔗 Connect a dApp</div>
 
-            <!-- The "paste a link" form. Hidden once at least one dApp is
-                 connected (the Connect button must disappear after success —
-                 the session list + Manage take over). -->
+            <div id="dappConnectStatus" class="dapp-status" style="display:none;"></div>
+
+            <!-- Review view: a dApp is asking to connect. Sits under the title
+                 with the paste form hidden so Approve/Decline are visible
+                 without scrolling on mobile. -->
+            <div id="dappProposalBox" class="dapp-proposal"></div>
+            <div id="dappProposalActions" class="dapp-actions" style="display:none;">
+                <button type="button" id="dappApproveBtn" class="btn-primary" onclick="GMDappConnect.approveProposal()">✅ Approve connection</button>
+                <button type="button" id="dappRejectBtn" class="btn-secondary" onclick="GMDappConnect.rejectProposal()">Decline</button>
+            </div>
+
+            <!-- Connect view: paste a WalletConnect link. Hidden while
+                 reviewing and once connected (session list takes over). -->
             <div id="dappConnectForm">
                 <div class="dapp-hint">
                     Open the dApp you want to use, choose <strong>WalletConnect</strong>, then
@@ -3589,21 +3599,17 @@
                           placeholder="wc:…@2?relay-protocol=irn&symKey=…" spellcheck="false" autocomplete="off"></textarea>
                 <button type="button" id="dappConnectBtn" class="btn-primary" onclick="GMDappConnect.connectFromLink(document.getElementById('dappUriInput').value)">🔗 Connect this dApp</button>
             </div>
+
+            <!-- Sessions view: everything already connected. -->
+            <div id="dappSessionsWrap">
+                <div class="dapp-divider">Connected dApps</div>
+                <div id="dappSessionList" class="dapp-session-list"></div>
+            </div>
+
             <div class="dapp-actions">
                 <button type="button" id="dappConnectAgainBtn" class="btn-secondary" style="display:none;" onclick="GMDappConnect.startNewConnection()">🔗 Connect another dApp</button>
                 <button type="button" class="btn-secondary" onclick="GMDappConnect.close()">Close</button>
             </div>
-
-            <div id="dappConnectStatus" class="dapp-status" style="display:none;"></div>
-
-            <div id="dappProposalBox" class="dapp-proposal"></div>
-            <div id="dappProposalActions" class="dapp-actions" style="display:none;">
-                <button type="button" id="dappApproveBtn" class="btn-primary" onclick="GMDappConnect.approveProposal()">Approve connection</button>
-                <button type="button" id="dappRejectBtn" class="btn-secondary" onclick="GMDappConnect.rejectProposal()">Decline</button>
-            </div>
-
-            <div class="dapp-divider">Connected dApps</div>
-            <div id="dappSessionList" class="dapp-session-list"></div>
         </div>
     </div>
 
