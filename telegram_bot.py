@@ -2574,6 +2574,44 @@ def _tip_reply_telegram_user_id(message: dict | None):
     return reply_from.get("id")
 
 
+def _tip_reply_username(message: dict | None):
+    """Telegram @handle of the replied-to member, or None.
+
+    A last-resort fallback for recipient resolution when the reply target has
+    no saved wallet but their @handle is registered elsewhere (e.g. a
+    GoodMarket app username in ``user_data``). Bots are ignored.
+    """
+    reply = (message or {}).get("reply_to_message") or {}
+    reply_from = reply.get("from") or {}
+    if not reply_from or reply_from.get("is_bot"):
+        return None
+    handle = (reply_from.get("username") or "").strip().lstrip("@")
+    return f"@{handle}" if handle else None
+
+
+def _is_group_chat(message: dict | None) -> bool:
+    """True for group / supergroup / channel chats (private chats excluded)."""
+    chat_type = ((message or {}).get("chat") or {}).get("type") or ""
+    return chat_type in ("group", "supergroup", "channel")
+
+
+def _tip_authorized(telegram_user: dict | None) -> bool:
+    """True only when the sender is a tip admin.
+
+    Used as a cheap pre-gate so a group stays SILENT for non-admin tip
+    attempts (no "Only admins can use /tip" reply leaking into the group).
+    The authoritative check still runs server-side inside execute_tip.
+    """
+    try:
+        from telegram_tip.service import get_saved_wallet, is_tip_admin
+
+        tid = (telegram_user or {}).get("id")
+        return bool(is_tip_admin(tid, get_saved_wallet(tid) or None))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Tip admin pre-check failed: %s", exc)
+        return False
+
+
 def _is_tip_message(text: str) -> bool:
     """True for a triggered tip (``/tip``/``!tip``/aliases) OR — when enabled —
     the no-keyword reply form (``<amount> <token>``)."""
@@ -2610,6 +2648,12 @@ def handle_tip(chat_id, telegram_user, text, message=None):
     telegram_user_id = telegram_user.get("id")
     admin_wallet = get_saved_wallet(telegram_user_id) or None
     reply_user_id = _tip_reply_telegram_user_id(message)
+    reply_username = _tip_reply_username(message)
+
+    logger.info(
+        "telegram_tip: handling tip chat_id=%s admin_id=%s reply_user_id=%s reply_username=%s text=%r",
+        chat_id, telegram_user_id, reply_user_id, reply_username, (text or "")[:80],
+    )
 
     try:
         if is_tip_command(text):
@@ -2619,6 +2663,7 @@ def handle_tip(chat_id, telegram_user, text, message=None):
                 admin_wallet=admin_wallet,
                 reply_telegram_user_id=reply_user_id,
                 self_wallet=admin_wallet,
+                reply_username=reply_username,
             )
         elif reply_trigger_enabled():
             # No-keyword reply form: "<amount> <token>" replying to a member.
@@ -2631,6 +2676,7 @@ def handle_tip(chat_id, telegram_user, text, message=None):
                 admin_wallet=admin_wallet,
                 reply_telegram_user_id=reply_user_id,
                 self_wallet=admin_wallet,
+                reply_username=reply_username,
             )
         else:
             return
@@ -2707,7 +2753,22 @@ def webhook():
             telegram_user = message.get("from", {})
             text = message.get("text", "").strip()
 
-            if text.startswith("/start"):
+            logger.info(
+                "telegram: incoming message chat_id=%s chat_type=%s from_id=%s is_bot=%s text=%r",
+                chat_id,
+                (message.get("chat") or {}).get("type"),
+                telegram_user.get("id"),
+                telegram_user.get("is_bot"),
+                text[:80],
+            )
+
+            if _is_group_chat(message):
+                # In groups the bot must stay SILENT for everyone — members'
+                # chatter, wallet submissions, stray links — and reply ONLY when
+                # an admin sends a tip. Non-admin tip attempts are ignored too.
+                if _is_tip_message(text) and _tip_authorized(telegram_user):
+                    handle_tip(chat_id, telegram_user, text, message)
+            elif text.startswith("/start"):
                 handle_start(chat_id, telegram_user)
             elif text.startswith("/help"):
                 handle_help(chat_id, telegram_user)
@@ -2856,3 +2917,77 @@ def webhook_info():
         return jsonify({"error": "TELEGRAM_BOT_TOKEN not set"}), 500
     resp = requests.get(f"{TELEGRAM_API}/getWebhookInfo", timeout=10)
     return jsonify(resp.json())
+
+
+@telegram_bot.route("/telegram/tip-diagnostics", methods=["GET"])
+def tip_diagnostics():
+    """Admin-only diagnostics for the Telegram /tip flow.
+
+    Read-only. Reports the facts that actually decide whether a tip works, so a
+    "recipient is not registered" report can be triaged without guessing:
+      - bot identity + ``can_read_all_group_messages`` (group Privacy mode),
+      - webhook status,
+      - tip env presence (never secret values),
+      - optional ``?user_id=`` lookup of that Telegram user's saved wallet.
+    """
+    wallet = session.get("wallet")
+    if not session.get("verified") or not wallet:
+        return jsonify({"success": False, "error": "Authentication required"}), 401
+
+    from supabase_client import is_admin
+    if not is_admin(wallet):
+        return jsonify({"success": False, "error": "Admin access required"}), 403
+
+    result = {"ok": True}
+
+    # 1. Bot identity — can_read_all_group_messages=false means Privacy mode ON
+    #    and ordinary group text (e.g. "!tip", reply trigger) never reaches us.
+    try:
+        me = requests.get(f"{TELEGRAM_API}/getMe", timeout=10).json()
+        info = me.get("result", {}) if isinstance(me, dict) else {}
+        result["bot"] = {
+            "ok": bool(me.get("ok")),
+            "username": info.get("username"),
+            "can_read_all_group_messages": info.get("can_read_all_group_messages"),
+            "privacy_ok": info.get("can_read_all_group_messages") is True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        result["bot"] = {"ok": False, "error": str(exc)}
+
+    # 2. Webhook status.
+    try:
+        result["webhook"] = requests.get(f"{TELEGRAM_API}/getWebhookInfo", timeout=10).json()
+    except Exception as exc:  # noqa: BLE001
+        result["webhook"] = {"ok": False, "error": str(exc)}
+
+    # 3. Tip configuration (presence only — NEVER the key value).
+    try:
+        from telegram_tip import service as tip_service
+        from telegram_tip.blockchain import tip_key_address
+
+        allow = tip_service.admin_allowlist()
+        result["config"] = {
+            "tip_key_set": bool((os.getenv("TIP_KEY") or "").strip()),
+            "tip_key_address": tip_key_address(),
+            "admin_allowlist_count": len(allow),
+            "command_prefixes": tip_service.command_prefixes(),
+            "command_aliases": tip_service.command_aliases(),
+            "reply_trigger": tip_service.reply_trigger_enabled(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        result["config"] = {"error": str(exc)}
+
+    # 4. Optional: does a given Telegram user have a saved wallet?
+    user_id = request.args.get("user_id")
+    if user_id:
+        try:
+            from telegram_tip import service as tip_service
+
+            result["user_lookup"] = {
+                "telegram_user_id": user_id,
+                **tip_service.lookup_saved_wallet(user_id),
+            }
+        except Exception as exc:  # noqa: BLE001
+            result["user_lookup"] = {"telegram_user_id": user_id, "error": str(exc)}
+
+    return jsonify(result)
