@@ -2161,6 +2161,7 @@
         .bn-xdc      { --nav-g1: #2563eb; --nav-g2: #1d4ed8; }
         .bn-savings  { --nav-g1: #0e7490; --nav-g2: #155e75; }
         .bn-services { --nav-g1: #f97316; --nav-g2: #dc2626; }
+        .bn-dappconnect { --nav-g1: #3b82f6; --nav-g2: #1d4ed8; }
 
         @media (min-width: 900px) {
             body { max-width: 1336px; padding-left: 156px; }
@@ -3978,6 +3979,12 @@
             <span class="bn-icon" aria-hidden="true">🛠️</span>
             <span class="bn-label">Services</span>
         </button>
+        {% if dapp_connect_visible %}
+        <button type="button" class="bn-item bn-dappconnect" onclick="GMDappConnect.open()" aria-haspopup="dialog" aria-controls="dappConnectModal" aria-label="Connect a dApp" title="Connect a dApp">
+            <span class="bn-icon" aria-hidden="true">🔗</span>
+            <span class="bn-label">Connect</span>
+        </button>
+        {% endif %}
         <button type="button" class="bn-item bn-more" onclick="openBottomSheet('bnSheetMenu')" aria-haspopup="dialog" aria-controls="bnSheetMenu" aria-label="More" title="More">
             <span class="bn-icon" aria-hidden="true">•••</span>
             <span class="bn-label">More</span>
