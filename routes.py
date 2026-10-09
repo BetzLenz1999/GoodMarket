@@ -1968,8 +1968,26 @@ def local_wallet_register():
             "address": address,
             "keystore_json": keystore_json,
             "referral_code": referral_code,
+            # The row exists as soon as the browser has a keypair, but the user
+            # has NOT finished signup yet (recovery words + first login still to
+            # come). Mark it incomplete so abandoned signups don't count as real
+            # local-wallet users — /api/local-wallet/login flips this to true.
+            "signup_completed": False,
         }
-        table.insert(row).execute()
+        try:
+            table.insert(row).execute()
+        except Exception as insert_err:  # noqa: BLE001
+            # A deployment that has not run sql/local_wallet_signup_completion.sql
+            # has no signup_completed column — registering must still work, so
+            # retry without it (the summary then counts every row as completed,
+            # i.e. the pre-migration behaviour).
+            logger.warning(
+                "⚠️ local wallet register insert with signup_completed failed "
+                f"({insert_err}); retrying without it. Run "
+                "sql/local_wallet_signup_completion.sql."
+            )
+            row.pop("signup_completed", None)
+            table.insert(row).execute()
         logger.info(f"🔐 Local wallet registered: {email_masked} → {_mask_wallet(address)}")
 
         # Referral recording happens HERE ONLY: the local-wallet create-account
@@ -2120,7 +2138,37 @@ def local_wallet_login():
         session["login_method"] = "local"
         session.permanent = True
         try:
-            table.update({"last_login_at": datetime.now(timezone.utc).isoformat()}).eq("email_hash", email_hash).execute()
+            # A successful login is the real "signup finished" signal. This is
+            # what promotes an abandoned register-time row into a counted
+            # local-wallet account, and preserves the FIRST login time.
+            now_iso = datetime.now(timezone.utc).isoformat()
+            login_payload = {
+                "last_login_at": now_iso,
+                "signup_completed": True,
+            }
+            current = (
+                table.select("first_login_at,last_login_at")
+                .eq("email_hash", email_hash)
+                .limit(1)
+                .execute()
+            )
+            current_rows = getattr(current, "data", None) or []
+            had_login = bool(current_rows) and current_rows[0].get("last_login_at")
+            if not had_login:
+                login_payload["first_login_at"] = now_iso
+            try:
+                table.update(login_payload).eq("email_hash", email_hash).execute()
+            except Exception as upd_err:  # noqa: BLE001
+                # Pre-migration deployment: no signup_completed/first_login_at
+                # column. Still stamp last_login_at so login is never blocked.
+                logger.warning(
+                    f"⚠️ local wallet login stamp failed ({upd_err}); "
+                    "stamping last_login_at only. Run "
+                    "sql/local_wallet_signup_completion.sql."
+                )
+                table.update({"last_login_at": now_iso}).eq(
+                    "email_hash", email_hash
+                ).execute()
         except Exception:
             pass
 
@@ -2682,7 +2730,9 @@ def admin_local_wallet_verification():
     that cache so it is cheap to poll from the dashboard.
 
     Query params:
-        status – 'verified' | 'unverified' | 'all' (default 'all')
+        status – 'verified' | 'unverified' | 'incomplete' | 'all' (default 'all')
+                 'all' lists completed accounts only; 'incomplete' lists
+                 abandoned signups (rows with no first login) for cleanup.
         limit  – max rows in the list (default 200, capped at 1000)
     """
     try:
@@ -2691,7 +2741,7 @@ def admin_local_wallet_verification():
         summary = get_local_wallet_verification_summary()
 
         status_filter = (request.args.get("status") or "all").strip().lower()
-        if status_filter not in ("verified", "unverified", "all"):
+        if status_filter not in ("verified", "unverified", "incomplete", "all"):
             status_filter = "all"
         try:
             limit = int(request.args.get("limit", 200))
@@ -2701,29 +2751,48 @@ def admin_local_wallet_verification():
 
         table = _local_wallet_table()
         accounts = []
-        if table is not None and status_filter != "all":
-            query = (
-                table.select(
+        if table is not None:
+            cols = (
+                "address,email_masked,verification_status,is_human_verified,"
+                "human_verified_at,last_verified_check,created_at,last_login_at,"
+                "signup_completed"
+            )
+            query = table.select(cols).order("created_at", desc=True).limit(limit)
+            if status_filter == "incomplete":
+                query = query.eq("signup_completed", False)
+            elif status_filter == "verified":
+                # Only completed signups are real accounts — never surface an
+                # abandoned register-time row as "verified".
+                query = query.eq("signup_completed", True).eq(
+                    "verification_status", "verified"
+                )
+            elif status_filter == "unverified":
+                query = query.eq("signup_completed", True).eq(
+                    "verification_status", "unverified"
+                )
+            else:
+                query = query.eq("signup_completed", True)
+            try:
+                res = query.execute()
+                accounts = getattr(res, "data", None) or []
+            except Exception as col_err:  # noqa: BLE001
+                # Pre-migration deployment: no signup_completed column. Fall
+                # back to the old status-only filter so the dashboard still works
+                # (the column can't be selected or filtered on).
+                logger.warning(
+                    f"⚠️ local-wallet admin list: signup_completed missing ({col_err})"
+                )
+                legacy_cols = (
                     "address,email_masked,verification_status,is_human_verified,"
                     "human_verified_at,last_verified_check,created_at,last_login_at"
                 )
-                .eq("verification_status", status_filter)
-                .order("created_at", desc=True)
-                .limit(limit)
-            )
-            res = query.execute()
-            accounts = getattr(res, "data", None) or []
-        elif table is not None:
-            query = (
-                table.select(
-                    "address,email_masked,verification_status,is_human_verified,"
-                    "human_verified_at,last_verified_check,created_at,last_login_at"
+                fallback = (
+                    table.select(legacy_cols).order("created_at", desc=True).limit(limit)
                 )
-                .order("created_at", desc=True)
-                .limit(limit)
-            )
-            res = query.execute()
-            accounts = getattr(res, "data", None) or []
+                if status_filter in ("verified", "unverified"):
+                    fallback = fallback.eq("verification_status", status_filter)
+                res = fallback.execute()
+                accounts = getattr(res, "data", None) or []
 
         # Mask the wallet address for display (codebase convention) — never
         # return the full address to the browser.
@@ -2739,6 +2808,48 @@ def admin_local_wallet_verification():
         })
     except Exception as e:
         logger.exception("local-wallet verification admin query failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@routes.route("/api/admin/local-wallets/abandoned/cleanup", methods=["POST"])
+@admin_required
+def admin_local_wallet_abandoned_cleanup():
+    """Admin: purge abandoned local-wallet signups (registered, never logged in).
+
+    Body/query `dry_run` defaults to true (count only) so a stray click cannot
+    delete rows — pass `dry_run=false` to actually remove them.
+    """
+    try:
+        from local_wallet_verification import cleanup_incomplete_local_wallet_accounts
+
+        body = request.get_json(silent=True) or {}
+        raw = request.args.get("dry_run")
+        if raw is None:
+            raw = body.get("dry_run")
+        if raw is None or str(raw).strip() == "":
+            dry_run = True  # safe default — never silently mutate
+        else:
+            dry_run = str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+        result = cleanup_incomplete_local_wallet_accounts(dry_run=dry_run)
+        if not result.get("success"):
+            return jsonify({"success": False, "error": result.get("error") or "cleanup failed"}), 500
+
+        try:
+            log_admin_action(
+                session.get("wallet"),
+                "local_wallet_abandoned_cleanup",
+                {
+                    "dry_run": result.get("dry_run"),
+                    "examined": result.get("examined"),
+                    "deleted": result.get("deleted"),
+                },
+            )
+        except Exception:
+            pass
+
+        return jsonify({"success": True, "result": result})
+    except Exception as e:
+        logger.exception("local-wallet abandoned cleanup failed")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @routes.route("/api/admin/local-wallets/verification/sync", methods=["POST"])
