@@ -298,6 +298,12 @@ def confirm_goodmarket_claim():
             )
         except Exception as e_attr:
             logger.warning(f"[gm-claim-confirm] attribution backfill skipped: {e_attr}")
+        # A confirmed UBI claim proves on-chain verification; mirror it onto the
+        # local-wallet account (no-op for non-local wallets) for admin tracing.
+        try:
+            mark_local_wallet_verified(wallet)
+        except Exception as e_lw:
+            logger.warning(f"[gm-claim-confirm] local-wallet FV stamp skipped: {e_lw}")
 
     # REFERRAL PROGRAM auto-disbursement trigger.
     # A claim confirmation is a useful signal that the referee just verified,
@@ -1750,6 +1756,12 @@ def verify_ubi():
                         supabase_logger.log_verification_attempt(
                             wallet_address, success=True, face_verified=True
                         )
+                    # Mirror the confirmed on-chain FV onto the local-wallet
+                    # account (no-op for non-local wallets) for admin tracing.
+                    try:
+                        mark_local_wallet_verified(wallet_address)
+                    except Exception as lw_err:
+                        logger.warning(f"⚠️ local-wallet FV stamp skipped in verify-ubi: {lw_err}")
             except Exception as fv_check_err:
                 logger.warning(f"⚠️ Could not check face verification status for tracking: {fv_check_err}")
 
@@ -1859,6 +1871,41 @@ def _verify_local_wallet_signature(address, message, signature):
     except Exception as e:
         logger.warning(f"Local wallet signature verification failed: {e}")
         return False
+
+def mark_local_wallet_verified(address):
+    """Write-time stamp of face-verification onto local_wallet_accounts.
+
+    Call this ONLY after an on-chain ``Identity.isWhitelisted`` read has
+    confirmed the wallet. It is a best-effort cache write: if the address has
+    no local-wallet account, or the DB is unavailable, it silently no-ops so
+    the caller's flow is never broken. The background reconciler backfills any
+    row this misses (see local_wallet_verification.py)."""
+    if not address:
+        return
+    try:
+        table = _local_wallet_table()
+        if table is None:
+            return
+        payload = {
+            "verification_status": "verified",
+            "is_human_verified": True,
+            "last_verified_check": datetime.now(timezone.utc).isoformat(),
+        }
+        existing = (
+            table.select("human_verified_at")
+            .ilike("address", address)
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(existing, "data", None) or []
+        if not rows:
+            return
+        # Preserve the FIRST confirmation time.
+        if not rows[0].get("human_verified_at"):
+            payload["human_verified_at"] = datetime.now(timezone.utc).isoformat()
+        table.update(payload).ilike("address", address).execute()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"⚠️ local-wallet verify stamp failed for {str(address)[:10]}…: {e}")
 
 @routes.route("/api/local-wallet/register", methods=["POST"])
 def local_wallet_register():
@@ -2622,6 +2669,114 @@ def get_all_users():
         })
     except Exception as e:
         logger.error(f"❌ Get users error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@routes.route("/api/admin/local-wallets/verification", methods=["GET"])
+@admin_required
+def admin_local_wallet_verification():
+    """Admin: count + list local-wallet accounts by face-verification status.
+
+    The authoritative check is on-chain (`Identity.isWhitelisted`), mirrored
+    into `local_wallet_accounts.verification_status` / `is_human_verified` by
+    the write-time stamp and the background reconciler. This endpoint reads
+    that cache so it is cheap to poll from the dashboard.
+
+    Query params:
+        status – 'verified' | 'unverified' | 'all' (default 'all')
+        limit  – max rows in the list (default 200, capped at 1000)
+    """
+    try:
+        from local_wallet_verification import get_local_wallet_verification_summary
+
+        summary = get_local_wallet_verification_summary()
+
+        status_filter = (request.args.get("status") or "all").strip().lower()
+        if status_filter not in ("verified", "unverified", "all"):
+            status_filter = "all"
+        try:
+            limit = int(request.args.get("limit", 200))
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(limit, 1000))
+
+        table = _local_wallet_table()
+        accounts = []
+        if table is not None and status_filter != "all":
+            query = (
+                table.select(
+                    "address,email_masked,verification_status,is_human_verified,"
+                    "human_verified_at,last_verified_check,created_at,last_login_at"
+                )
+                .eq("verification_status", status_filter)
+                .order("created_at", desc=True)
+                .limit(limit)
+            )
+            res = query.execute()
+            accounts = getattr(res, "data", None) or []
+        elif table is not None:
+            query = (
+                table.select(
+                    "address,email_masked,verification_status,is_human_verified,"
+                    "human_verified_at,last_verified_check,created_at,last_login_at"
+                )
+                .order("created_at", desc=True)
+                .limit(limit)
+            )
+            res = query.execute()
+            accounts = getattr(res, "data", None) or []
+
+        # Mask the wallet address for display (codebase convention) — never
+        # return the full address to the browser.
+        for acc in accounts:
+            addr = acc.get("address") or ""
+            acc["wallet_short"] = _mask_wallet(addr) if addr else ""
+
+        return jsonify({
+            "success": True,
+            "summary": summary,
+            "status_filter": status_filter,
+            "accounts": accounts,
+        })
+    except Exception as e:
+        logger.exception("local-wallet verification admin query failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@routes.route("/api/admin/local-wallets/verification/sync", methods=["POST"])
+@admin_required
+def admin_local_wallet_verification_sync():
+    """Admin: run a reconciliation pass now (refresh the cached statuses)."""
+    try:
+        from local_wallet_verification import (
+            reconcile_local_wallet_verifications,
+            get_local_wallet_verification_summary,
+        )
+
+        before = get_local_wallet_verification_summary()
+        result = reconcile_local_wallet_verifications()
+        after = get_local_wallet_verification_summary()
+
+        try:
+            log_admin_action(
+                session.get("wallet"),
+                "local_wallet_verification_sync",
+                {
+                    "checked": result.get("checked", 0),
+                    "updated": result.get("updated", 0),
+                    "verified": result.get("verified", 0),
+                    "unverified": result.get("unverified", 0),
+                },
+            )
+        except Exception:
+            pass
+
+        return jsonify({
+            "success": True,
+            "result": result,
+            "before": before,
+            "after": after,
+        })
+    except Exception as e:
+        logger.exception("local-wallet verification sync failed")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @routes.route("/api/admin/stats", methods=["GET"])
@@ -7595,6 +7750,12 @@ def wallet_page():
                 )
             except Exception as fv_attr_err:
                 logger.warning(f"[wallet-fv-attr] mark_verified_via_goodmarket error: {fv_attr_err}")
+            # Mirror the on-chain FV onto the local-wallet account (no-op for
+            # non-local wallets) so admins can count/trace verified users.
+            try:
+                mark_local_wallet_verified(wallet)
+            except Exception as fv_lw_err:
+                logger.warning(f"[wallet-fv-attr] mark_local_wallet_verified error: {fv_lw_err}")
         else:
             logger.info(
                 f"ℹ️ [wallet-fv-attr] fv_pending redirect for {wallet[:8]}… but the wallet is "
