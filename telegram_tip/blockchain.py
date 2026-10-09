@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from eth_account import Account
 from web3 import Web3
@@ -26,6 +27,17 @@ from web3 import Web3
 from .tokens import TOKENS, to_wei
 
 logger = logging.getLogger(__name__)
+
+# Fallback RPCs used ONLY for receipt confirmation. A broadcast tx is a fact;
+# the only thing that can fail afterwards is the RPC we happen to be reading
+# from (forno in particular returns transient "no backend healthy" and can lag
+# on receipts). Polling several nodes for the receipt prevents a confirmed tip
+# from being reported as "not yet confirmed" just because one node is slow.
+_DEFAULT_CELO_FALLBACKS = "https://forno.celo.org,https://rpc.ankr.com/celo,https://celo.drpc.org"
+_DEFAULT_XDC_FALLBACKS = "https://earpc.xinfin.network,https://rpc.xinfin.network"
+# How long to keep polling for a receipt before reporting submitted_unconfirmed.
+_RECEIPT_TIMEOUT_SEC = float(os.getenv("TIP_RECEIPT_TIMEOUT_SEC", "120") or "120")
+_RECEIPT_POLL_SEC = float(os.getenv("TIP_RECEIPT_POLL_SEC", "2.5") or "2.5")
 
 # Minimal ERC-20 surface — enough for balanceOf + transfer (G$ is ERC-777 on
 # Celo but exposes the ERC-20 surface, which is all a direct payout needs).
@@ -86,6 +98,42 @@ class TipBlockchainService:
         if meta["network"] == "xdc":
             return os.getenv("XDC_RPC_URL", meta["rpc"])
         return os.getenv("CELO_RPC_URL", meta["rpc"])
+
+    def _rpc_urls_for(self, meta: dict) -> list:
+        """Primary RPC first, then the per-chain fallbacks (deduped)."""
+        if meta["network"] == "xdc":
+            primary = os.getenv("XDC_RPC_URL", meta["rpc"])
+            fallbacks = os.getenv("XDC_RPC_FALLBACKS", _DEFAULT_XDC_FALLBACKS)
+        else:
+            primary = os.getenv("CELO_RPC_URL", meta["rpc"])
+            fallbacks = os.getenv("CELO_RPC_FALLBACKS", _DEFAULT_CELO_FALLBACKS)
+        urls = [primary]
+        for u in (fallbacks or "").split(","):
+            u = u.strip()
+            if u and u not in urls:
+                urls.append(u)
+        return urls
+
+    def _wait_for_receipt_patient(self, meta: dict, tx_hash) -> object | None:
+        """Poll for a receipt across the primary RPC then the fallbacks.
+
+        A broadcast tx must never be reported as unconfirmed just because the
+        single node we read from is flaky — forno both rate-limits and lags.
+        Returns the receipt, or None if not seen within ``_RECEIPT_TIMEOUT_SEC``.
+        """
+        deadline = time.time() + _RECEIPT_TIMEOUT_SEC
+        urls = self._rpc_urls_for(meta)
+        while time.time() < deadline:
+            for url in urls:
+                try:
+                    w3 = Web3(Web3.HTTPProvider(url))
+                    receipt = w3.eth.get_transaction_receipt(tx_hash)
+                    if receipt is not None:
+                        return receipt
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(_RECEIPT_POLL_SEC)
+        return None
 
     def mask_wallet(self, wallet: str | None) -> str:
         if not wallet or len(wallet) < 10:
@@ -245,14 +293,11 @@ class TipBlockchainService:
             return {"success": False, "error": "nonce_collision", "error_type": "nonce_collision"}
 
         # Patient receipt wait — never raise on timeout (a broadcast tx may still
-        # confirm; resending would double-pay).
-        receipt = None
-        try:
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("⏳ Tip receipt not confirmed within timeout: %s", exc)
-
+        # confirm; resending would double-pay). Polls across RPC fallbacks so a
+        # slow/rate-limited primary node cannot report a confirmed tip as pending.
+        receipt = self._wait_for_receipt_patient(meta, tx_hash)
         if receipt is None:
+            logger.warning("⏳ Tip receipt not confirmed within timeout: %s", tx_hash_hex)
             return {
                 "success": False,
                 "error": "submitted_unconfirmed",
