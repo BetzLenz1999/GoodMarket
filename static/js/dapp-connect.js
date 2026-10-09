@@ -220,6 +220,9 @@
             _getClient().then(function () {
                 _dropForeignSessions();
                 refreshStatusStrip();
+                // Re-render the modal so an already-connected session hides the
+                // connect form the moment the client finishes booting.
+                if (_el("dappSessionList")) _renderSessions();
             }).catch(function (e) { _log("[dapp-connect] init:", e && e.message); });
         } catch (e) {
             _log("[dapp-connect] init failed:", e && e.message);
@@ -252,6 +255,9 @@
 
     function open() {
         if (!isEligible()) {
+            _showConnectForm(false);
+            var againBtn = _el("dappConnectAgainBtn");
+            if (againBtn) againBtn.style.display = "none";
             _setConnectStatus(
                 "🔒 Connect a dApp signs with your in-app GoodMarket wallet (email + PIN). " +
                 "Log in with your GoodMarket wallet to use it — a MetaMask, WalletConnect or " +
@@ -298,7 +304,7 @@
         }
 
         var btn = _el("dappConnectBtn");
-        if (btn) { btn.disabled = true; btn.textContent = "Connecting…"; }
+        if (btn) { btn.disabled = true; btn.textContent = "⏳ Connecting…"; }
         _setConnectStatus("⏳ Connecting to the dApp…", "info");
 
         return _getClient().then(function (client) {
@@ -308,7 +314,7 @@
         }).catch(function (e) {
             _setConnectStatus("❌ Could not connect: " + (e && e.message ? e.message : e), "error");
         }).then(function () {
-            if (btn) { btn.disabled = false; btn.textContent = "Connect"; }
+            if (btn) { btn.disabled = false; btn.textContent = "🔗 Connect this dApp"; }
         });
     }
 
@@ -467,6 +473,7 @@
         }).then(function () {
             _state.pendingProposal = null;
             _markUsed();
+            if (_el("dappProposalBox")) _el("dappProposalBox").innerHTML = "";
             _setConnectStatus("✅ dApp connected.", "ok");
             _renderSessions();
             refreshStatusStrip();
@@ -844,12 +851,34 @@
         } catch (_) { return []; }
     }
 
+    // Show the paste-a-link form ONLY when there is nothing connected yet.
+    // Once a dApp is connected the "Connect this dApp" button must disappear —
+    // the session list (with its Revoke buttons) and the "Connect another dApp"
+    // escape hatch take over, so a successful connect is visually obvious.
+    function _showConnectForm(show) {
+        var form = _el("dappConnectForm");
+        var again = _el("dappConnectAgainBtn");
+        if (form) form.style.display = show ? "" : "none";
+        if (again) again.style.display = show ? "none" : "";
+    }
+
+    function startNewConnection() {
+        // Re-open the paste-a-link form (used by "Connect another dApp").
+        var input = _el("dappUriInput");
+        if (input) input.value = "";
+        _setConnectStatus("", "");
+        _showConnectForm(true);
+        if (input && input.focus) { try { input.focus(); } catch (_) {} }
+    }
+
     function _renderSessions() {
         var list = _el("dappSessionList");
         var proposals = _el("dappProposalActions");
         if (proposals) proposals.style.display = _state.pendingProposal ? "flex" : "none";
-        if (!list) return;
         var all = sessions();
+        // Connected => hide the connect form/button. Nothing connected => show it.
+        _showConnectForm(all.length === 0);
+        if (!list) return;
         if (!all.length) {
             list.innerHTML = '<div class="dapp-empty">No dApps connected yet.</div>';
             return;
@@ -978,6 +1007,7 @@
         close: close,
         connectFromLink: connectFromLink,
         approveProposal: approveProposal,
+        startNewConnection: startNewConnection,
         rejectProposal: rejectProposal,
         approveRequest: approveRequest,
         rejectRequest: rejectRequest,
