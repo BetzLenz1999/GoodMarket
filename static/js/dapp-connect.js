@@ -16,7 +16,7 @@
  *   - NEVER auto-sign. Every session_request opens an approval sheet showing
  *     the chain and the full request. Only eth_accounts / eth_chainId are
  *     answered silently (they expose nothing and dApps need them).
- *   - Allowlist. Only Celo/XDC/Base and a small method set; eth_sign (blind
+ *   - Allowlist. Only Celo/XDC/Base/Ethereum and a small method set; eth_sign (blind
  *     signing) and anything unknown are auto-rejected.
  *   - Show the dApp's real origin (peer.metadata.url) and warn on mismatch.
  *   - Signing always goes through GMLocalWallet.getProvider() for local
@@ -72,10 +72,20 @@
     // Wallet-scoped methods we answer ourselves instead of forwarding.
     var WALLET_METHODS = ["wallet_switchEthereumChain", "wallet_addEthereumChain"];
 
+    // Read-only WALLET methods a modern dApp (e.g. Reown AppKit) lists in its
+    // proposal. We tolerate them so a proposal is never blocked by their mere
+    // presence, and at request time we answer a harmless empty result — they
+    // never touch the key and never move funds.
+    var BENIGN_WALLET_READS = [
+        "wallet_getPermissions", "wallet_getCapabilities",
+        "wallet_getCallsStatus", "wallet_getAssets"
+    ];
+
     var ALLOWED_CHAINS = {
         "eip155:42220": { label: "Celo", hex: "0xa4ec" },
         "eip155:50": { label: "XDC Network", hex: "0x32" },
-        "eip155:8453": { label: "Base", hex: "0x2105" }
+        "eip155:8453": { label: "Base", hex: "0x2105" },
+        "eip155:1": { label: "Ethereum", hex: "0x1" }
     };
 
     var MAX_SESSIONS = 10;
@@ -238,8 +248,9 @@
     function open() {
         if (!isEligible()) {
             _setConnectStatus(
-                "🔒 Connect a dApp works with your in-app GoodMarket wallet (email + PIN) only. " +
-                "Log in with your GoodMarket wallet to use it." , "error");
+                "🔒 Connect a dApp signs with your in-app GoodMarket wallet (email + PIN). " +
+                "Log in with your GoodMarket wallet to use it — a MetaMask, WalletConnect or " +
+                "Privy login signs in its own wallet, not here." , "error");
             _openModal("dappConnectModal");
             return;
         }
@@ -277,7 +288,7 @@
             return Promise.resolve();
         }
         if (!isEligible()) {
-            _setConnectStatus("Connect a dApp is only available for the in-app GoodMarket wallet.", "error");
+            _setConnectStatus("Connect a dApp signs with your in-app GoodMarket wallet (email + PIN). Log in with your GoodMarket wallet to use it.", "error");
             return Promise.resolve();
         }
 
@@ -298,44 +309,81 @@
 
     // ── proposal review ──────────────────────────────────────────────────
 
-    function _proposalChains(proposal) {
+    // Reown AppKit (and most modern dApps) put everything under
+    // `optionalNamespaces` with `requiredNamespaces: {}`. Reading only the
+    // required map made every such proposal look empty -> Approve disabled.
+    // Union both. Only the `eip155` namespace is ever considered; other
+    // namespaces (bip122/tron/…) are simply ignored, not treated as invalid.
+    function _nsUnion(proposal, field) {
         try {
-            var ns = proposal.params.requiredNamespaces || {};
             var out = [];
-            Object.keys(ns).forEach(function (key) {
-                (ns[key].chains || []).forEach(function (c) {
-                    if (out.indexOf(c) < 0) out.push(c);
+            ["optionalNamespaces", "requiredNamespaces"].forEach(function (which) {
+                var ns = (proposal.params && proposal.params[which]) || {};
+                var eip = ns.eip155 || {};
+                (eip[field] || []).forEach(function (v) {
+                    if (out.indexOf(v) < 0) out.push(v);
                 });
             });
             return out;
         } catch (_) { return []; }
     }
 
+    function _proposalChains(proposal) {
+        return _nsUnion(proposal, "chains");
+    }
+
     function _proposalMethods(proposal) {
+        return _nsUnion(proposal, "methods");
+    }
+
+    // Chains/methods the dApp declared as REQUIRED. If any of these is one we
+    // cannot do, the proposal must be blocked (the dApp made it mandatory).
+    function _requiredChains(proposal) {
         try {
-            var ns = proposal.params.requiredNamespaces || {};
-            var out = [];
-            Object.keys(ns).forEach(function (key) {
-                (ns[key].methods || []).forEach(function (m) {
-                    if (out.indexOf(m) < 0) out.push(m);
-                });
-            });
-            return out;
+            var ns = (proposal.params && proposal.params.requiredNamespaces) || {};
+            return ((ns.eip155 || {}).chains) || [];
+        } catch (_) { return []; }
+    }
+
+    function _requiredMethods(proposal) {
+        try {
+            var ns = (proposal.params && proposal.params.requiredNamespaces) || {};
+            return ((ns.eip155 || {}).methods) || [];
         } catch (_) { return []; }
     }
 
     function _methodSupported(m) {
         return ALLOWED_METHODS.indexOf(m) >= 0 ||
             READ_METHODS.indexOf(m) >= 0 ||
-            WALLET_METHODS.indexOf(m) >= 0;
+            WALLET_METHODS.indexOf(m) >= 0 ||
+            BENIGN_WALLET_READS.indexOf(m) >= 0;
+    }
+
+    // The chains we can actually grant: what the dApp asked for (required OR
+    // optional) intersected with our allowlist. Everything else is simply not
+    // granted — that is what "optional" means in the WalletConnect spec.
+    function _grantedChains(proposal) {
+        return _proposalChains(proposal).filter(function (c) { return !!ALLOWED_CHAINS[c]; });
+    }
+
+    // Signing methods we will grant: only those the dApp actually asked for,
+    // intersected with our signing allowlist. Never hand a dApp a signing
+    // permission it did not request.
+    function _grantedSigningMethods(proposal) {
+        return _proposalMethods(proposal).filter(function (m) {
+            return ALLOWED_METHODS.indexOf(m) >= 0;
+        });
     }
 
     function _proposalSupported(proposal) {
-        var chains = _proposalChains(proposal);
-        var methods = _proposalMethods(proposal);
-        var chainsOk = chains.length > 0 && chains.every(function (c) { return !!ALLOWED_CHAINS[c]; });
-        var methodsOk = methods.length > 0 && methods.every(_methodSupported);
-        return chainsOk && methodsOk;
+        var grantedChains = _grantedChains(proposal);
+        // A REQUIRED chain/method we cannot do still blocks — the dApp made it
+        // mandatory, so a partial grant would be a broken session.
+        var requiredOk = _requiredChains(proposal).every(function (c) { return !!ALLOWED_CHAINS[c]; }) &&
+            _requiredMethods(proposal).every(_methodSupported);
+        // Intersection must be non-empty: there has to be at least one chain we
+        // can serve, otherwise there is nothing to approve.
+        return requiredOk && grantedChains.length > 0;
     }
 
     function _proposalMeta(proposal) {
@@ -351,10 +399,17 @@
         var box = _el("dappProposalBox");
         if (!box) return;
         var meta = _proposalMeta(proposal);
-        var chains = _proposalChains(proposal).map(function (c) {
+        var allChains = _proposalChains(proposal);
+        var granted = _grantedChains(proposal);
+        var grantedNames = granted.map(function (c) {
             return (ALLOWED_CHAINS[c] && ALLOWED_CHAINS[c].label) || c;
         });
-        var methods = _proposalMethods(proposal);
+        var withheldNames = allChains.filter(function (c) { return !ALLOWED_CHAINS[c]; }).map(function (c) {
+            return (ALLOWED_CHAINS[c] && ALLOWED_CHAINS[c].label) || c;
+        });
+        // Methods we will grant = the read/utility set we always grant plus the
+        // signing methods the dApp asked for. This is what the session carries.
+        var grantedMethods = _grantedSigningMethods(proposal);
         var ok = _proposalSupported(proposal);
         var overCap = sessions().length >= MAX_SESSIONS;
         if (overCap) ok = false;
@@ -369,13 +424,16 @@
                     '<div class="dapp-peer-url">' + _esc(meta.url || "unknown origin") + '</div>' +
                 '</div>' +
             '</div>' +
-            '<div class="dapp-req-row"><span>Chains</span><b>' + _esc(chains.join(", ") || "—") + '</b></div>' +
-            '<div class="dapp-req-row"><span>Methods</span><b>' + _esc(methods.join(", ") || "—") + '</b></div>' +
+            '<div class="dapp-req-row"><span>Chains</span><b>' + _esc(grantedNames.join(", ") || "—") + '</b></div>' +
+            '<div class="dapp-req-row"><span>Methods</span><b>' + _esc(grantedMethods.join(", ") || "—") + '</b></div>' +
+            (withheldNames.length
+                ? '<div class="dapp-warn">ℹ️ This dApp also lists ' + _esc(withheldNames.join(", ")) + ', which GoodMarket does not support. Those will not be granted.</div>'
+                : '') +
             (overCap
                 ? '<div class="dapp-warn bad">🚫 You already have ' + sessions().length + ' connected dApps. Revoke one before connecting another.</div>'
                 : (ok
-                    ? '<div class="dapp-warn ok">✅ This dApp only asks for supported chains and actions.</div>'
-                    : '<div class="dapp-warn bad">🚫 This dApp asks for chains or actions GoodMarket does not support. Approving is disabled.</div>')) +
+                    ? '<div class="dapp-warn ok">✅ You will grant the chains and actions shown above.</div>'
+                    : '<div class="dapp-warn bad">🚫 This dApp requires a chain or action GoodMarket does not support. Approving is disabled.</div>')) +
             '<div class="dapp-warn">⚠️ Only connect with dApps you trust. Approving gives this dApp permission to ask you to sign — you still approve every action individually.</div>';
 
         var approve = _el("dappApproveBtn");
@@ -393,7 +451,7 @@
         var proposal = _state.pendingProposal;
         if (!proposal) return;
         if (!_proposalSupported(proposal)) {
-            _setConnectStatus("This dApp asks for unsupported chains or actions.", "error");
+            _setConnectStatus("This dApp requires a chain or action GoodMarket does not support.", "error");
             return;
         }
         _getClient().then(function (client) {
@@ -418,14 +476,14 @@
     function _buildNamespaces(proposal) {
         // Always advertise the basics a dApp cannot work without: account and
         // chain reads (silent), the read-only RPCs and the chain switch.
-        var methods = SILENT_METHODS.concat(READ_METHODS, WALLET_METHODS);
+        var methods = SILENT_METHODS.concat(READ_METHODS, WALLET_METHODS, BENIGN_WALLET_READS);
         // Plus only the SIGNING methods the dApp actually asked for — never
         // hand a dApp a signing permission it did not request.
-        _proposalMethods(proposal).forEach(function (m) {
-            if (ALLOWED_METHODS.indexOf(m) >= 0 && methods.indexOf(m) < 0) methods.push(m);
+        _grantedSigningMethods(proposal).forEach(function (m) {
+            if (methods.indexOf(m) < 0) methods.push(m);
         });
 
-        var chains = _proposalChains(proposal).filter(function (c) { return !!ALLOWED_CHAINS[c]; });
+        var chains = _grantedChains(proposal);
         var accounts = [];
         chains.forEach(function (c) {
             accounts.push(c + ":" + WALLET);
@@ -484,6 +542,15 @@
             return;
         }
 
+        // Benign read-only wallet methods a dApp may call after connecting.
+        // They never touch the key and never move funds, so we answer them
+        // without an approval prompt (a dApp that gets an error here often
+        // reports the wallet as broken).
+        if (BENIGN_WALLET_READS.indexOf(method) >= 0) {
+            _answerBenignWalletRead(event, method);
+            return;
+        }
+
         if (ALLOWED_METHODS.indexOf(method) < 0) {
             _respond(event, null, { code: 4200, message: "Unsupported method: " + method });
             _toast("🚫 The dApp asked for an unsupported action (“" + method + "”) — declined automatically.");
@@ -528,9 +595,25 @@
             });
     }
 
+    // Read-only WALLET namespace methods. We return the facts a dApp needs and
+    // nothing more; the wallet address is already known to the session.
+    function _answerBenignWalletRead(event, method) {
+        var result = null;
+        if (method === "wallet_getPermissions") {
+            result = [{ parentCapability: "eth_accounts" }];
+        } else if (method === "wallet_getCapabilities") {
+            result = {};
+        } else if (method === "wallet_getCallsStatus") {
+            result = { status: 100 };  // EIP-5792: 100 = "not found / no such batch"
+        } else if (method === "wallet_getAssets") {
+            result = [];
+        }
+        _respond(event, result, null);
+    }
+
     // wallet_switchEthereumChain / wallet_addEthereumChain. The in-app wallet
-    // only knows Celo / XDC / Base, so a supported chain moves its pointer and
-    // anything else is refused (the dApp then knows to stop asking).
+    // only knows Celo / XDC / Base (and, for signing, Ethereum), so a supported
+    // chain moves its pointer and anything else is refused.
     function _answerWalletMethod(event, method) {
         var params = (event.params.request.params) || [];
         var wanted = params[0] && params[0].chainId;
