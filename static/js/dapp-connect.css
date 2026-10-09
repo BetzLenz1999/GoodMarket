@@ -9,8 +9,14 @@
    no-cache HTML. The markup is inside {% if dapp_connect_visible %}, so this
    sheet is only linked when the feature flag is ON.
 
-   Every text colour is measured against the dark canvas in
-   tests/test_dapp_connect_content.py — keep them AA.
+   ── Palette (2026-10) ─────────────────────────────────────────────────────
+   The wallet moved to the Soft Sunrise LIGHT theme (cream canvas --bg #f7f1e8,
+   white modal sheets). This sheet originally shipped light-on-dark colours
+   (#e5e7eb / #9ca3af / #bfdbfe) — on a white modal that is ~1.1:1, i.e. the
+   connect modal was effectively unreadable. All text is now dark-on-light,
+   driven by the theme variables where possible. Every literal `color:` is
+   measured against BOTH light surfaces (#ffffff sheet, #f7f1e8 canvas) in
+   tests/test_dapp_connect_content.py — keep them at AA (4.5:1).
    =========================================================================== */
 
 .dapp-strip {
@@ -20,54 +26,55 @@
     margin: 0.4rem 1.25rem 0.8rem;
     padding: 0.7rem 1rem;
     border-radius: 12px;
-    background: rgba(59,130,246,0.14);
-    border: 1px solid rgba(96,165,250,0.42);
+    background: rgba(37,99,235,0.08);
+    border: 1px solid rgba(37,99,235,0.30);
 }
 .dapp-strip.show { display: flex; }
-.dapp-strip-label { flex: 1; min-width: 0; font-size: 0.82rem; font-weight: 700; color: #bfdbfe; }
+.dapp-strip-label { flex: 1; min-width: 0; font-size: 0.82rem; font-weight: 700; color: #1e3a8a; }
 .dapp-strip-btn {
     flex-shrink: 0;
     padding: 0.35rem 0.9rem;
     border-radius: 8px;
-    border: 1px solid #93c5fd;
-    background: transparent;
-    color: #dbeafe;
+    border: 1px solid rgba(37,99,235,0.45);
+    background: #ffffff;
+    color: #1d4ed8;
     font-family: inherit;
     font-size: 0.78rem;
     font-weight: 700;
     cursor: pointer;
 }
-.dapp-strip-btn:hover { background: rgba(147,197,253,0.16); }
-.dapp-strip-btn:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.dapp-strip-btn:hover { background: rgba(37,99,235,0.08); }
+.dapp-strip-btn:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 
 .dapp-hint {
     font-size: 0.82rem;
     line-height: 1.55;
-    color: #9ca3af;
+    color: var(--text-dim);
     margin-bottom: 0.9rem;
 }
-.dapp-hint strong { color: #e5e7eb; }
+.dapp-hint strong { color: var(--text); }
 .dapp-hint code {
-    background: rgba(255,255,255,0.08);
+    background: var(--card-soft);
     border-radius: 4px;
     padding: 0.05rem 0.3rem;
     font-size: 0.8rem;
-    color: #c4b5fd;
+    color: #0f766e;
 }
-.dapp-label { display: block; font-size: 0.8rem; font-weight: 700; color: #d1d5db; margin-bottom: 0.4rem; }
+.dapp-label { display: block; font-size: 0.8rem; font-weight: 700; color: var(--text); margin-bottom: 0.4rem; }
 .dapp-uri-input {
     width: 100%;
     box-sizing: border-box;
     padding: 0.7rem 0.85rem;
     border-radius: 10px;
-    border: 1px solid rgba(255,255,255,0.14);
-    background: rgba(255,255,255,0.05);
-    color: #e5e7eb;
+    border: 1px solid var(--card-border);
+    background: #ffffff;
+    color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.76rem;
     resize: vertical;
 }
-.dapp-uri-input:focus { outline: none; border-color: #93c5fd; }
+.dapp-uri-input::placeholder { color: var(--text-muted); }
+.dapp-uri-input:focus { outline: none; border-color: rgba(var(--accent-rgb),0.55); }
 .dapp-actions {
     display: flex;
     gap: 0.6rem;
@@ -81,63 +88,64 @@
     border-radius: 10px;
     font-size: 0.8rem;
     line-height: 1.5;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.14);
-    color: #d1d5db;
+    background: var(--card-soft);
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
 }
-.dapp-status.is-ok { background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.45); color: #6ee7b7; }
-.dapp-status.is-error { background: rgba(248,113,113,0.12); border-color: rgba(248,113,113,0.45); color: #fca5a5; }
-.dapp-status.is-info { background: rgba(96,165,250,0.12); border-color: rgba(96,165,250,0.45); color: #bfdbfe; }
+.dapp-status.is-ok { background: rgba(22,163,74,0.10); border-color: rgba(22,163,74,0.40); color: #166534; }
+.dapp-status.is-error { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.35); color: #b91c1c; }
+.dapp-status.is-info { background: rgba(37,99,235,0.08); border-color: rgba(37,99,235,0.30); color: #1d4ed8; }
 .dapp-proposal { margin-top: 0.9rem; }
 .dapp-peer { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.8rem; }
 .dapp-peer-icon { width: 42px; height: 42px; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
 .dapp-peer-icon--ph {
     display: flex; align-items: center; justify-content: center;
-    background: rgba(255,255,255,0.08); font-size: 1.3rem;
+    background: var(--card-soft); font-size: 1.3rem;
 }
-.dapp-peer-name { font-size: 0.95rem; font-weight: 800; color: #f3f4f6; }
-.dapp-peer-url { font-size: 0.74rem; color: #9ca3af; word-break: break-all; }
+.dapp-peer-name { font-size: 0.95rem; font-weight: 800; color: var(--text); }
+.dapp-peer-url { font-size: 0.74rem; color: var(--text-muted); word-break: break-all; }
 .dapp-req-row {
     display: flex; justify-content: space-between; gap: 1rem;
-    padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 0.5rem 0; border-bottom: 1px solid var(--card-border);
     font-size: 0.8rem;
 }
-.dapp-req-row span { color: #9ca3af; flex-shrink: 0; }
-.dapp-req-row b { color: #e5e7eb; font-weight: 700; text-align: right; word-break: break-all; }
+.dapp-req-row span { color: var(--text-dim); flex-shrink: 0; }
+.dapp-req-row b { color: var(--text); font-weight: 700; text-align: right; word-break: break-all; }
 .dapp-warn {
     margin-top: 0.7rem; padding: 0.6rem 0.75rem; border-radius: 10px;
     font-size: 0.76rem; line-height: 1.5;
-    background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4); color: #fcd34d;
+    background: rgba(217,119,6,0.10); border: 1px solid rgba(217,119,6,0.35); color: #92400e;
 }
-.dapp-warn.ok { background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.42); color: #6ee7b7; }
-.dapp-warn.bad { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.42); color: #fca5a5; }
+.dapp-warn.ok { background: rgba(22,163,74,0.10); border-color: rgba(22,163,74,0.38); color: #166534; }
+.dapp-warn.bad { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.32); color: #b91c1c; }
 .dapp-divider {
     margin: 1.1rem 0 0.6rem;
     font-size: 0.74rem; font-weight: 800; letter-spacing: 0.4px;
-    text-transform: uppercase; color: #9ca3af;
+    text-transform: uppercase; color: var(--text-muted);
 }
 .dapp-session-list { display: flex; flex-direction: column; gap: 0.5rem; }
-.dapp-empty { font-size: 0.8rem; color: #9ca3af; padding: 0.4rem 0; }
+.dapp-empty { font-size: 0.8rem; color: var(--text-muted); padding: 0.4rem 0; }
 .dapp-session {
     display: flex; align-items: center; gap: 0.75rem;
     padding: 0.6rem 0.75rem; border-radius: 10px;
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    background: var(--card-soft); border: 1px solid var(--card-border);
 }
 .dapp-session-meta { flex: 1; min-width: 0; }
-.dapp-session-name { font-size: 0.85rem; font-weight: 700; color: #e5e7eb; }
-.dapp-session-url { font-size: 0.72rem; color: #9ca3af; word-break: break-all; }
+.dapp-session-name { font-size: 0.85rem; font-weight: 700; color: var(--text); }
+.dapp-session-url { font-size: 0.72rem; color: var(--text-muted); word-break: break-all; }
 .dapp-revoke-btn {
     flex-shrink: 0; padding: 0.35rem 0.8rem; border-radius: 8px;
-    border: 1px solid rgba(248,113,113,0.5); background: rgba(248,113,113,0.12);
-    color: #fca5a5; font-family: inherit; font-size: 0.76rem; font-weight: 700; cursor: pointer;
+    border: 1px solid rgba(220,38,38,0.40); background: rgba(220,38,38,0.08);
+    color: #b91c1c; font-family: inherit; font-size: 0.76rem; font-weight: 700; cursor: pointer;
 }
-.dapp-revoke-btn:hover { background: rgba(248,113,113,0.22); }
+.dapp-revoke-btn:hover { background: rgba(220,38,38,0.16); }
 /* Must stack above every modal (including the PIN prompt at z-index 100000). */
 #dappToast {
     position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%) translateY(20px);
     max-width: 90vw; padding: 0.7rem 1rem; border-radius: 12px;
-    background: #1f2937; color: #f3f4f6; font-size: 0.82rem; font-weight: 600;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.4); opacity: 0; pointer-events: none;
+    background: #ffffff; color: var(--text); font-size: 0.82rem; font-weight: 600;
+    border: 1px solid var(--card-border);
+    box-shadow: 0 8px 24px rgba(67,56,43,0.22); opacity: 0; pointer-events: none;
     transition: opacity 0.25s ease, transform 0.25s ease; z-index: 100001;
 }
 #dappToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
