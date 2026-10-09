@@ -88,8 +88,40 @@
                 'https://base-rpc.publicnode.com',
                 'https://1rpc.io/base'
             ]
+        },
+        // Ethereum mainnet — needed for the Connect-a-dApp (WalletConnect wallet
+        // role) allowlist, since most external dApps list eip155:1. Public RPCs
+        // with failover (never a single hardcoded endpoint). Overridable from
+        // the page boot config so a deploy can point at its own node.
+        ethereum: {
+            hex: '0x1',
+            id: 1,
+            label: 'Ethereum',
+            rpcs: [
+                'https://ethereum-rpc.publicnode.com',
+                'https://eth.llamarpc.com',
+                'https://rpc.ankr.com/eth'
+            ]
         }
     };
+    // A deploy may override the Ethereum RPC list from the page boot config
+    // (window.GM_WALLET_BOOT). Applied lazily because local-wallet.js loads
+    // BEFORE the boot object is defined in wallet.html.
+    var _chainOverridesApplied = false;
+    function _applyChainOverridesOnce() {
+        if (_chainOverridesApplied) return;
+        _chainOverridesApplied = true;
+        try {
+            var boot = (typeof window !== 'undefined' && window.GM_WALLET_BOOT) || {};
+            if (boot.ethereumRpc && SUPPORTED_CHAINS.ethereum) {
+                SUPPORTED_CHAINS.ethereum.rpcs = [boot.ethereumRpc].concat(
+                    (boot.ethereumRpcFallbacks ? String(boot.ethereumRpcFallbacks).split(',') : [])
+                        .map(function (u) { return u.trim(); })
+                        .filter(Boolean)
+                );
+            }
+        } catch (_) { /* no-op */ }
+    }
     var _activeChainKey = 'celo';
     var _rpcIndexes = {};
 
@@ -298,6 +330,7 @@
     }
 
     async function _chainJsonRpc(chain, method, params) {
+        _applyChainOverridesOnce();
         var lastErr = null;
         var idx = _rpcIndexes[chain.label] || 0;
         for (var i = 0; i < chain.rpcs.length; i++) {
@@ -396,6 +429,7 @@
                 if (!chain) {
                     throw new Error('The in-app GoodMarket wallet supports ' + supportedChainLabels());
                 }
+                _applyChainOverridesOnce();
                 var provider = new ethers.JsonRpcProvider(chain.rpcs[0], chain.id);
                 var signer = wallet1.connect(provider);
                 var sent = await signer.sendTransaction(tx);
