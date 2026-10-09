@@ -661,6 +661,12 @@
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a class="menu-link" onclick="showSection('local-wallet-verification-section')">
+                        <span class="menu-icon">🪪</span>
+                        <span>Local Wallet Verification</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a class="menu-link" onclick="showSection('community-stories-section')">
                         <span class="menu-icon">🌟</span>
                         <span>Community Stories</span>
@@ -3232,6 +3238,47 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 </div>
             </section>
 
+            <section id="local-wallet-verification-section" class="section">
+                <div class="page-header">
+                    <h1 class="page-title">🪪 Local Wallet Verification</h1>
+                    <p style="color: rgba(241,245,249,0.7);">
+                        Human (face) verification status of local (in-app, email + PIN) wallet accounts.
+                        The on-chain <strong>Identity.isWhitelisted</strong> read is mirrored here so you can
+                        trace how many local-wallet users are verified. Updated automatically by the
+                        background reconciler; use <strong>Sync now</strong> to refresh on demand.
+                    </p>
+                </div>
+
+                <div id="localWalletVerificationSummary" class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:1rem;">
+                    <p style="color:rgba(241,245,249,0.6);">Loading…</p>
+                </div>
+
+                <div class="admin-card">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.8rem;margin-bottom:0.8rem;">
+                        <h3 style="margin:0;color:#f1f5f9;">📋 Local Wallet Accounts</h3>
+                        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+                            <select id="localWalletStatusFilter" onchange="loadLocalWalletVerification()"
+                                    style="background:#1e293b;border:1px solid #334155;color:#f1f5f9;padding:0.5rem 0.8rem;border-radius:8px;">
+                                <option value="all">All accounts</option>
+                                <option value="verified">✅ Verified only</option>
+                                <option value="unverified">❌ Unverified only</option>
+                            </select>
+                            <button class="btn" onclick="syncLocalWalletVerification()"
+                                    style="background:rgba(59,130,246,0.2);border:1px solid rgba(59,130,246,0.5);color:#93c5fd;padding:0.45rem 0.9rem;border-radius:8px;cursor:pointer;font-weight:700;">
+                                🔄 Sync now
+                            </button>
+                            <button class="btn" onclick="loadLocalWalletVerification()"
+                                    style="background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.5);color:#86efac;padding:0.45rem 0.9rem;border-radius:8px;cursor:pointer;font-weight:700;">
+                                ↻ Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div id="localWalletVerificationList" style="display:flex;flex-direction:column;gap:0.5rem;">
+                        <p style="color:rgba(241,245,249,0.6);">Loading…</p>
+                    </div>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -3458,7 +3505,108 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     loadChatroomReports();
                     loadChatroomBans();
                     break;
+                case 'local-wallet-verification':
+                    loadLocalWalletVerification();
+                    break;
             }
+        }
+
+        // ── Local Wallet Verification ──────────────────────────────────
+        function _escLocalWallet(value) {
+            const d = document.createElement('div');
+            d.textContent = value == null ? '' : String(value);
+            return d.innerHTML;
+        }
+
+        function _fmtLocalWalletTime(value) {
+            if (!value) return '—';
+            try {
+                return new Date(value).toLocaleString();
+            } catch (e) {
+                return String(value);
+            }
+        }
+
+        async function loadLocalWalletVerification() {
+            const summaryEl = document.getElementById('localWalletVerificationSummary');
+            const listEl = document.getElementById('localWalletVerificationList');
+            const filterEl = document.getElementById('localWalletStatusFilter');
+            const status = filterEl ? filterEl.value : 'all';
+            if (listEl) listEl.innerHTML = '<p style="color:rgba(241,245,249,0.6);">Loading…</p>';
+            try {
+                const response = await fetch('/api/admin/local-wallets/verification?status=' + encodeURIComponent(status));
+                const data = await response.json();
+                if (!data.success) {
+                    if (listEl) listEl.innerHTML = '<p style="color:#f87171;">Failed to load: ' + _escLocalWallet(data.error || 'unknown error') + '</p>';
+                    return;
+                }
+                const s = data.summary || {};
+                if (summaryEl) {
+                    summaryEl.innerHTML = `
+                        <div class="stat-card">
+                            <div class="stat-label">Total Local Wallets</div>
+                            <div class="stat-value">${s.total || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">✅ Verified</div>
+                            <div class="stat-value" style="color:#34d399;">${s.verified || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">❌ Unverified</div>
+                            <div class="stat-value" style="color:#f87171;">${s.unverified || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Verified Rate</div>
+                            <div class="stat-value">${s.verified_rate || 0}%</div>
+                        </div>
+                    `;
+                }
+                const accounts = data.accounts || [];
+                if (!listEl) return;
+                if (!accounts.length) {
+                    listEl.innerHTML = '<p style="color:rgba(241,245,249,0.6);">No local wallet accounts found.</p>';
+                    return;
+                }
+                listEl.innerHTML = accounts.map(function (a) {
+                    const verified = a.is_human_verified === true || a.verification_status === 'verified';
+                    const badge = verified
+                        ? '<span style="background:rgba(52,211,153,0.2);color:#34d399;border:1px solid rgba(52,211,153,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">✅ Verified</span>'
+                        : '<span style="background:rgba(248,113,113,0.2);color:#f87171;border:1px solid rgba(248,113,113,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">❌ Unverified</span>';
+                    return `
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.6rem 0.9rem;">
+                            <div style="display:flex;flex-direction:column;gap:0.15rem;">
+                                <span style="color:#f1f5f9;font-weight:600;font-family:monospace;">${_escLocalWallet(a.wallet_short || a.address || '')}</span>
+                                <span style="color:rgba(241,245,249,0.55);font-size:0.8rem;">${_escLocalWallet(a.email_masked || '')}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:0.8rem;">
+                                <span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Verified: ${_escLocalWallet(_fmtLocalWalletTime(a.human_verified_at))}</span>
+                                <span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Last check: ${_escLocalWallet(_fmtLocalWalletTime(a.last_verified_check))}</span>
+                                ${badge}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                if (listEl) listEl.innerHTML = '<p style="color:#f87171;">Request failed: ' + _escLocalWallet(e && e.message) + '</p>';
+            }
+        }
+
+        async function syncLocalWalletVerification() {
+            const listEl = document.getElementById('localWalletVerificationList');
+            if (listEl) listEl.innerHTML = '<p style="color:rgba(241,245,249,0.6);">🔄 Re-checking wallets on-chain…</p>';
+            try {
+                const response = await fetch('/api/admin/local-wallets/verification/sync', { method: 'POST' });
+                const data = await response.json();
+                if (!data.success) {
+                    if (listEl) listEl.innerHTML = '<p style="color:#f87171;">Sync failed: ' + _escLocalWallet(data.error || 'unknown error') + '</p>';
+                    return;
+                }
+                const r = data.result || {};
+                alert('Sync complete.\nChecked: ' + (r.checked || 0) + '\nVerified: ' + (r.verified || 0) + '\nUnverified: ' + (r.unverified || 0) + '\nUpdated: ' + (r.updated || 0));
+            } catch (e) {
+                alert('Sync request failed: ' + (e && e.message));
+            }
+            loadLocalWalletVerification();
         }
 
         // ── Chatroom Moderation ────────────────────────────────────────
