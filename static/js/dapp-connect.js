@@ -38,11 +38,15 @@
 
     if (global.GMDappConnect) return;
 
-    var BOOT = (global.GM_WALLET_BOOT || {});
-    var LOGIN_METHOD = String(BOOT.loginMethod || "").toLowerCase();
-    var WALLET = BOOT.wallet || "";
-    var PROJECT_ID = BOOT.walletConnectProjectId || "";
-    var ASSET_VERSION = BOOT.assetVersion || "";
+    // GM_WALLET_BOOT is emitted as an INLINE object late in the document body,
+    // while this file is loaded early in <head>. Capture it LAZILY at call time
+    // — snapshotting it here would freeze every value to its default ("") and
+    // make isEligible() false for everyone, including real in-app wallets.
+    function _boot() { return global.GM_WALLET_BOOT || {}; }
+    function _loginMethod() { return String(_boot().loginMethod || "").toLowerCase(); }
+    function _walletAddr() { return _boot().wallet || ""; }
+    function _projectId() { return _boot().walletConnectProjectId || ""; }
+    function _assetVersion() { return _boot().assetVersion || ""; }
 
     // Chains and methods we will ever accept. Everything else is rejected at
     // proposal time and at request time.
@@ -118,7 +122,7 @@
     }
 
     function isEligible() {
-        return LOGIN_METHOD === "local" &&
+        return _loginMethod() === "local" &&
             typeof global.GMLocalWallet !== "undefined" &&
             typeof global.GMLocalWallet.getProvider === "function";
     }
@@ -137,7 +141,8 @@
 
     function _loadSdk() {
         if (_state.sdkLoading) return _state.sdkLoading;
-        var localSrc = "/static/js/wc-bundle.js" + (ASSET_VERSION ? ("?v=" + encodeURIComponent(ASSET_VERSION)) : "");
+        var _av = _assetVersion();
+        var localSrc = "/static/js/wc-bundle.js" + (_av ? ("?v=" + encodeURIComponent(_av)) : "");
         function pick() {
             var ns = global["@walletconnect/sign-client"];
             return (ns && ns.SignClient) || null;
@@ -160,12 +165,12 @@
 
     function _getClient() {
         if (_state.client) return Promise.resolve(_state.client);
-        if (!PROJECT_ID) {
+        if (!_projectId()) {
             return Promise.reject(new Error("WalletConnect is not configured (missing project id)."));
         }
         return _loadSdk().then(function (SignClient) {
             return SignClient.init({
-                projectId: PROJECT_ID,
+                projectId: _projectId(),
                 // Separate storage namespace so our wallet-role sessions never
                 // collide with the dApp-role login session managed by
                 // wc-bridge.js (different encryption keys, same origin).
@@ -486,7 +491,7 @@
         var chains = _grantedChains(proposal);
         var accounts = [];
         chains.forEach(function (c) {
-            accounts.push(c + ":" + WALLET);
+            accounts.push(c + ":" + _walletAddr());
         });
         return {
             eip155: {
@@ -565,7 +570,7 @@
     function _answerSilently(event, method) {
         var result;
         if (method === "eth_accounts") {
-            result = [WALLET];
+            result = [_walletAddr()];
         } else {
             result = ALLOWED_CHAINS[_chainIdFromEvent(event)].hex;
         }
@@ -691,10 +696,10 @@
             // The in-app wallet always signs with its own key, so a `from` that
             // points elsewhere is either a dApp bug or an attempt to confuse
             // the user about whose funds move.
-            if (tx.from && WALLET && String(tx.from).toLowerCase() !== WALLET.toLowerCase()) {
+            if (tx.from && _walletAddr() && String(tx.from).toLowerCase() !== _walletAddr().toLowerCase()) {
                 mismatch = '<div class="dapp-warn bad">🚫 This request is for a DIFFERENT address (' +
                     _esc(_shortAddr(tx.from)) + '). Your in-app wallet signs only for ' +
-                    _esc(_shortAddr(WALLET)) + '. Decline it.</div>';
+                    _esc(_shortAddr(_walletAddr())) + '. Decline it.</div>';
             }
         } else if (method === "personal_sign") {
             rows += row("Message", _decodePersonalSign(params));
@@ -885,11 +890,11 @@
     // ask the new account to sign for them. Drop anything that does not match
     // the current session wallet.
     function _dropForeignSessions() {
-        if (!WALLET) return;
+        if (!_walletAddr()) return;
         sessions().forEach(function (s) {
             var accts = (s.namespaces && s.namespaces.eip155 && s.namespaces.eip155.accounts) || [];
             var mine = accts.some(function (a) {
-                return String(a).toLowerCase().indexOf(WALLET.toLowerCase()) >= 0;
+                return String(a).toLowerCase().indexOf(_walletAddr().toLowerCase()) >= 0;
             });
             if (!mine) {
                 _log("[dapp-connect] dropping session bound to another wallet:", s.topic);
