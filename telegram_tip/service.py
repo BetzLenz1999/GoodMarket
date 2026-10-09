@@ -114,6 +114,55 @@ def get_saved_wallet(telegram_user_id) -> str:
     return ""
 
 
+def username_for_wallet(wallet: str | None) -> str | None:
+    """@username (without the @) for a wallet, from user_data. None if unset."""
+    if not wallet:
+        return None
+    supabase = _get_supabase()
+    if not supabase:
+        return None
+    try:
+        result = (
+            supabase.table("user_data")
+            .select("username")
+            .ilike("wallet_address", wallet)
+            .limit(1)
+            .execute()
+        )
+        if result and result.data:
+            name = (result.data[0].get("username") or "").strip()
+            return name or None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("telegram_tip: username lookup failed: %s", exc)
+    return None
+
+
+def username_for_telegram(telegram_user_id) -> str | None:
+    """@username (without the @) saved for a Telegram user, if any."""
+    if not telegram_user_id:
+        return None
+    supabase = _get_supabase()
+    if not supabase:
+        return None
+    try:
+        result = (
+            supabase.table("telegram_wallet_sessions")
+            .select("username, wallet_address")
+            .eq("telegram_user_id", str(telegram_user_id))
+            .limit(1)
+            .execute()
+        )
+        if result and result.data:
+            row = result.data[0]
+            name = (row.get("username") or "").strip()
+            if name:
+                return name
+            return username_for_wallet(row.get("wallet_address"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("telegram_tip: telegram username lookup failed: %s", exc)
+    return None
+
+
 def find_wallet_by_username(username: str) -> str | None:
     """Resolve ``@username`` → wallet (case-insensitive, unique by construction)."""
     match = _MENTION_RE.match((username or "").strip())
@@ -422,6 +471,32 @@ def build_confirmation(result: dict) -> str:
     )
 
 
+def public_announce_enabled() -> bool:
+    return (os.getenv("TIP_PUBLIC_ANNOUNCE", "1") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def build_announcement(recipient_name, sender_name, token_key, amount, explorer_url) -> str | None:
+    """Public "🎉 Congrats …" card for the group — @usernames only, never a wallet.
+
+    Returns None when we cannot name the recipient (never leak an address).
+    """
+    if not recipient_name:
+        return None
+    meta = TOKENS.get(token_key, {})
+    label = meta.get("label", token_key)
+    who = f" from @{_safe_name(sender_name)}" if sender_name else ""
+    return (
+        f"🎉 <b>Congrats @{_safe_name(recipient_name)}!</b> "
+        f"You received <b>{_fmt_amount(amount)} {label}</b>{who} 🎁\n"
+        f"Tx: {explorer_url}"
+    )
+
+
+def _safe_name(name: str | None) -> str:
+    """Strip a leading @ and anything that is not a username char, for safety."""
+    return re.sub(r"[^A-Za-z0-9_]", "", (name or "").lstrip("@"))
+
+
 # ── orchestration ────────────────────────────────────────────────────────────
 def execute_tip(
     text: str,
@@ -507,14 +582,27 @@ def _execute_parsed(
 
     if result.get("success"):
         update_tip(tip_id, status="confirmed", tx_hash=result.get("tx_hash"))
+        recipient_name = (
+            resolved.get("username")
+            or username_for_telegram(resolved.get("telegram_user_id"))
+            or username_for_wallet(recipient_wallet)
+        )
+        sender_name = username_for_telegram(admin_telegram_id) or username_for_wallet(admin_wallet)
+        announcement = None
+        if public_announce_enabled():
+            announcement = build_announcement(
+                recipient_name, sender_name, token_key, amount, result.get("explorer_url")
+            )
         return {
             "ok": True,
             "error": None,
             "token_key": token_key,
             "amount": amount,
             "recipient_masked": masked,
+            "recipient_name": recipient_name,
             "explorer_url": result.get("explorer_url"),
             "tx_hash": result.get("tx_hash"),
+            "announcement": announcement,
             "message": build_confirmation({
                 "token_key": token_key, "amount": amount,
                 "recipient_masked": masked, "explorer_url": result.get("explorer_url"),
