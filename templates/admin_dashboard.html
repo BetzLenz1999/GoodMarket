@@ -3246,6 +3246,9 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         The on-chain <strong>Identity.isWhitelisted</strong> read is mirrored here so you can
                         trace how many local-wallet users are verified. Updated automatically by the
                         background reconciler; use <strong>Sync now</strong> to refresh on demand.
+                        Only <strong>completed</strong> signups (accounts that have logged in at least once)
+                        are counted — abandoned signups that never finished are listed separately and can
+                        be purged with <strong>Clean up abandoned</strong>.
                     </p>
                 </div>
 
@@ -3262,10 +3265,15 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                                 <option value="all">All accounts</option>
                                 <option value="verified">✅ Verified only</option>
                                 <option value="unverified">❌ Unverified only</option>
+                                <option value="incomplete">🗑️ Abandoned signups</option>
                             </select>
                             <button class="btn" onclick="syncLocalWalletVerification()"
                                     style="background:rgba(59,130,246,0.2);border:1px solid rgba(59,130,246,0.5);color:#93c5fd;padding:0.45rem 0.9rem;border-radius:8px;cursor:pointer;font-weight:700;">
                                 🔄 Sync now
+                            </button>
+                            <button class="btn" onclick="cleanupLocalWalletAbandoned()"
+                                    style="background:rgba(248,113,113,0.2);border:1px solid rgba(248,113,113,0.5);color:#fca5a5;padding:0.45rem 0.9rem;border-radius:8px;cursor:pointer;font-weight:700;">
+                                🧹 Clean up abandoned
                             </button>
                             <button class="btn" onclick="loadLocalWalletVerification()"
                                     style="background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.5);color:#86efac;padding:0.45rem 0.9rem;border-radius:8px;cursor:pointer;font-weight:700;">
@@ -3544,7 +3552,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 if (summaryEl) {
                     summaryEl.innerHTML = `
                         <div class="stat-card">
-                            <div class="stat-label">Total Local Wallets</div>
+                            <div class="stat-label">Local Wallet Users</div>
                             <div class="stat-value">${s.total || 0}</div>
                         </div>
                         <div class="stat-card">
@@ -3559,6 +3567,10 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                             <div class="stat-label">Verified Rate</div>
                             <div class="stat-value">${s.verified_rate || 0}%</div>
                         </div>
+                        <div class="stat-card">
+                            <div class="stat-label">🗑️ Abandoned Signups</div>
+                            <div class="stat-value" style="color:#fca5a5;">${s.incomplete || 0}</div>
+                        </div>
                     `;
                 }
                 const accounts = data.accounts || [];
@@ -3568,10 +3580,20 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     return;
                 }
                 listEl.innerHTML = accounts.map(function (a) {
+                    const incomplete = a.signup_completed === false;
                     const verified = a.is_human_verified === true || a.verification_status === 'verified';
-                    const badge = verified
-                        ? '<span style="background:rgba(52,211,153,0.2);color:#34d399;border:1px solid rgba(52,211,153,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">✅ Verified</span>'
-                        : '<span style="background:rgba(248,113,113,0.2);color:#f87171;border:1px solid rgba(248,113,113,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">❌ Unverified</span>';
+                    let badge;
+                    if (incomplete) {
+                        badge = '<span style="background:rgba(148,163,184,0.2);color:#cbd5e1;border:1px solid rgba(148,163,184,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">🗑️ Abandoned</span>';
+                    } else if (verified) {
+                        badge = '<span style="background:rgba(52,211,153,0.2);color:#34d399;border:1px solid rgba(52,211,153,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">✅ Verified</span>';
+                    } else {
+                        badge = '<span style="background:rgba(248,113,113,0.2);color:#f87171;border:1px solid rgba(248,113,113,0.5);padding:0.15rem 0.6rem;border-radius:999px;font-size:0.8rem;font-weight:700;">❌ Unverified</span>';
+                    }
+                    const detail = incomplete
+                        ? '<span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Never logged in — abandoned signup</span>'
+                        : '<span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Verified: ' + _escLocalWallet(_fmtLocalWalletTime(a.human_verified_at)) + '</span>'
+                          + '<span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Last check: ' + _escLocalWallet(_fmtLocalWalletTime(a.last_verified_check)) + '</span>';
                     return `
                         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.6rem 0.9rem;">
                             <div style="display:flex;flex-direction:column;gap:0.15rem;">
@@ -3579,8 +3601,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                                 <span style="color:rgba(241,245,249,0.55);font-size:0.8rem;">${_escLocalWallet(a.email_masked || '')}</span>
                             </div>
                             <div style="display:flex;align-items:center;gap:0.8rem;">
-                                <span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Verified: ${_escLocalWallet(_fmtLocalWalletTime(a.human_verified_at))}</span>
-                                <span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Last check: ${_escLocalWallet(_fmtLocalWalletTime(a.last_verified_check))}</span>
+                                ${detail}
                                 ${badge}
                             </div>
                         </div>
@@ -3605,6 +3626,44 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 alert('Sync complete.\nChecked: ' + (r.checked || 0) + '\nVerified: ' + (r.verified || 0) + '\nUnverified: ' + (r.unverified || 0) + '\nUpdated: ' + (r.updated || 0));
             } catch (e) {
                 alert('Sync request failed: ' + (e && e.message));
+            }
+            loadLocalWalletVerification();
+        }
+
+        async function cleanupLocalWalletAbandoned() {
+            // Two-step: dry-run first (count), then confirm before deleting.
+            try {
+                const preview = await fetch('/api/admin/local-wallets/abandoned/cleanup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dry_run: true })
+                });
+                const previewData = await preview.json();
+                if (!previewData.success) {
+                    alert('Cleanup preview failed: ' + ((previewData && previewData.error) || 'unknown error'));
+                    return;
+                }
+                const examined = (previewData.result && previewData.result.examined) || 0;
+                if (!examined) {
+                    alert('No abandoned signups to clean up. 👍');
+                    return;
+                }
+                if (!confirm(examined + ' abandoned signup(s) found (registered but never logged in).\n\nDelete them permanently? This cannot be undone.')) {
+                    return;
+                }
+                const resp = await fetch('/api/admin/local-wallets/abandoned/cleanup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dry_run: false })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    alert('Cleanup failed: ' + ((data && data.error) || 'unknown error'));
+                    return;
+                }
+                alert('Deleted ' + ((data.result && data.result.deleted) || 0) + ' abandoned signup(s).');
+            } catch (e) {
+                alert('Cleanup request failed: ' + (e && e.message));
             }
             loadLocalWalletVerification();
         }
