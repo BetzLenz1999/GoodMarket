@@ -3574,17 +3574,23 @@
             <div class="modal-handle"></div>
             <div class="modal-title" id="dappConnectTitle">🔗 Connect a dApp</div>
 
-            <div class="dapp-hint">
-                Open the dApp you want to use, choose <strong>WalletConnect</strong>, then
-                <strong>copy its link</strong> (a <code>wc:</code> URL) and paste it below.
-                Your GoodMarket wallet stays in control — you approve every action individually.
-            </div>
+            <!-- The "paste a link" form. Hidden once at least one dApp is
+                 connected (the Connect button must disappear after success —
+                 the session list + Manage take over). -->
+            <div id="dappConnectForm">
+                <div class="dapp-hint">
+                    Open the dApp you want to use, choose <strong>WalletConnect</strong>, then
+                    <strong>copy its link</strong> (a <code>wc:</code> URL) and paste it below.
+                    Your GoodMarket wallet stays in control — you approve every action individually.
+                </div>
 
-            <label class="dapp-label" for="dappUriInput">WalletConnect link</label>
-            <textarea id="dappUriInput" class="dapp-uri-input" rows="3"
-                      placeholder="wc:…@2?relay-protocol=irn&symKey=…" spellcheck="false" autocomplete="off"></textarea>
+                <label class="dapp-label" for="dappUriInput">WalletConnect link</label>
+                <textarea id="dappUriInput" class="dapp-uri-input" rows="3"
+                          placeholder="wc:…@2?relay-protocol=irn&symKey=…" spellcheck="false" autocomplete="off"></textarea>
+                <button type="button" id="dappConnectBtn" class="btn-primary" onclick="GMDappConnect.connectFromLink(document.getElementById('dappUriInput').value)">🔗 Connect this dApp</button>
+            </div>
             <div class="dapp-actions">
-                <button type="button" id="dappConnectBtn" class="btn-primary" onclick="GMDappConnect.connectFromLink(document.getElementById('dappUriInput').value)">Connect</button>
+                <button type="button" id="dappConnectAgainBtn" class="btn-secondary" style="display:none;" onclick="GMDappConnect.startNewConnection()">🔗 Connect another dApp</button>
                 <button type="button" class="btn-secondary" onclick="GMDappConnect.close()">Close</button>
             </div>
 
