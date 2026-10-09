@@ -716,6 +716,19 @@ try:
 except Exception as e:
     logger.error(f"❌ Referral reconciler initialization failed: {e}")
 
+# Local (in-app) wallet face-verification reconciler (env-gated, default ON —
+# disable with LOCAL_WALLET_VERIFICATION_ENABLED=0). Backfills existing
+# local_wallet_accounts and refreshes on-chain Identity status into the cached
+# verification columns so admins can count/trace verified local-wallet users.
+try:
+    from local_wallet_verification import init_local_wallet_verification_scheduler
+    if init_local_wallet_verification_scheduler(app):
+        logger.info("✅ local-wallet FV reconciler started")
+    else:
+        logger.info("ℹ️ local-wallet FV reconciler not started (disabled)")
+except Exception as e:
+    logger.error(f"❌ local-wallet FV reconciler initialization failed: {e}")
+
 # Initialize G$ Savings
 logger.info("💰 Initializing G$ Savings system...")
 if init_savings(app):
@@ -1886,6 +1899,13 @@ def verify_identity():
                     )
                 except Exception as attr_bf_err:
                     logger.warning(f"⚠️ Attribution backfill skipped in verify-identity: {attr_bf_err}")
+                # Mirror the confirmed on-chain FV onto the local-wallet account
+                # (no-op for non-local wallets) for admin counting/tracing.
+                try:
+                    from routes import mark_local_wallet_verified
+                    mark_local_wallet_verified(wallet_address)
+                except Exception as lw_bf_err:
+                    logger.warning(f"⚠️ local-wallet FV stamp skipped in verify-identity: {lw_bf_err}")
         except Exception as attr_err:
             logger.warning(f"⚠️ Could not record visit attribution: {attr_err}")
 
@@ -2043,6 +2063,13 @@ def fv_callback():
         identity_result = is_identity_verified(wallet_address)
         if identity_result.get('verified'):
             session['ubi_verified'] = True
+            # Mirror the confirmed on-chain FV onto the local-wallet account
+            # (no-op for non-local wallets) for admin counting/tracing.
+            try:
+                from routes import mark_local_wallet_verified
+                mark_local_wallet_verified(wallet_address)
+            except Exception as lw_err:
+                logger.warning(f"⚠️ local-wallet FV stamp skipped in fv-callback: {lw_err}")
             logger.info(f"✅ FV callback: {wallet_address} verified and logged in")
             return redirect('/overview')
         else:
