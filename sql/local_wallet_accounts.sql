@@ -17,6 +17,12 @@ create table if not exists public.local_wallet_accounts (
     referral_code text,                    -- optional code entered at signup
     created_at timestamptz not null default now(),
     last_login_at timestamptz,
+    -- Completion signal: the row is inserted at keypair-generation time (before
+    -- the user saves recovery words / completes the first login), so abandoned
+    -- signups must be distinguishable from real accounts. See
+    -- sql/local_wallet_signup_completion.sql for the ALTER on existing tables.
+    signup_completed boolean not null default false,
+    first_login_at timestamptz,
     unique(email_hash),
     unique(address)
 );
