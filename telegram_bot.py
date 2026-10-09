@@ -2574,29 +2574,68 @@ def _tip_reply_telegram_user_id(message: dict | None):
     return reply_from.get("id")
 
 
-def handle_tip(chat_id, telegram_user, text, message=None):
-    """Admin-only ``/tip <amount> <token> [@user]`` (see docs/TELEGRAM_TIP_PROPOSAL.md).
+def _is_tip_message(text: str) -> bool:
+    """True for a triggered tip (``/tip``/``!tip``/aliases) OR — when enabled —
+    the no-keyword reply form (``<amount> <token>``)."""
+    try:
+        from telegram_tip.service import is_tip_command, parse_reply_tip, reply_trigger_enabled
 
-    The recipient is resolved from an explicit ``@username`` / ``0x`` address, a
-    replied-to member's registered wallet, or (in a private chat) the admin's own
-    wallet. Every call is admin-gated server-side and limited before signing.
+        if is_tip_command(text):
+            return True
+        if reply_trigger_enabled() and parse_reply_tip(text).get("ok"):
+            return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Tip trigger check failed: %s", exc)
+    return False
+
+
+def handle_tip(chat_id, telegram_user, text, message=None):
+    """Admin-only tip command (see docs/TELEGRAM_TIP_PROPOSAL.md).
+
+    Accepts a configurable trigger (``TIP_COMMAND_ALIASES`` / ``TIP_COMMAND_PREFIXES``)
+    and, when ``TIP_REPLY_TRIGGER=1``, a no-keyword reply form (``<amount> <token>``
+    as a reply to a member). The recipient is resolved from an explicit
+    ``@username`` / ``0x`` address, the replied-to member's registered wallet, or
+    (in a private chat) the admin's own wallet. Admin-gated server-side.
     """
-    from telegram_tip.service import execute_tip, get_saved_wallet
+    from telegram_tip.service import (
+        execute_tip,
+        execute_tip_parsed,
+        get_saved_wallet,
+        is_tip_command,
+        parse_reply_tip,
+        reply_trigger_enabled,
+    )
 
     telegram_user_id = telegram_user.get("id")
     admin_wallet = get_saved_wallet(telegram_user_id) or None
     reply_user_id = _tip_reply_telegram_user_id(message)
 
     try:
-        result = execute_tip(
-            text,
-            admin_telegram_id=telegram_user_id,
-            admin_wallet=admin_wallet,
-            reply_telegram_user_id=reply_user_id,
-            self_wallet=admin_wallet,
-        )
+        if is_tip_command(text):
+            result = execute_tip(
+                text,
+                admin_telegram_id=telegram_user_id,
+                admin_wallet=admin_wallet,
+                reply_telegram_user_id=reply_user_id,
+                self_wallet=admin_wallet,
+            )
+        elif reply_trigger_enabled():
+            # No-keyword reply form: "<amount> <token>" replying to a member.
+            parsed = parse_reply_tip(text)
+            if not parsed.get("ok"):
+                return  # not a tip — fall through silently
+            result = execute_tip_parsed(
+                parsed,
+                admin_telegram_id=telegram_user_id,
+                admin_wallet=admin_wallet,
+                reply_telegram_user_id=reply_user_id,
+                self_wallet=admin_wallet,
+            )
+        else:
+            return
     except Exception as exc:  # noqa: BLE001
-        logger.error("❌ /tip failed for %s: %s", telegram_user_id, exc)
+        logger.error("❌ tip failed for %s: %s", telegram_user_id, exc)
         send_message(chat_id, "⚠️ Tip could not be processed. Please try again later.")
         return
 
@@ -2673,7 +2712,7 @@ def webhook():
                 handle_balance(chat_id, telegram_user)
             elif text.startswith("/change_wallet"):
                 handle_change_wallet(chat_id)
-            elif text.startswith("/tip"):
+            elif _is_tip_message(text):
                 handle_tip(chat_id, telegram_user, text, message)
             elif text.startswith("/trustpilot"):
                 handle_trustpilot_task(chat_id, telegram_user)
