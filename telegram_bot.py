@@ -2560,6 +2560,75 @@ def telegram_learn_earn_login():
     return redirect("/learn-earn/")
 
 
+def _tip_reply_telegram_user_id(message: dict | None):
+    """Telegram user id of the message being replied to, or None.
+
+    Returns None when there is no reply, or when the reply target is a bot
+    (e.g. the admin replying to the bot's own confirmation) — we only want to
+    resolve a real member's saved wallet.
+    """
+    reply = (message or {}).get("reply_to_message") or {}
+    reply_from = reply.get("from") or {}
+    if not reply_from or reply_from.get("is_bot"):
+        return None
+    return reply_from.get("id")
+
+
+def handle_tip(chat_id, telegram_user, text, message=None):
+    """Admin-only ``/tip <amount> <token> [@user]`` (see docs/TELEGRAM_TIP_PROPOSAL.md).
+
+    The recipient is resolved from an explicit ``@username`` / ``0x`` address, a
+    replied-to member's registered wallet, or (in a private chat) the admin's own
+    wallet. Every call is admin-gated server-side and limited before signing.
+    """
+    from telegram_tip.service import execute_tip, get_saved_wallet
+
+    telegram_user_id = telegram_user.get("id")
+    admin_wallet = get_saved_wallet(telegram_user_id) or None
+    reply_user_id = _tip_reply_telegram_user_id(message)
+
+    try:
+        result = execute_tip(
+            text,
+            admin_telegram_id=telegram_user_id,
+            admin_wallet=admin_wallet,
+            reply_telegram_user_id=reply_user_id,
+            self_wallet=admin_wallet,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("❌ /tip failed for %s: %s", telegram_user_id, exc)
+        send_message(chat_id, "⚠️ Tip could not be processed. Please try again later.")
+        return
+
+    send_message(chat_id, result.get("message") or "⚠️ Tip could not be processed.")
+
+    # Best-effort private confirmation to the recipient (only if they started the bot).
+    if result.get("ok") and result.get("explorer_url"):
+        _notify_tip_recipient(reply_user_id, telegram_user_id, result)
+
+
+def _notify_tip_recipient(reply_user_id, admin_telegram_id, result):
+    """DM the recipient that they received a tip (best-effort; never raises)."""
+    try:
+        if not reply_user_id or str(reply_user_id) == str(admin_telegram_id):
+            return
+        from telegram_tip.service import get_saved_wallet
+        from telegram_tip.tokens import TOKENS
+
+        recipient_wallet = get_saved_wallet(reply_user_id)
+        if not recipient_wallet:
+            return
+        label = TOKENS.get(result.get("token_key", ""), {}).get("label", result.get("token_key", ""))
+        text = (
+            "🎉 <b>You received a tip!</b>\n\n"
+            f"Amount: <b>{result.get('amount')} {label}</b>\n"
+            f"Tx: {result.get('explorer_url')}"
+        )
+        send_message(reply_user_id, text)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not notify tip recipient %s: %s", reply_user_id, exc)
+
+
 @telegram_bot.route("/telegram/webhook", methods=["POST"])
 def webhook():
     """Receive and handle Telegram updates."""
@@ -2604,6 +2673,8 @@ def webhook():
                 handle_balance(chat_id, telegram_user)
             elif text.startswith("/change_wallet"):
                 handle_change_wallet(chat_id)
+            elif text.startswith("/tip"):
+                handle_tip(chat_id, telegram_user, text, message)
             elif text.startswith("/trustpilot"):
                 handle_trustpilot_task(chat_id, telegram_user)
             elif text.startswith("/dailytask"):
