@@ -130,6 +130,71 @@
             typeof global.GMLocalWallet.getProvider === "function";
     }
 
+    // ── relay health ─────────────────────────────────────────────────────
+    // A session we paired into stays in local storage, but its relay
+    // subscription/websocket is only open while the client is running. Without
+    // an open socket an outbound `disconnect()` cannot be delivered, so the
+    // dApp never learns we left. These helpers open (or verify) the socket.
+    function _ensureRelayer(client, timeoutMs) {
+        var relayer = client && client.core && client.core.relayer;
+        if (!relayer || typeof relayer.transportOpen !== "function") return Promise.resolve(null);
+        var open;
+        try { open = relayer.transportOpen(); } catch (e) { return Promise.reject(e); }
+        if (!open || typeof open.then !== "function") return Promise.resolve(relayer);
+        var cap = new Promise(function (resolve) { setTimeout(function () { resolve("timeout"); }, timeoutMs || 10000); });
+        return Promise.race([open, cap]).then(function () { return relayer; }, function (e) {
+            _log("[dapp-connect] transportOpen:", e && e.message);
+            return relayer; // never reject the caller — best effort
+        });
+    }
+
+    function _relayerOpen() {
+        var relayer = _state.client && _state.client.core && _state.client.core.relayer;
+        if (!relayer) return false;
+        // Only treat it as OPEN when a build exposes a definite positive
+        // signal. We deliberately avoid guessing from absence so a healthy
+        // session never shows a false "offline" warning.
+        return !!(relayer.connected ||
+            (relayer.provider && relayer.provider.connection && relayer.provider.connection.socket));
+    }
+
+    function _relayerExplicitlyClosed() {
+        var relayer = _state.client && _state.client.core && _state.client.core.relayer;
+        return !!(relayer && relayer.transportExplicitlyClosed === true);
+    }
+
+    function _disconnectReason(msg) {
+        return { code: 6000, message: msg || "User revoked the session." };
+    }
+
+    // Disconnect a session and REPORT whether the notice reached the dApp.
+    // We must not silently succeed: if the relay is unreachable, the local
+    // session is dropped but the dApp still shows "connected" — the exact
+    // confusion users hit. Returns {delivered:boolean, lastError?:string}.
+    function _disconnectSession(topic, reasonMsg, retries) {
+        return _getClient().then(function (client) {
+            return _ensureRelayer(client, 8000).then(function () { return client; });
+        }).then(function (client) {
+            var attempt = function (n) {
+                return client.disconnect({ topic: topic, reason: _disconnectReason(reasonMsg) })
+                    .then(function () { return true; })
+                    .catch(function (e) {
+                        if (n > 0) {
+                            return new Promise(function (r) { setTimeout(r, 1200); })
+                                .then(function () { return _ensureRelayer(client, 8000).then(function () { return attempt(n - 1); }); });
+                        }
+                        _log("[dapp-connect] disconnect publish:", e && e.message);
+                        return false;
+                    });
+            };
+            return attempt(retries == null ? 1 : retries);
+        }).then(function (delivered) {
+            return { delivered: delivered };
+        }).catch(function (e) {
+            return { delivered: false, lastError: e && e.message };
+        });
+    }
+
     // ── SignClient (wallet role) ─────────────────────────────────────────
 
     function _appendScript(src) {
@@ -188,6 +253,14 @@
         }).then(function (client) {
             _state.client = client;
             _wireClientEvents(client);
+            // Ensure the relay websocket is up so an outbound disconnect is
+            // DELIVERED. `disconnect()` publishes `wc_sessionDelete` to the
+            // dApp over the relay; if we only ever RECEIVED (paired once), the
+            // socket may not be open yet, the publish throws, and SignClient
+            // locally deletes the session anyway — so the dApp keeps showing
+            // "connected" while we show "no dApps". A 10s cap keeps a dead
+            // relay from blocking the UI; revoke() re-tries at click time.
+            _ensureRelayer(client);
             return client;
         });
     }
@@ -205,11 +278,17 @@
         client.on("session_request", function (event) {
             _handleSessionRequest(event);
         });
-        client.on("session_delete", function () {
+        client.on("session_delete", function (event) {
+            // The dApp disconnected us (or the session was otherwise removed).
+            // Drop any approval sheet that belonged to it so we don't leave a
+            // dead "Sign request" prompt open.
+            _clearRequestForTopic(event && event.topic);
             refreshStatusStrip();
             if (_el("dappSessionList")) _renderSessions();
+            _toast("🔌 A dApp disconnected from your wallet.");
         });
-        client.on("session_expire", function () {
+        client.on("session_expire", function (event) {
+            _clearRequestForTopic(event && event.topic);
             refreshStatusStrip();
             if (_el("dappSessionList")) _renderSessions();
         });
@@ -537,9 +616,33 @@
         return String((event.params && event.params.chainId) || "");
     }
 
+    // Close the approval sheet if it belongs to a session that just went away.
+    function _clearRequestForTopic(topic) {
+        var pending = _state.pendingRequest;
+        if (!pending) return;
+        var evTopic = pending.event && pending.event.topic;
+        if (topic && evTopic && topic !== evTopic) return;
+        _state.pendingRequest = null;
+        var box = _el("dappRequestBody");
+        if (box) box.innerHTML = "";
+        var modal = _el("dappRequestModal");
+        if (modal && modal.classList.contains("open") && typeof global.closeModal === "function") {
+            global.closeModal("dappRequestModal");
+        }
+    }
+
     function _handleSessionRequest(event) {
         var method = event.params && event.params.request && event.params.request.method;
         var chainId = _chainIdFromEvent(event);
+
+        // A request for a session we no longer hold (the dApp disconnected us
+        // but re-sent, or the relay delivered a stale request). Reject it
+        // instead of opening an approval sheet for a dead session.
+        if (event.topic && _state.client && _state.client.session.keys &&
+            _state.client.session.keys.indexOf(event.topic) < 0) {
+            _respond(event, null, { code: 4100, message: "Session no longer exists." });
+            return;
+        }
 
         // Chain not allowed? Reject immediately — never sign.
         if (!ALLOWED_CHAINS[chainId]) {
@@ -933,14 +1036,29 @@
     }
 
     function revoke(topic) {
-        _getClient().then(function (client) {
-            return client.disconnect({
-                topic: topic,
-                reason: { code: 6000, message: "User revoked the session." }
-            });
-        }).catch(function () {}).then(function () {
+        var md = null;
+        try {
+            var s = _state.client && _state.client.session.get(topic);
+            md = (s && s.peer && s.peer.metadata) || null;
+        } catch (_) {}
+        var name = (md && md.name) || "the dApp";
+        _setConnectStatus("⏳ Disconnecting " + name + "…", "info");
+        return _disconnectSession(topic, "User revoked the session.", 1).then(function (res) {
             _renderSessions();
             refreshStatusStrip();
+            if (res && res.delivered) {
+                _setConnectStatus("✅ Disconnected " + name + ". It will no longer see your wallet.", "ok");
+            } else {
+                // The local session is gone, but the notice may not have
+                // reached the dApp — the exact "still connected there"
+                // confusion. Tell the user honestly and how to clear it.
+                _setConnectStatus(
+                    "⚠️ Removed " + name + " from GoodMarket, but the notice could not reach it " +
+                    "(relay offline). The dApp may still show your wallet as connected. Reopen the dApp " +
+                    "and use its own \u201cDisconnect\u201d, or try Revoke again when you are back online.",
+                    "warn");
+            }
+            return res;
         });
     }
 
@@ -977,9 +1095,14 @@
         var pending = all.map(function (s) {
             return _getClient()
                 .then(function (client) {
+                    // Open the socket first so the delete notice is actually
+                    // delivered to each dApp before we drop the session.
+                    return _ensureRelayer(client, 1500).then(function () { return client; });
+                })
+                .then(function (client) {
                     return client.disconnect({
                         topic: s.topic,
-                        reason: { code: 6000, message: "User logged out." }
+                        reason: _disconnectReason("User logged out.")
                     });
                 })
                 .catch(function () {});
@@ -1020,7 +1143,11 @@
         var who = all.length === 1 ? name : (name + " +" + (all.length - 1) + " more");
         var label = _el("dappStripLabel");
         if (label) {
-            label.textContent = "🔗 " + all.length + " dApp" + (all.length > 1 ? "s" : "") + " connected — " + who;
+            // Only warn on the SDK's own definite "closed" flag — guessing
+            // from a missing `connected` property would false-warn on healthy
+            // sessions. The reliable signal is the revoke() result itself.
+            label.textContent = "🔗 " + all.length + " dApp" + (all.length > 1 ? "s" : "") + " connected — " + who +
+                (_relayerExplicitlyClosed() ? " · ⚠️ relay offline (revoke may not reach the dApp)" : "");
         }
         strip.classList.add("show");
     }
@@ -1051,7 +1178,10 @@
         revokeAll: revokeAll,
         sessions: sessions,
         refreshStatusStrip: refreshStatusStrip,
-        _dropForeignSessions: _dropForeignSessions
+        _dropForeignSessions: _dropForeignSessions,
+        _ensureRelayer: _ensureRelayer,
+        _relayerOpen: _relayerOpen,
+        _disconnectSession: _disconnectSession
     };
 
     // Auto-boot on load ONLY if the user has connected a dApp before (we
