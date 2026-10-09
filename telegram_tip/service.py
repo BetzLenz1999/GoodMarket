@@ -27,7 +27,11 @@ from .tokens import TOKENS, get_token, is_valid_address, normalize_token, parse_
 logger = logging.getLogger(__name__)
 
 _ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
-_MENTION_RE = re.compile(r"^@([A-Za-z0-9_]{3,24})$")
+# Telegram usernames are 5-32 chars (letters/digits/underscore). Allow 3-32 so
+# both the GoodMarket app username and any Telegram @handle are accepted — the
+# old 3-24 cap silently rejected legitimate long handles, which then failed
+# mention parsing entirely.
+_MENTION_RE = re.compile(r"^@([A-Za-z0-9_]{3,32})$")
 
 DAILY_STATUSES = ("sending", "confirmed")
 
@@ -91,13 +95,20 @@ def _get_supabase():
         return None
 
 
-def get_saved_wallet(telegram_user_id) -> str:
-    """Registered wallet for a Telegram user (telegram_wallet_sessions)."""
+def lookup_saved_wallet(telegram_user_id) -> dict:
+    """Diagnostic lookup of a Telegram user's saved wallet.
+
+    Returns ``{found, wallet, error, rows}`` so callers can tell APART
+    "no row for this user" from "the DB read failed" — the plain
+    ``get_saved_wallet`` collapses both into an empty string, which made a
+    failed read indistinguishable from a genuinely unregistered user and
+    produced misleading "recipient not registered" replies.
+    """
     if not telegram_user_id:
-        return ""
+        return {"found": False, "wallet": "", "error": "no_user_id", "rows": 0}
     supabase = _get_supabase()
     if not supabase:
-        return ""
+        return {"found": False, "wallet": "", "error": "no_supabase", "rows": 0}
     try:
         result = (
             supabase.table("telegram_wallet_sessions")
@@ -106,12 +117,20 @@ def get_saved_wallet(telegram_user_id) -> str:
             .limit(1)
             .execute()
         )
-        if result and result.data:
-            wallet = (result.data[0].get("wallet_address") or "").strip()
-            return wallet.lower() if wallet else ""
+        rows = list(result.data or []) if result else []
+        if rows:
+            wallet = (rows[0].get("wallet_address") or "").strip()
+            if wallet:
+                return {"found": True, "wallet": wallet.lower(), "error": None, "rows": len(rows)}
+        return {"found": False, "wallet": "", "error": None, "rows": len(rows)}
     except Exception as exc:  # noqa: BLE001
         logger.warning("telegram_tip: saved-wallet lookup failed: %s", exc)
-    return ""
+        return {"found": False, "wallet": "", "error": f"db_error: {exc}", "rows": 0}
+
+
+def get_saved_wallet(telegram_user_id) -> str:
+    """Registered wallet for a Telegram user (telegram_wallet_sessions)."""
+    return lookup_saved_wallet(telegram_user_id).get("wallet", "")
 
 
 def username_for_wallet(wallet: str | None) -> str | None:
@@ -352,13 +371,21 @@ def resolve_recipient(
     explicit: str | None,
     reply_telegram_user_id=None,
     self_wallet: str | None = None,
+    reply_username: str | None = None,
 ) -> dict:
     """Resolve a tip recipient to a wallet.
 
     Order: explicit raw ``0x`` address → explicit ``@username`` →
-    the replied-to Telegram user's saved wallet → self (testing).
+    the replied-to Telegram user's saved wallet → reply-message @handle
+    (last-resort) → self (testing).
 
-    Returns ``{ok, wallet, source, telegram_user_id}``.
+    ``reply_username`` is the Telegram @handle of the replied-to member, used
+    ONLY as a last resort when the reply target has no saved wallet but their
+    @handle IS registered in another table.
+
+    Returns ``{ok, wallet, source, telegram_user_id, error?}``. When the wallet
+    store is unreachable the error is ``recipient_lookup_unavailable`` so the
+    caller can tell "DB is down" from "user genuinely not registered".
     """
     if explicit and _ADDRESS_RE.match(explicit):
         return {"ok": True, "wallet": explicit.lower(), "source": "address", "telegram_user_id": None}
@@ -366,14 +393,29 @@ def resolve_recipient(
     if explicit and _MENTION_RE.match(explicit):
         wallet = find_wallet_by_username(explicit)
         if not wallet:
+            logger.info("telegram_tip: @%s did not resolve to a wallet", explicit.lstrip("@"))
             return {"ok": False, "error": "recipient_unknown", "source": "username"}
         return {"ok": True, "wallet": wallet.lower(), "source": "username", "telegram_user_id": None}
 
     if reply_telegram_user_id:
-        wallet = get_saved_wallet(reply_telegram_user_id)
-        if not wallet:
-            return {"ok": False, "error": "recipient_not_registered", "source": "reply"}
-        return {"ok": True, "wallet": wallet, "source": "reply", "telegram_user_id": str(reply_telegram_user_id)}
+        info = lookup_saved_wallet(reply_telegram_user_id)
+        if info.get("found"):
+            return {"ok": True, "wallet": info["wallet"], "source": "reply", "telegram_user_id": str(reply_telegram_user_id)}
+        # A failed DB read is an infra problem, not "not registered".
+        if info.get("error") and info["error"] not in ("no_user_id",):
+            logger.warning(
+                "telegram_tip: reply recipient %s lookup error: %s",
+                reply_telegram_user_id, info.get("error"),
+            )
+            return {"ok": False, "error": "recipient_lookup_unavailable", "source": "reply"}
+        # Last resort: the replied-to member's @handle (surfaced via message
+        # entities -> reply_username) may be registered in another table.
+        if reply_username:
+            wallet = find_wallet_by_username(reply_username)
+            if wallet:
+                return {"ok": True, "wallet": wallet, "source": "reply_username", "telegram_user_id": str(reply_telegram_user_id)}
+        logger.info("telegram_tip: reply target %s has no saved wallet", reply_telegram_user_id)
+        return {"ok": False, "error": "recipient_not_registered", "source": "reply"}
 
     if self_wallet:
         return {"ok": True, "wallet": self_wallet.lower(), "source": "self", "telegram_user_id": None}
@@ -544,6 +586,7 @@ def execute_tip(
     reply_telegram_user_id=None,
     self_wallet: str | None = None,
     send_fn=None,
+    reply_username: str | None = None,
 ) -> dict:
     """Full flow: gate → parse → resolve → limits → send → ledger.
 
@@ -558,7 +601,7 @@ def execute_tip(
     if not parsed.get("ok"):
         return {"ok": False, "error": parsed.get("error"), "message": _usage_message(parsed.get("error"))}
 
-    return _execute_parsed(parsed, admin_telegram_id, admin_wallet, reply_telegram_user_id, self_wallet, send_fn)
+    return _execute_parsed(parsed, admin_telegram_id, admin_wallet, reply_telegram_user_id, self_wallet, send_fn, reply_username)
 
 
 def execute_tip_parsed(
@@ -568,6 +611,7 @@ def execute_tip_parsed(
     reply_telegram_user_id=None,
     self_wallet: str | None = None,
     send_fn=None,
+    reply_username: str | None = None,
 ) -> dict:
     """Like ``execute_tip`` but takes a PRE-parsed ``{amount, token_key, recipient}``.
 
@@ -579,7 +623,7 @@ def execute_tip_parsed(
         return {"ok": False, "error": "not_admin", "message": "❌ Only GoodMarket admins can send tips."}
     if not parsed or not parsed.get("ok"):
         return {"ok": False, "error": "usage", "message": _usage_message("usage")}
-    return _execute_parsed(parsed, admin_telegram_id, admin_wallet, reply_telegram_user_id, self_wallet, send_fn)
+    return _execute_parsed(parsed, admin_telegram_id, admin_wallet, reply_telegram_user_id, self_wallet, send_fn, reply_username)
 
 
 def _execute_parsed(
@@ -589,14 +633,25 @@ def _execute_parsed(
     reply_telegram_user_id,
     self_wallet: str | None,
     send_fn,
+    reply_username: str | None = None,
 ) -> dict:
     """Shared body: resolve recipient → limits → send → ledger."""
     token_key = parsed["token_key"]
     amount = parsed["amount"]
     meta = TOKENS[token_key]
 
-    resolved = resolve_recipient(parsed.get("recipient"), reply_telegram_user_id, self_wallet)
+    resolved = resolve_recipient(parsed.get("recipient"), reply_telegram_user_id, self_wallet, reply_username)
     if not resolved.get("ok"):
+        # Log the full resolution inputs on failure — the user-facing message is
+        # intentionally vague, so this is the only way to tell an @handle miss
+        # (recipient_unknown) from an unregistered reply target
+        # (recipient_not_registered) from a DB outage (lookup_unavailable).
+        logger.warning(
+            "telegram_tip: recipient unresolved error=%s source=%s admin_id=%s "
+            "explicit=%r reply_user_id=%r reply_username=%r",
+            resolved.get("error"), resolved.get("source"), admin_telegram_id,
+            parsed.get("recipient"), reply_telegram_user_id, reply_username,
+        )
         return {"ok": False, "error": resolved.get("error"), "message": _recipient_message(resolved.get("error"))}
 
     limits = check_limits(admin_telegram_id, token_key, amount)
@@ -701,6 +756,11 @@ def _recipient_message(error: str | None) -> str:
             "❌ Recipient is not registered yet.\n"
             "Ask them to <code>/start</code> and save their wallet first, "
             "or reply directly to their message with the tip."
+        )
+    if error == "recipient_lookup_unavailable":
+        return (
+            "⚠️ Could not read registered wallets right now (a temporary server/database issue).\n"
+            "Please try again in a moment."
         )
     if error == "no_recipient":
         return "❌ No recipient. Reply to a member's message, or add <code>@username</code> / a <code>0x</code> address."
