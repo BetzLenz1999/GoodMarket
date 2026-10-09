@@ -164,26 +164,65 @@ def username_for_telegram(telegram_user_id) -> str | None:
 
 
 def find_wallet_by_username(username: str) -> str | None:
-    """Resolve ``@username`` → wallet (case-insensitive, unique by construction)."""
+    """Resolve ``@username`` → wallet.
+
+    Two username sources exist and must both be honoured:
+      1. ``user_data.username`` — the GoodMarket username (case-insensitive,
+         unique by construction).
+      2. ``telegram_wallet_sessions.username`` — the Telegram @handle the bot
+         captured at wallet-save time. A user who only ever registered through
+         the bot is absent from ``user_data.username`` but IS registered, so
+         without this fallback a tip addressed to their Telegram @handle used to
+         fail with "recipient is not registered yet" even though their wallet
+         was saved. `user_data` is preferred (canonical app username); the bot
+         table is the fallback.
+
+    Each source is guarded independently so one failing table cannot block the
+    other. Returns the wallet (lowercased) or None.
+    """
     match = _MENTION_RE.match((username or "").strip())
     if not match:
         return None
     supabase = _get_supabase()
     if not supabase:
         return None
+    handle = match.group(1)
+
+    # Preferred: the GoodMarket app username.
     try:
         result = (
             supabase.table("user_data")
             .select("wallet_address")
-            .ilike("username", match.group(1))
+            .ilike("username", handle)
             .limit(1)
             .execute()
         )
         if result and result.data:
             wallet = (result.data[0].get("wallet_address") or "").strip()
-            return wallet or None
+            if wallet:
+                return wallet.lower()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("telegram_tip: username lookup failed: %s", exc)
+        logger.warning("telegram_tip: user_data username lookup failed: %s", exc)
+
+    # Fallback: the Telegram @handle captured by the bot. Ignore NULL/blank
+    # usernames (many rows have none) — the ilike below already excludes them,
+    # but we re-check defensively.
+    try:
+        result = (
+            supabase.table("telegram_wallet_sessions")
+            .select("wallet_address,username")
+            .ilike("username", handle)
+            .limit(1)
+            .execute()
+        )
+        if result and result.data:
+            row = result.data[0]
+            if (row.get("username") or "").strip():
+                wallet = (row.get("wallet_address") or "").strip()
+                if wallet:
+                    return wallet.lower()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("telegram_tip: telegram username lookup failed: %s", exc)
     return None
 
 
