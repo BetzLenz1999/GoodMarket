@@ -7665,6 +7665,10 @@ def wallet_page():
         xdc_chain_id=get_env_int("XDC_MAINNET_CHAIN_ID", 50),
         celo_chain_id=get_env_int("CELO_MAINNET_CHAIN_ID", 42220),
         identity_contract_address=GOODDOLLAR_CONTRACTS.get("IDENTITY", ""),
+        # Connect-a-dApp (wallet role) needs Ethereum in the in-app wallet's
+        # chain registry. Public RPC list with failover — overridable per deploy.
+        ethereum_rpc=os.environ.get("ETHEREUM_RPC_URL", ""),
+        ethereum_rpc_fallbacks=os.environ.get("ETHEREUM_RPC_FALLBACKS", ""),
     )
 
 
