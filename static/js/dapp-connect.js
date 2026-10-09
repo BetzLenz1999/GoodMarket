@@ -101,6 +101,9 @@
         sdkLoading: null,
         pendingProposal: null,
         pendingRequest: null,
+        // True while the user is pasting a link via "Connect another dApp"
+        // even though a session already exists — keeps the paste form open.
+        connectFormForced: false,
         inited: false
     };
 
@@ -195,6 +198,9 @@
             _renderProposal(proposal);
             _renderSessions();
             _openModal("dappConnectModal");
+            // Bring the review (proposal + Approve/Decline) into view — it now
+            // sits right under the title with the paste form hidden.
+            _scrollSheetTop();
         });
         client.on("session_request", function (event) {
             _handleSessionRequest(event);
@@ -255,9 +261,10 @@
 
     function open() {
         if (!isEligible()) {
-            _showConnectForm(false);
-            var againBtn = _el("dappConnectAgainBtn");
-            if (againBtn) againBtn.style.display = "none";
+            _setDisp("dappConnectForm", false);
+            _setDisp("dappConnectAgainBtn", false);
+            _setDisp("dappSessionsWrap", false);
+            _setDisp("dappProposalActions", false);
             _setConnectStatus(
                 "🔒 Connect a dApp signs with your in-app GoodMarket wallet (email + PIN). " +
                 "Log in with your GoodMarket wallet to use it — a MetaMask, WalletConnect or " +
@@ -310,7 +317,7 @@
         return _getClient().then(function (client) {
             return client.pair({ uri: uri });
         }).then(function () {
-            _setConnectStatus("📲 Waiting for the dApp to send its connection request…", "info");
+            _setConnectStatus("📲 Waiting for the dApp to send its connection request… Approve or Decline will appear here.", "info");
         }).catch(function (e) {
             _setConnectStatus("❌ Could not connect: " + (e && e.message ? e.message : e), "error");
         }).then(function () {
@@ -518,6 +525,7 @@
         }).catch(function () {}).then(function () {
             _state.pendingProposal = null;
             _el("dappProposalBox").innerHTML = "";
+            _renderSessions();
             _setConnectStatus("Connection request declined.", "info");
         });
     }
@@ -851,15 +859,31 @@
         } catch (_) { return []; }
     }
 
-    // Show the paste-a-link form ONLY when there is nothing connected yet.
-    // Once a dApp is connected the "Connect this dApp" button must disappear —
-    // the session list (with its Revoke buttons) and the "Connect another dApp"
-    // escape hatch take over, so a successful connect is visually obvious.
-    function _showConnectForm(show) {
-        var form = _el("dappConnectForm");
-        var again = _el("dappConnectAgainBtn");
-        if (form) form.style.display = show ? "" : "none";
-        if (again) again.style.display = show ? "none" : "";
+    // ── view state ───────────────────────────────────────────────────────
+    // The modal shows exactly ONE of three views so nothing important ever
+    // falls below the fold on mobile:
+    //   • REVIEW  — a dApp is asking to connect (proposal + Approve/Decline,
+    //               right under the title; the paste form is hidden).
+    //   • CONNECT — nothing connected yet: paste a WalletConnect link.
+    //   • SESSIONS— at least one dApp connected: the list + "Connect another".
+    // Previously all of these were stacked at once, so the Approve/Decline
+    // buttons sat below the paste form + session list and users had to scroll
+    // (and the Connect button appeared to "still be there" during review).
+    function _setDisp(id, show) {
+        var el = _el(id);
+        if (el) el.style.display = show ? "" : "none";
+    }
+
+    function _applyView() {
+        var reviewing = !!_state.pendingProposal;
+        var hasSessions = sessions().length > 0;
+        // Show the paste form when nothing is connected, OR when the user
+        // explicitly asked for it via "Connect another dApp".
+        var showForm = !reviewing && (!hasSessions || _state.connectFormForced);
+        _setDisp("dappConnectForm", showForm);
+        _setDisp("dappSessionsWrap", !reviewing);
+        _setDisp("dappConnectAgainBtn", !reviewing && hasSessions && !_state.connectFormForced);
+        _setDisp("dappProposalActions", reviewing);
     }
 
     function startNewConnection() {
@@ -867,17 +891,29 @@
         var input = _el("dappUriInput");
         if (input) input.value = "";
         _setConnectStatus("", "");
-        _showConnectForm(true);
+        _state.pendingProposal = null;
+        _state.connectFormForced = true;
+        _applyView();
+        _scrollSheetTop();
         if (input && input.focus) { try { input.focus(); } catch (_) {} }
+    }
+
+    function _scrollSheetTop() {
+        var modal = _el("dappConnectModal");
+        if (!modal || typeof modal.querySelector !== "function") return;
+        var sheet = modal.querySelector(".modal-sheet");
+        if (!sheet) return;
+        if (typeof sheet.scrollTo === "function") { try { sheet.scrollTo({ top: 0, behavior: "smooth" }); } catch (_) { sheet.scrollTop = 0; } }
+        else { sheet.scrollTop = 0; }
     }
 
     function _renderSessions() {
         var list = _el("dappSessionList");
-        var proposals = _el("dappProposalActions");
-        if (proposals) proposals.style.display = _state.pendingProposal ? "flex" : "none";
         var all = sessions();
-        // Connected => hide the connect form/button. Nothing connected => show it.
-        _showConnectForm(all.length === 0);
+        // Keep the whole-modal view state in sync (hides the paste form while a
+        // proposal is being reviewed, hides the list + shows the escape hatch
+        // once something is connected).
+        _applyView();
         if (!list) return;
         if (!all.length) {
             list.innerHTML = '<div class="dapp-empty">No dApps connected yet.</div>';
