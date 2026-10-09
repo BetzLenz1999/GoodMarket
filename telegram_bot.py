@@ -2639,10 +2639,23 @@ def handle_tip(chat_id, telegram_user, text, message=None):
         send_message(chat_id, "⚠️ Tip could not be processed. Please try again later.")
         return
 
-    send_message(chat_id, result.get("message") or "⚠️ Tip could not be processed.")
+    # Public "🎉 Congrats @user" announcement in the same chat (usernames only,
+    # never a wallet). When it posts, the recipient already sees it here, so the
+    # private DM below is suppressed to avoid a duplicate in the same chat.
+    announced = False
+    if result.get("ok") and result.get("announcement"):
+        try:
+            send_message(chat_id, result["announcement"])
+            announced = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not post tip announcement: %s", exc)
 
-    # Best-effort private confirmation to the recipient (only if they started the bot).
-    if result.get("ok") and result.get("explorer_url"):
+    if not announced:
+        send_message(chat_id, result.get("message") or "⚠️ Tip could not be processed.")
+
+    # Best-effort private confirmation to the recipient (only if they started the
+    # bot AND the announcement was not already posted in this chat).
+    if result.get("ok") and result.get("explorer_url") and not announced:
         _notify_tip_recipient(reply_user_id, telegram_user_id, result)
 
 
