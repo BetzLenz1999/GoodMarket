@@ -78,18 +78,39 @@ def _get_table():
 def _fetch_accounts(table, limit: int):
     """Return up to `limit` accounts we still need to (re)check.
 
-    Accounts never checked, or last checked longest ago, come first so a table
-    larger than the batch size is covered across successive ticks.
+    Only *completed* signups are checked — an abandoned register-time row has no
+    real wallet behind it, so there is nothing to verify on-chain (and no point
+    spending an RPC call). Accounts never checked, or last checked longest ago,
+    come first so a table larger than the batch size is covered across
+    successive ticks.
     """
-    res = (
-        table.select(
-            "address,verification_status,is_human_verified,human_verified_at,"
-            "last_verified_check"
-        )
-        .order("last_verified_check", desc=False, nullsfirst=True)
-        .limit(limit)
-        .execute()
+    base_cols = (
+        "address,verification_status,is_human_verified,human_verified_at,"
+        "last_verified_check"
     )
+    try:
+        res = (
+            table.select(base_cols)
+            .eq("signup_completed", True)
+            .order("last_verified_check", desc=False, nullsfirst=True)
+            .limit(limit)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Deployments that have not run sql/local_wallet_signup_completion.sql
+        # yet have no signup_completed column — fall back to checking every row
+        # (the pre-migration behaviour) rather than checking none.
+        logger.warning(
+            "⚠️ local-wallet reconciler: signup_completed column missing "
+            f"({exc}); checking all rows. Run "
+            "sql/local_wallet_signup_completion.sql."
+        )
+        res = (
+            table.select(base_cols)
+            .order("last_verified_check", desc=False, nullsfirst=True)
+            .limit(limit)
+            .execute()
+        )
     return getattr(res, "data", None) or []
 
 
@@ -177,12 +198,34 @@ def reconcile_local_wallet_verifications(limit: int | None = None) -> dict:
     return summary
 
 
+def _count(table, filters=None) -> int:
+    """Exact row count for `table`, applying `filters` (list of (col, value))."""
+    query = table.select("id", count="exact")
+    for col, value in (filters or []):
+        query = query.eq(col, value)
+    res = query.limit(1).execute()
+    count = getattr(res, "count", None)
+    if count is None:
+        # Fall back to counting the returned rows when the client does not
+        # populate `count`.
+        count = len(getattr(res, "data", None) or [])
+    return int(count or 0)
+
+
 def get_local_wallet_verification_summary() -> dict:
-    """Read the cached counts (no on-chain calls). Backs the admin dashboard."""
+    """Read the cached counts (no on-chain calls). Backs the admin dashboard.
+
+    Only *completed* signups are counted. A row written by
+    `/api/local-wallet/register` that never reached a first login is an
+    abandoned signup artifact, not a local-wallet user — counting it was the
+    bug that made the table look like it contained ordinary (non-local) users.
+    """
     summary = {
         "total": 0,
         "verified": 0,
         "unverified": 0,
+        "completed": 0,
+        "incomplete": 0,
         "verified_rate": 0.0,
         "service_available": False,
     }
@@ -192,30 +235,83 @@ def get_local_wallet_verification_summary() -> dict:
         if client is None:
             return summary
         table = client.table("local_wallet_accounts")
-        total_res = table.select("id", count="exact").limit(1).execute()
-        total = getattr(total_res, "count", None)
-        if total is None:
-            # Fall back to counting the returned rows when the client does not
-            # populate `count`.
-            total = len(getattr(total_res, "data", None) or [])
-        verified_res = (
-            table.select("id", count="exact")
-            .eq("is_human_verified", True)
-            .limit(1)
-            .execute()
-        )
-        verified = getattr(verified_res, "count", None)
-        if verified is None:
-            verified = len(getattr(verified_res, "data", None) or [])
-        summary["total"] = int(total or 0)
-        summary["verified"] = int(verified or 0)
-        summary["unverified"] = max(0, summary["total"] - summary["verified"])
-        if summary["total"]:
-            summary["verified_rate"] = round(summary["verified"] / summary["total"] * 100, 1)
+
+        all_rows = _count(table)
+        try:
+            # Counted over completed signups only. Fails on a deployment that
+            # has not run sql/local_wallet_signup_completion.sql yet — then we
+            # degrade to treating every row as completed (the pre-migration
+            # behaviour) instead of reporting zeros.
+            completed = _count(table, [("signup_completed", True)])
+            incomplete = max(0, all_rows - completed)
+            verified = _count(
+                table, [("signup_completed", True), ("is_human_verified", True)]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "⚠️ local-wallet summary: signup_completed column missing "
+                f"({exc}); counting all rows. Run "
+                "sql/local_wallet_signup_completion.sql."
+            )
+            completed = all_rows
+            incomplete = 0
+            verified = _count(table, [("is_human_verified", True)])
+
+        summary["completed"] = completed
+        summary["incomplete"] = incomplete
+        summary["total"] = completed
+        summary["verified"] = verified
+        summary["unverified"] = max(0, completed - verified)
+        if completed:
+            summary["verified_rate"] = round(verified / completed * 100, 1)
         summary["service_available"] = True
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"⚠️ local-wallet FV summary failed: {exc}")
     return summary
+
+
+def cleanup_incomplete_local_wallet_accounts(dry_run: bool = True) -> dict:
+    """Remove abandoned signup rows (register-time, never logged in).
+
+    These are artifacts, not users: `/api/local-wallet/register` inserts a row
+    the moment the browser generates a keypair, so a user who bailed at the
+    recovery-words step leaves one behind. Deleting them is safe — a real
+    account that logs in later flips `signup_completed` to true before this runs
+    (and if the row were deleted first, a re-register simply recreates it).
+
+    ``dry_run`` (default) only counts; pass ``dry_run=False`` to actually
+    delete. Never raises — a failure is reported in the returned summary.
+    """
+    result = {"success": False, "examined": 0, "deleted": 0, "dry_run": dry_run}
+    try:
+        from supabase_client import get_supabase_admin_client, get_supabase_client
+        client = get_supabase_admin_client() or get_supabase_client()
+        if client is None:
+            result["error"] = "service_unavailable"
+            return result
+        table = client.table("local_wallet_accounts")
+        try:
+            res = (
+                table.select("id", count="exact")
+                .eq("signup_completed", False)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = f"signup_completed column missing: {exc}"
+            return result
+        examined = getattr(res, "count", None)
+        if examined is None:
+            examined = len(getattr(res, "data", None) or [])
+        result["examined"] = int(examined or 0)
+        if not dry_run and result["examined"]:
+            table.delete().eq("signup_completed", False).execute()
+            result["deleted"] = result["examined"]
+        result["success"] = True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"⚠️ local-wallet abandoned-signup cleanup failed: {exc}")
+        result["error"] = str(exc)
+    return result
 
 
 def _loop():
