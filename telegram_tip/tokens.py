@@ -5,8 +5,8 @@ Decimals are per-token and MUST come from here — USDT/USDC are 6 decimals, so 
 hardcoded ``10**18`` would over-send by 10**12.
 
 Addresses are env-overridable so a redeploy/re-issue does not need a code change.
-The set mirrors ``chatroom/tips.py`` (the app's public tip registry) plus USDT/
-USDC, which the wallet and chatroom already support.
+The set mirrors ``chatroom/tips.py`` (the app's public tip registry) plus the
+Celo stablecoins the wallet and chatroom already support (USDT/USDC 6dp, cUSD 18dp).
 """
 
 from __future__ import annotations
@@ -68,6 +68,18 @@ TOKENS = {
         "explorer": "https://celoscan.io/tx/",
         "rpc": os.getenv("CELO_RPC_URL", "https://forno.celo.org"),
     },
+    "CUSD": {
+        "key": "CUSD",
+        "label": "cUSD",
+        "network": "celo",
+        "chain_id": CELO_CHAIN_ID,
+        # cUSD is an 18-decimal token (unlike USDT/USDC).
+        "decimals": TOKEN_DECIMALS,
+        "native": False,
+        "address": os.getenv("CUSD_TOKEN_ADDRESS", "0x765DE816845861e75A25fCA122bb6898B8B1282a"),
+        "explorer": "https://celoscan.io/tx/",
+        "rpc": os.getenv("CELO_RPC_URL", "https://forno.celo.org"),
+    },
     "XDC": {
         "key": "XDC",
         "label": "XDC",
@@ -98,6 +110,7 @@ _ALIASES = {
     "CELO": "CELO",
     "USDT": "USDT", "TETHER": "USDT",
     "USDC": "USDC",
+    "CUSD": "CUSD", "C$": "CUSD", "CELODOLLAR": "CUSD", "CELOUSD": "CUSD",
     "XDC": "XDC",
     "XDCGD": "XDC_GD", "XDC_GD": "XDC_GD", "XDCG$": "XDC_GD", "XDCDOLLAR": "XDC_GD",
     "XDCGDOLLAR": "XDC_GD",
