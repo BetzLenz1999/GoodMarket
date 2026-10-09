@@ -163,16 +163,55 @@ def is_tip_admin(telegram_user_id, wallet_for_audit: str | None = None) -> bool:
         return False
 
 
+# ── trigger configuration ────────────────────────────────────────────────────
+# The trigger is configurable so the command can dodge group-management bots
+# (e.g. GroupHelp) that delete unrecognised "/" commands even for admins:
+#   - TIP_COMMAND_ALIASES   : trigger words (default "tip,gift")
+#   - TIP_COMMAND_PREFIXES  : allowed leading chars (default "/!" — Telegram
+#                             only treats "/" as a real command, so "!tip" is
+#                             ignored by most group bots)
+#   - TIP_REPLY_TRIGGER     : "1" enables the NO-KEYWORD form — an admin replying
+#                             to a member with just "<amount> <token>" (e.g.
+#                             "100 XDC") is treated as a tip.
+def command_aliases() -> list[str]:
+    raw = os.getenv("TIP_COMMAND_ALIASES", "tip,gift")
+    aliases = [a.strip().lower() for a in raw.replace(";", ",").split(",") if a.strip()]
+    return aliases or ["tip"]
+
+
+def command_prefixes() -> str:
+    raw = os.getenv("TIP_COMMAND_PREFIXES", "/!")
+    chars = "".join(ch for ch in raw if not ch.isspace())
+    return chars or "/"
+
+
+def reply_trigger_enabled() -> bool:
+    return (os.getenv("TIP_REPLY_TRIGGER", "0") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _tip_command_re():
+    alts = "|".join(re.escape(a) for a in command_aliases())
+    prefixes = re.escape(command_prefixes())
+    return re.compile(rf"^[{prefixes}](?:{alts})(?:@\w+)?\s*(.*)$", re.IGNORECASE | re.DOTALL)
+
+
+def is_tip_command(text: str) -> bool:
+    """True when ``text`` starts with a configured tip trigger (any prefix/alias)."""
+    return bool(_tip_command_re().match((text or "").strip()))
+
+
 # ── parsing ──────────────────────────────────────────────────────────────────
 def parse_tip_command(text: str) -> dict:
-    """Parse ``/tip <amount> <token> [recipient]``.
+    """Parse ``<trigger> <amount> <token> [recipient]``.
+
+    The trigger is any of the configured aliases with any configured prefix
+    (e.g. ``/tip``, ``!tip``, ``.gift``, ``/tip@BotName``).
 
     Returns ``{ok, amount, token_key, recipient}`` where ``recipient`` is either
     an ``@username`` / raw ``0x`` address string or ``None``.
     """
     body = (text or "").strip()
-    # Strip a leading /tip (optionally /tip@BotName), keep the rest.
-    m = re.match(r"^/tip(?:@\w+)?\s*(.*)$", body, re.IGNORECASE | re.DOTALL)
+    m = _tip_command_re().match(body)
     if not m:
         return {"ok": False, "error": "usage"}
     rest = m.group(1).strip()
@@ -200,6 +239,24 @@ def parse_tip_command(text: str) -> dict:
             return {"ok": False, "error": "bad_recipient"}
 
     return {"ok": True, "amount": amount, "token_key": token_key, "recipient": recipient}
+
+
+def parse_reply_tip(text: str) -> dict:
+    """No-keyword form: exactly ``<amount> <token>`` (e.g. ``100 XDC``).
+
+    Only meaningful when the message is a reply to a member; the recipient comes
+    from the reply target, not the text. Returns ``{ok, amount, token_key}``.
+    """
+    parts = (text or "").strip().split()
+    if len(parts) != 2:
+        return {"ok": False}
+    amount = parse_amount(parts[0])
+    if amount is None:
+        return {"ok": False}
+    token_key = normalize_token(parts[1])
+    if not token_key:
+        return {"ok": False}
+    return {"ok": True, "amount": amount, "token_key": token_key}
 
 
 # ── recipient resolution ─────────────────────────────────────────────────────
@@ -387,6 +444,39 @@ def execute_tip(
     if not parsed.get("ok"):
         return {"ok": False, "error": parsed.get("error"), "message": _usage_message(parsed.get("error"))}
 
+    return _execute_parsed(parsed, admin_telegram_id, admin_wallet, reply_telegram_user_id, self_wallet, send_fn)
+
+
+def execute_tip_parsed(
+    parsed: dict,
+    admin_telegram_id,
+    admin_wallet: str | None = None,
+    reply_telegram_user_id=None,
+    self_wallet: str | None = None,
+    send_fn=None,
+) -> dict:
+    """Like ``execute_tip`` but takes a PRE-parsed ``{amount, token_key, recipient}``.
+
+    Used by the no-keyword reply form, where the recipient is implied by the
+    message being replied to rather than the text.
+    """
+    if not is_tip_admin(admin_telegram_id, admin_wallet):
+        logger.warning("telegram_tip: tip denied for telegram id %s", admin_telegram_id)
+        return {"ok": False, "error": "not_admin", "message": "❌ Only GoodMarket admins can send tips."}
+    if not parsed or not parsed.get("ok"):
+        return {"ok": False, "error": "usage", "message": _usage_message("usage")}
+    return _execute_parsed(parsed, admin_telegram_id, admin_wallet, reply_telegram_user_id, self_wallet, send_fn)
+
+
+def _execute_parsed(
+    parsed: dict,
+    admin_telegram_id,
+    admin_wallet: str | None,
+    reply_telegram_user_id,
+    self_wallet: str | None,
+    send_fn,
+) -> dict:
+    """Shared body: resolve recipient → limits → send → ledger."""
     token_key = parsed["token_key"]
     amount = parsed["amount"]
     meta = TOKENS[token_key]
