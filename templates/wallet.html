@@ -3763,7 +3763,9 @@
         "xdcGdTokenContract": {{ xdc_gd_token_contract|default('', true)|tojson }},
         "xdcChainId": {{ xdc_chain_id|default(50, true)|tojson }},
         "celoChainId": {{ celo_chain_id|default(42220, true)|tojson }},
-        "identityContractAddress": {{ identity_contract_address|default('', true)|tojson }}
+        "identityContractAddress": {{ identity_contract_address|default('', true)|tojson }},
+        "ethereumRpc": {{ ethereum_rpc|default('', true)|tojson }},
+        "ethereumRpcFallbacks": {{ ethereum_rpc_fallbacks|default('', true)|tojson }}
     };
     </script>
     <script src="{{ url_for('static', filename='js/wallet-main.js', v=ASSET_VERSION) }}"></script>
