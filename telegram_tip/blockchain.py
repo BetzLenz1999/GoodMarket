@@ -145,7 +145,13 @@ class TipBlockchainService:
 
     # ── preflight ────────────────────────────────────────────────────────────
     def preflight(self, token_key: str, amount_wei: int) -> dict:
-        """Check sender gas + token balance. Returns a status dict, never raises."""
+        """Check sender gas + token balance. Returns a status dict, never raises.
+
+        Tries every configured RPC (primary then fallbacks) so a single dead or
+        rate-limited node cannot make a healthy wallet look unfunded. Only when
+        ALL nodes are unreachable does it report an infra error instead of a
+        (wrong) funds verdict.
+        """
         meta = TOKENS.get(token_key)
         if not meta:
             return {"ok": False, "error": "Unsupported token", "error_type": "unsupported_token"}
@@ -160,55 +166,73 @@ class TipBlockchainService:
             logger.error("❌ %s is invalid: %s", self.key_env, exc)
             return {"ok": False, "error": f"{self.key_env} invalid", "error_type": "invalid_key"}
 
-        w3 = Web3(Web3.HTTPProvider(self._rpc_for(meta)))
-        if not w3.is_connected():
-            return {"ok": False, "error": "Blockchain connection failed", "error_type": "rpc_down"}
-
-        # Gas check (native) — applies to every tip on this chain.
-        try:
-            celo_balance = self._native_balance(w3, account.address)
-            if celo_balance < _MIN_GAS_WEI:
-                native_label = "XDC" if meta["network"] == "xdc" else "CELO"
-                logger.error(
-                    "❌ %s wallet has insufficient %s for gas: %s. Top up %s.",
-                    self.key_env, native_label, celo_balance / 10**18, account.address,
-                )
-                return {
-                    "ok": False,
-                    "error": f"{self.key_env} wallet needs {native_label} for gas",
-                    "error_type": "insufficient_gas",
-                    "address": account.address,
-                }
-        except Exception as exc:  # noqa: BLE001
-            logger.error("❌ Failed to check %s gas balance: %s", self.key_env, exc)
-            return {"ok": False, "error": "Failed to check gas balance", "error_type": "gas_check_failed"}
-
-        # Token balance check (skip for native — gas check already covers it).
-        if not meta["native"]:
+        connected_any = False
+        last_stage = "rpc"
+        last_exc = None
+        for url in self._rpc_urls_for(meta):
             try:
-                contract = w3.eth.contract(
-                    address=Web3.to_checksum_address(meta["address"]), abi=_ERC20_ABI
-                )
-                balance = contract.functions.balanceOf(account.address).call()
-                if balance < amount_wei:
+                w3 = Web3(Web3.HTTPProvider(url))
+                if not w3.is_connected():
+                    last_exc = f"not connected: {url}"
+                    continue
+                connected_any = True
+
+                # Gas check (native) — applies to every tip on this chain.
+                last_stage = "gas"
+                celo_balance = self._native_balance(w3, account.address)
+                if celo_balance < _MIN_GAS_WEI:
+                    native_label = "XDC" if meta["network"] == "xdc" else "CELO"
                     logger.error(
-                        "❌ %s wallet has insufficient %s: %s < %s. Top up %s.",
-                        self.key_env, meta["label"],
-                        balance / (10 ** meta["decimals"]),
-                        amount_wei / (10 ** meta["decimals"]),
-                        account.address,
+                        "❌ %s wallet has insufficient %s for gas: %s. Top up %s.",
+                        self.key_env, native_label, celo_balance / 10**18, account.address,
                     )
                     return {
                         "ok": False,
-                        "error": f"{self.key_env} wallet has insufficient {meta['label']}",
-                        "error_type": "insufficient_balance",
+                        "error": f"{self.key_env} wallet needs {native_label} for gas",
+                        "error_type": "insufficient_gas",
                         "address": account.address,
                     }
-            except Exception as exc:  # noqa: BLE001
-                logger.error("❌ Failed to read %s token balance: %s", self.key_env, exc)
-                return {"ok": False, "error": "Failed to read token balance", "error_type": "balance_check_failed"}
 
-        return {"ok": True, "address": account.address, "network": meta["network"], "chain_id": meta["chain_id"]}
+                # Token balance check (skip for native — gas check already covers it).
+                if not meta["native"]:
+                    last_stage = "balance"
+                    contract = w3.eth.contract(
+                        address=Web3.to_checksum_address(meta["address"]), abi=_ERC20_ABI
+                    )
+                    balance = contract.functions.balanceOf(account.address).call()
+                    if balance < amount_wei:
+                        logger.error(
+                            "❌ %s wallet has insufficient %s: %s < %s. Top up %s.",
+                            self.key_env, meta["label"],
+                            balance / (10 ** meta["decimals"]),
+                            amount_wei / (10 ** meta["decimals"]),
+                            account.address,
+                        )
+                        return {
+                            "ok": False,
+                            "error": f"{self.key_env} wallet has insufficient {meta['label']}",
+                            "error_type": "insufficient_balance",
+                            "address": account.address,
+                        }
+
+                return {"ok": True, "address": account.address, "network": meta["network"], "chain_id": meta["chain_id"]}
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                logger.warning("⚠️ Preflight RPC failed (%s): %s", url, exc)
+                continue
+
+        # Every RPC failed — report an infra error, never a funds verdict.
+        if not connected_any:
+            err_type = "rpc_down"
+            err = "Blockchain connection failed"
+        elif last_stage == "balance":
+            err_type = "balance_check_failed"
+            err = "Failed to read token balance"
+        else:
+            err_type = "gas_check_failed"
+            err = "Failed to check gas balance"
+        logger.error("❌ Preflight failed on all RPCs (%s): %s", err_type, last_exc)
+        return {"ok": False, "error": err, "error_type": err_type}
 
     # ── send ─────────────────────────────────────────────────────────────────
     def send(self, token_key: str, to_wallet: str, amount) -> dict:
@@ -236,61 +260,70 @@ class TipBlockchainService:
 
         key = self._get_key()
         account = Account.from_key(key)
-        w3 = Web3(Web3.HTTPProvider(self._rpc_for(meta)))
         chain_id = meta["chain_id"]
+        urls = self._rpc_urls_for(meta)
 
+        tx_hash_hex = None
         last_error = ""
-        for attempt in range(4):
-            try:
-                nonce = w3.eth.get_transaction_count(account.address, "pending")
-                gas_price = int(w3.eth.gas_price * 1.2)
+        for url in urls:
+            w3 = Web3(Web3.HTTPProvider(url))
+            for attempt in range(4):
+                try:
+                    nonce = w3.eth.get_transaction_count(account.address, "pending")
+                    gas_price = int(w3.eth.gas_price * 1.2)
 
-                if meta["native"]:
-                    tx = {
-                        "chainId": chain_id,
-                        "to": recipient,
-                        "value": amount_wei,
-                        "gas": 21_000,
-                        "gasPrice": gas_price,
-                        "nonce": nonce,
-                        "from": account.address,
-                    }
-                else:
-                    contract = w3.eth.contract(
-                        address=Web3.to_checksum_address(meta["address"]), abi=_ERC20_ABI
-                    )
-                    try:
-                        estimated = contract.functions.transfer(
-                            recipient, amount_wei
-                        ).estimate_gas({"from": account.address})
-                        gas_limit = int(estimated * 1.3)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("⚠️ Gas estimation failed, using %s: %s", _DEFAULT_GAS_LIMIT, exc)
-                        gas_limit = _DEFAULT_GAS_LIMIT
-                    tx = contract.functions.transfer(recipient, amount_wei).build_transaction({
-                        "chainId": chain_id,
-                        "gas": gas_limit,
-                        "gasPrice": gas_price,
-                        "nonce": nonce,
-                        "from": account.address,
-                    })
+                    if meta["native"]:
+                        tx = {
+                            "chainId": chain_id,
+                            "to": recipient,
+                            "value": amount_wei,
+                            "gas": 21_000,
+                            "gasPrice": gas_price,
+                            "nonce": nonce,
+                            "from": account.address,
+                        }
+                    else:
+                        contract = w3.eth.contract(
+                            address=Web3.to_checksum_address(meta["address"]), abi=_ERC20_ABI
+                        )
+                        try:
+                            estimated = contract.functions.transfer(
+                                recipient, amount_wei
+                            ).estimate_gas({"from": account.address})
+                            gas_limit = int(estimated * 1.3)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("⚠️ Gas estimation failed, using %s: %s", _DEFAULT_GAS_LIMIT, exc)
+                            gas_limit = _DEFAULT_GAS_LIMIT
+                        tx = contract.functions.transfer(recipient, amount_wei).build_transaction({
+                            "chainId": chain_id,
+                            "gas": gas_limit,
+                            "gasPrice": gas_price,
+                            "nonce": nonce,
+                            "from": account.address,
+                        })
 
-                signed = w3.eth.account.sign_transaction(tx, key)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-                tx_hash_hex = tx_hash.hex()
-                if not tx_hash_hex.startswith("0x"):
-                    tx_hash_hex = "0x" + tx_hash_hex
-            except Exception as send_error:  # noqa: BLE001
-                last_error = str(send_error)
-                if _is_nonce_error(last_error) and attempt < 3:
-                    logger.warning("⚠️ Nonce collision, retrying (%s): %s", attempt + 1, last_error)
-                    continue
-                logger.error("❌ Tip transfer failed: %s", send_error)
-                return {"success": False, "error": f"Failed to send transaction: {send_error}", "error_type": "send_failed"}
-            break
+                    signed = w3.eth.account.sign_transaction(tx, key)
+                    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                    tx_hash_hex = tx_hash.hex()
+                    if not tx_hash_hex.startswith("0x"):
+                        tx_hash_hex = "0x" + tx_hash_hex
+                except Exception as send_error:  # noqa: BLE001
+                    last_error = str(send_error)
+                    if _is_nonce_error(last_error) and attempt < 3:
+                        logger.warning("⚠️ Nonce collision, retrying (%s) on %s: %s", attempt + 1, url, last_error)
+                        continue
+                    logger.warning("⚠️ Broadcast failed on %s: %s", url, last_error)
+                    break  # try the next RPC
+                break
+            if tx_hash_hex:
+                break
         else:
-            # All attempts hit nonce collisions — retryable, NOT hard failure.
-            return {"success": False, "error": "nonce_collision", "error_type": "nonce_collision"}
+            # Every RPC exhausted. If the last errors were nonce collisions it is
+            # retryable (not a hard failure) so the scheduler/admin can retry.
+            if _is_nonce_error(last_error):
+                return {"success": False, "error": "nonce_collision", "error_type": "nonce_collision"}
+            logger.error("❌ Tip transfer failed on all RPCs: %s", last_error)
+            return {"success": False, "error": f"Failed to send transaction: {last_error}", "error_type": "send_failed"}
 
         # Patient receipt wait — never raise on timeout (a broadcast tx may still
         # confirm; resending would double-pay). Polls across RPC fallbacks so a
