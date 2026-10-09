@@ -67,15 +67,15 @@ def admin_allowlist() -> set[str]:
 def per_tip_cap(token_key: str) -> Decimal:
     meta = get_token(token_key)
     default = {
-        "CELO": "100", "USDT": "100", "USDC": "100",
+        "CELO": "100", "USDT": "100", "USDC": "100", "CUSD": "100",
     }.get(token_key, "10000")
-    # Env name uses the registry key (GD, CELO, USDT, USDC, XDC, XDC_GD).
+    # Env name uses the registry key (GD, CELO, USDT, USDC, CUSD, XDC, XDC_GD).
     return _env_decimal(f"TIP_MAX_PER_TIP_{token_key}", default)
 
 
 def daily_cap(token_key: str) -> Decimal:
     default = {
-        "CELO": "500", "USDT": "500", "USDC": "500",
+        "CELO": "500", "USDT": "500", "USDC": "500", "CUSD": "500",
     }.get(token_key, "50000")
     return _env_decimal(f"TIP_DAILY_CAP_{token_key}", default)
 
@@ -652,7 +652,7 @@ def _execute_parsed(
             resolved.get("error"), resolved.get("source"), admin_telegram_id,
             parsed.get("recipient"), reply_telegram_user_id, reply_username,
         )
-        return {"ok": False, "error": resolved.get("error"), "message": _recipient_message(resolved.get("error"))}
+        return {"ok": False, "error": resolved.get("error"), "message": _recipient_message(resolved.get("error"), resolved.get("source"))}
 
     limits = check_limits(admin_telegram_id, token_key, amount)
     if not limits.get("ok"):
@@ -704,6 +704,13 @@ def _execute_parsed(
         }
 
     error_type = result.get("error_type") or "send_failed"
+    # A short correlation ref (the ledger row id) lets the admin find the exact
+    # row/log line for this tip without guessing.
+    ref = f"TIP-{tip_id}" if tip_id else ""
+    logger.error(
+        "telegram_tip: send failed ref=%s error_type=%s admin_id=%s recipient=%s token=%s error=%r",
+        ref, error_type, admin_telegram_id, masked, token_key, result.get("error"),
+    )
     if error_type == "submitted_unconfirmed":
         update_tip(tip_id, status="sending", tx_hash=result.get("tx_hash"), error_type=error_type)
         hash_masked = _mask(result.get("tx_hash") or "")
@@ -716,11 +723,12 @@ def _execute_parsed(
                 f"To: <code>{masked}</code>\n"
                 f"Tx: <code>{hash_masked}</code>\n"
                 "Do <b>NOT</b> resend — it may still confirm."
+                + (f"\nRef: <code>{ref}</code>" if ref else "")
             ),
         }
 
     update_tip(tip_id, status="failed", error_type=error_type, error_message=result.get("error"))
-    return {"ok": False, "error": error_type, "message": _send_error_message(error_type, meta)}
+    return {"ok": False, "error": error_type, "message": _send_error_message(error_type, meta, ref)}
 
 
 # ── message helpers ──────────────────────────────────────────────────────────
@@ -750,12 +758,23 @@ def _usage_message(error: str | None) -> str:
     )
 
 
-def _recipient_message(error: str | None) -> str:
-    if error in ("recipient_not_registered", "recipient_unknown"):
+def _recipient_message(error: str | None, source: str | None = None) -> str:
+    if error == "recipient_unknown":
+        # The admin typed an explicit @handle that resolved to no wallet.
         return (
-            "❌ Recipient is not registered yet.\n"
-            "Ask them to <code>/start</code> and save their wallet first, "
-            "or reply directly to their message with the tip."
+            "❌ No registered wallet found for that <code>@username</code>.\n"
+            "Check the spelling, or tip their <code>0x</code> wallet address instead.\n"
+            "<i>A member becomes tippable by @username after they open this bot, "
+            "tap /start, and save their wallet.</i>"
+        )
+    if error == "recipient_not_registered":
+        # The admin replied to a member whose wallet is not linked to the bot.
+        return (
+            "❌ That member hasn't linked a wallet to the bot yet, so there is no "
+            "address to send to.\n"
+            "Ask them to open this bot, tap /start, and save their GoodMarket wallet — "
+            "or tip their <code>0x</code> wallet address directly (e.g. "
+            "<code>/tip 10 G$ 0x…</code>)."
         )
     if error == "recipient_lookup_unavailable":
         return (
@@ -763,8 +782,12 @@ def _recipient_message(error: str | None) -> str:
             "Please try again in a moment."
         )
     if error == "no_recipient":
-        return "❌ No recipient. Reply to a member's message, or add <code>@username</code> / a <code>0x</code> address."
-    return "❌ Could not resolve a recipient wallet."
+        return (
+            "❌ No recipient.\n"
+            "Reply to a member's message, or add <code>@username</code> / a <code>0x</code> address "
+            "(e.g. <code>/tip 10 G$ @username</code>)."
+        )
+    return "❌ Could not resolve a recipient wallet. Please try again or check the server logs."
 
 
 def _limit_message(limits: dict, meta: dict) -> str:
@@ -784,14 +807,27 @@ def _limit_message(limits: dict, meta: dict) -> str:
     return "❌ Tip limit check failed."
 
 
-def _send_error_message(error_type: str, meta: dict) -> str:
+def _send_error_message(error_type: str, meta: dict, ref: str = "") -> str:
     label = meta.get("label", "token")
+    suffix = f"\nRef: <code>{ref}</code>" if ref else ""
     if error_type == "insufficient_gas":
-        return "❌ The TIP_KEY wallet has insufficient native gas. An admin must top it up."
+        return "❌ The TIP_KEY wallet has insufficient native gas. An admin must top it up." + suffix
     if error_type == "insufficient_balance":
-        return f"❌ The TIP_KEY wallet has insufficient {label}. An admin must top it up."
+        return f"❌ The TIP_KEY wallet has insufficient {label}. An admin must top it up." + suffix
     if error_type == "reverted":
-        return "❌ The transfer reverted on-chain. Nothing was sent."
+        return "❌ The transfer reverted on-chain. Nothing was sent." + suffix
     if error_type == "nonce_collision":
-        return "⏳ Temporary nonce conflict. Please try again in a few seconds."
-    return "❌ Tip failed. Please try again or check the server logs."
+        return "⏳ Temporary nonce conflict. Please try again in a few seconds." + suffix
+    if error_type in ("no_key", "invalid_key"):
+        return "❌ The tip wallet is not configured correctly. An admin must set <code>TIP_KEY</code>." + suffix
+    if error_type == "rpc_down":
+        return "⚠️ Could not reach the blockchain RPC right now. Please try again in a moment." + suffix
+    if error_type == "gas_check_failed":
+        return "⚠️ Could not read the tip wallet's gas balance (RPC hiccup). Please try again." + suffix
+    if error_type == "balance_check_failed":
+        return f"⚠️ Could not read the tip wallet's {label} balance (RPC hiccup). Please try again." + suffix
+    if error_type in ("bad_recipient",):
+        return "❌ Recipient address is invalid." + suffix
+    if error_type in ("send_failed", "send_exception"):
+        return "⚠️ The transfer could not be broadcast (RPC/network issue). Please try again in a moment." + suffix
+    return "❌ Tip failed. Please try again or check the server logs." + suffix
