@@ -3249,6 +3249,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         Only <strong>completed</strong> signups (accounts that have logged in at least once)
                         are counted — abandoned signups that never finished are listed separately and can
                         be purged with <strong>Clean up abandoned</strong>.
+                        Tap a wallet address to open it on <strong>CeloScan</strong>, or use
+                        <strong>copy</strong> to copy the full address.
                     </p>
                 </div>
 
@@ -3535,6 +3537,23 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
             }
         }
 
+        function copyLocalWalletAddress(address, btn) {
+            if (!address) return;
+            const done = function () {
+                if (!btn) return;
+                const original = btn.textContent;
+                btn.textContent = 'copied ✓';
+                setTimeout(function () { btn.textContent = original; }, 1500);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(address).then(done).catch(function () {
+                    window.prompt('Copy wallet address:', address);
+                });
+            } else {
+                window.prompt('Copy wallet address:', address);
+            }
+        }
+
         async function loadLocalWalletVerification() {
             const summaryEl = document.getElementById('localWalletVerificationSummary');
             const listEl = document.getElementById('localWalletVerificationList');
@@ -3594,10 +3613,22 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         ? '<span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Never logged in — abandoned signup</span>'
                         : '<span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Verified: ' + _escLocalWallet(_fmtLocalWalletTime(a.human_verified_at)) + '</span>'
                           + '<span style="color:rgba(241,245,249,0.55);font-size:0.78rem;">Last check: ' + _escLocalWallet(_fmtLocalWalletTime(a.last_verified_check)) + '</span>';
+                    const shortAddr = _escLocalWallet(a.wallet_short || a.address || '');
+                    const fullAddr = _escLocalWallet(a.address || '');
+                    // Clickable CeloScan link so the admin can inspect the
+                    // account's on-chain history in one tap.
+                    const addrHtml = a.celoscan_url
+                        ? `<a href="${_escLocalWallet(a.celoscan_url)}" target="_blank" rel="noopener noreferrer"
+                              title="${fullAddr}" style="color:#60a5fa;font-weight:600;font-family:monospace;text-decoration:underline;">${shortAddr}</a>`
+                        : `<span style="color:#f1f5f9;font-weight:600;font-family:monospace;">${shortAddr}</span>`;
+                    const copyBtn = a.address
+                        ? `<button type="button" onclick="copyLocalWalletAddress('${fullAddr}', this)"
+                              title="Copy full address" style="background:rgba(96,165,250,0.15);border:1px solid rgba(96,165,250,0.4);color:#93c5fd;padding:0.1rem 0.45rem;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:700;">copy</button>`
+                        : '';
                     return `
                         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.6rem 0.9rem;">
                             <div style="display:flex;flex-direction:column;gap:0.15rem;">
-                                <span style="color:#f1f5f9;font-weight:600;font-family:monospace;">${_escLocalWallet(a.wallet_short || a.address || '')}</span>
+                                <span style="display:flex;align-items:center;gap:0.4rem;">${addrHtml}${copyBtn}</span>
                                 <span style="color:rgba(241,245,249,0.55);font-size:0.8rem;">${_escLocalWallet(a.email_masked || '')}</span>
                             </div>
                             <div style="display:flex;align-items:center;gap:0.8rem;">
