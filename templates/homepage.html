@@ -2674,6 +2674,45 @@
         .wc-panel-note { color: var(--sheet-dim); }
         .wc-qr-title { color: var(--sheet-text); }
         .wc-qr-desc  { color: var(--sheet-dim); }
+
+        /* Progress state shown immediately after "Connect GoodWallet" — a
+           spinner in place of the QR while the session URI is generated. */
+        .wc-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1.6rem 1rem;
+            margin-top: 0.9rem;
+            border: 1px solid var(--sheet-border);
+            border-radius: 16px;
+            background: #f9fafb;
+            text-align: center;
+        }
+        .wc-loading[hidden] { display: none; }
+        .wc-spinner {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            border: 3px solid rgba(124, 58, 237, 0.22);
+            border-top-color: var(--primary);
+            /* transform-only spin — never animate box-shadow/layout. */
+            animation: wcSpin 0.9s linear infinite;
+        }
+        .wc-loading-text {
+            margin: 0;
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--sheet-text);
+        }
+        .wc-loading-sub {
+            margin: 0;
+            font-size: 0.76rem;
+            color: var(--sheet-dim);
+        }
+        @keyframes wcSpin {
+            to { transform: rotate(360deg); }
+        }
         .lw-warning {
             background: #fffbeb;
             border: 1px solid #fde68a;
@@ -2786,6 +2825,9 @@
                 animation: none;
                 transition: none;
             }
+            /* Keep the spinner's rotation off, but leave it visible so the
+               "still working" signal survives. */
+            .wc-spinner { animation: none; }
         }
 
     </style>
@@ -3461,7 +3503,7 @@
                     <span class="option-arrow">→</span>
                 </button>
                 {% endif %}
-                <button id="walletConnectPrimaryButton" class="wallet-option-card" type="button" onclick="showWalletConnectOptions()">
+                <button id="walletConnectPrimaryButton" class="wallet-option-card" type="button" onclick="openGoodWalletConnect()">
                     <div class="option-icon">💚</div>
                     <div class="option-text">
                         <div class="option-title">Connect GoodWallet</div>
@@ -3604,15 +3646,21 @@
             <div class="wallet-form" id="walletConnectOptions">
                 <button class="back-btn" type="button" onclick="showWalletOptions()">← Back to login options</button>
                 <p class="wc-panel-note">
-                    Use this if your wallet connects better with a WalletConnect barcode/URI.
+                    Generating a secure WalletConnect session for GoodWallet. Scan the QR
+                    or copy the URI link when it appears.
                     {% if enable_privy_login %}
                     Privy remains available from the previous screen.
                     {% else %}
                     MiniPay, Trust Wallet, and MetaMask users should try the injected wallet option first.
                     {% endif %}
                 </p>
-                <div id="wcOptionCards">
-                    <button class="connect-btn" type="button" onclick="connectWalletConnect()">Show WalletConnect QR / URI</button>
+                <!-- Tapping "Connect GoodWallet" starts the session immediately, so
+                     there is no second button — just a progress state while the
+                     relay round-trip that produces the URI completes. -->
+                <div id="wcLoading" class="wc-loading" role="status" aria-live="polite" hidden>
+                    <span class="wc-spinner" aria-hidden="true"></span>
+                    <p class="wc-loading-text">Processing barcode and URI code…</p>
+                    <p class="wc-loading-sub">Generating a secure session. This takes a few seconds.</p>
                 </div>
                 <div id="wcQrWrap" class="wc-qr-wrap">
                     <div id="wcQrContainer">
@@ -4488,13 +4536,23 @@
             document.getElementById('walletOptions').style.display = 'none';
             const f = document.getElementById('walletConnectOptions');
             if (f) f.classList.add('visible');
-            // Restore the picker rows when returning to this view so a
-            // user who came back from the QR can choose a different
-            // connection method again.
-            setWcQrCompactMode(false);
+            // Reset the QR area so returning here (Back, or a retry) always
+            // starts from the progress state instead of a stale QR.
             const qrWrap = document.getElementById('wcQrWrap');
             if (qrWrap) qrWrap.style.display = 'none';
+            const loader = document.getElementById('wcLoading');
+            if (loader) loader.hidden = true;
             detectInjectedWallet();
+        }
+
+        // Tapping "Connect GoodWallet" should start the WalletConnect session
+        // straight away — the intermediate "Show WalletConnect QR / URI" button
+        // was a redundant second tap. This opens the panel AND starts, while
+        // showWalletConnectOptions() stays the plain reset used by the Back
+        // button (it must never auto-start, or Back would launch a new session).
+        function openGoodWalletConnect() {
+            showWalletConnectOptions();
+            connectWalletConnect();
         }
 
         function showWalletStatus(targetId, message, type = 'info') {
@@ -5333,13 +5391,13 @@
             });
         }
 
-        // Once the WalletConnect QR is shown the user has committed to
-        // the WalletConnect path — collapse the option card above so the modal fits a single phone
-        // viewport without internal scrolling. showWalletConnectOptions
-        // calls this with `false` to restore the picker on Back.
-        function setWcQrCompactMode(active) {
-            const cards = document.getElementById('wcOptionCards');
-            if (cards) cards.style.display = active ? 'none' : '';
+        // The "Processing barcode and URI code…" state replaces the QR area
+        // while the session URI is generated, so the user sees progress from the
+        // first tap instead of an empty box. Hidden again the moment the QR is
+        // available (or on any failure).
+        function _wcSetLoading(active) {
+            const loader = document.getElementById('wcLoading');
+            if (loader) loader.hidden = !active;
         }
 
         function drawWalletConnectQr(uri) {
@@ -5347,7 +5405,7 @@
             const qrEl = document.getElementById('wcQrCode');
             const copyBtnContainer = document.getElementById('wcCopyBtnContainer');
             if (!qrWrap || !qrEl || !copyBtnContainer) return;
-            setWcQrCompactMode(true);
+            _wcSetLoading(false);
             qrWrap.style.display = 'block';
             qrEl.innerHTML = '';
             copyBtnContainer.innerHTML = '';
@@ -5471,9 +5529,15 @@
             }
         }
 
+        let _wcConnecting = false;
+
         async function connectWalletConnect() {
+            // Guard against a double-tap opening two concurrent sessions.
+            if (_wcConnecting) return;
+            _wcConnecting = true;
             const qrWrap = document.getElementById('wcQrWrap');
             if (qrWrap) qrWrap.style.display = 'none';
+            _wcSetLoading(true);
             showWalletStatus('walletConnectStatus', '⏳ Processing barcode and URI code…', 'info');
             if (_wcSidecarEnabled) {
                 try {
@@ -5517,6 +5581,8 @@
                             ? ('✅ Wallet connected via WalletConnect. ⚠️ ' + wcVerifyData.referral_warning + ' Redirecting...')
                             : '✅ Wallet connected via WalletConnect. Redirecting...';
                         showWalletStatus('walletConnectStatus', wcOkMsg, wcVerifyData && wcVerifyData.referral_warning ? 'warning' : 'success');
+                        _wcSetLoading(false);
+                        _wcConnecting = false;
                         setTimeout(() => { window.location.href = '/wallet'; }, wcVerifyData && wcVerifyData.referral_warning ? 2400 : 900);
                         return;
                     }
@@ -5664,9 +5730,13 @@
                 try {
                     await new Promise(resolve => setTimeout(resolve, 2500));
                 } catch (_idbErr) { /* ignore IDB flush errors */ }
+                _wcSetLoading(false);
+                _wcConnecting = false;
                 window.location.href = '/wallet';
             } catch (err) {
                 const emsg = (err && err.message) ? err.message : 'WalletConnect failed';
+                _wcSetLoading(false);
+                _wcConnecting = false;
 
                 // IDB "database connection is closing" errors are a known WalletConnect
                 // SDK side-effect on desktop that fire AFTER the session is already
@@ -5904,6 +5974,7 @@
         window.ackCreatePreflight      = ackCreatePreflight;
         window.cancelCreatePreflight   = cancelCreatePreflight;
         window.showWalletConnectOptions= showWalletConnectOptions;
+        window.openGoodWalletConnect   = openGoodWalletConnect;
         window.connectInjectedWallet   = connectInjectedWallet;
         window.connectWalletConnect    = connectWalletConnect;
         window.showSection             = showSection;
