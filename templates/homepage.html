@@ -2002,27 +2002,12 @@
 
         .wc-qr-wrap {
             display: none;
-            margin-top: 0.9rem;
-            padding: 1rem;
+            margin-top: 0.75rem;
+            padding: 0.85rem;
             border: 1px solid #e5e7eb;
             border-radius: 16px;
             background: #f9fafb;
             text-align: center;
-        }
-
-        .wc-qr-title {
-            margin: 0 0 0.35rem;
-            color: #111827;
-            font-size: 0.98rem;
-            font-weight: 800;
-        }
-
-        .wc-qr-desc {
-            margin: 0 auto 0.8rem;
-            color: #6b7280;
-            font-size: 0.78rem;
-            line-height: 1.45;
-            max-width: 300px;
         }
 
         .wc-qr-code {
@@ -2672,8 +2657,25 @@
         .connect-btn:hover { background: var(--action-2); box-shadow: 0 8px 22px rgba(251, 191, 36, 0.4); }
         .connect-btn:disabled { opacity: 0.55; }
         .wc-panel-note { color: var(--sheet-dim); }
-        .wc-qr-title { color: var(--sheet-text); }
-        .wc-qr-desc  { color: var(--sheet-dim); }
+
+        /* ── WalletConnect step banner ──
+           Sits directly under the Back button (above the QR) so the live
+           instruction — "Awaiting wallet approval…", "Approve the signature…"
+           — is always the first thing visible without scrolling. */
+        .wc-status-banner {
+            margin-top: 0.6rem;
+            padding: 0.7rem 0.85rem;
+            border-radius: 12px;
+            font-size: 0.86rem;
+            font-weight: 600;
+            line-height: 1.4;
+            text-align: left;
+        }
+        /* The base .status-message is display:none until a state class is set. */
+        .wc-status-banner.error   { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+        .wc-status-banner.success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+        .wc-status-banner.warning { background: #fffbeb; color: #b45309; border: 1px solid #fcd34d; }
+        .wc-status-banner.info    { background: rgba(124, 58, 237, 0.08); color: #5b21b6; border: 1px solid rgba(124, 58, 237, 0.28); }
 
         /* Progress state shown immediately after "Connect GoodWallet" — a
            spinner in place of the QR while the session URI is generated. */
@@ -3645,15 +3647,12 @@
                  scan a QR/barcode or copy a URI without disrupting Privy login. -->
             <div class="wallet-form" id="walletConnectOptions">
                 <button class="back-btn" type="button" onclick="showWalletOptions()">← Back to login options</button>
-                <p class="wc-panel-note">
-                    Generating a secure WalletConnect session for GoodWallet. Scan the QR
-                    or copy the URI link when it appears.
-                    {% if enable_privy_login %}
-                    Privy remains available from the previous screen.
-                    {% else %}
-                    MiniPay, Trust Wallet, and MetaMask users should try the injected wallet option first.
-                    {% endif %}
-                </p>
+                <!-- The live step banner is FIRST so the instruction that drives
+                     the flow ("Awaiting wallet approval…", "Approve the
+                     signature…") is always above the fold on a phone — it used
+                     to sit below the QR + deep links and needed a scroll. -->
+                <div id="walletConnectPanelStatus" class="status-message wc-status-banner"
+                     role="status" aria-live="polite"></div>
                 <!-- Tapping "Connect GoodWallet" starts the session immediately, so
                      there is no second button — just a progress state while the
                      relay round-trip that produces the URI completes. -->
@@ -3664,16 +3663,11 @@
                 </div>
                 <div id="wcQrWrap" class="wc-qr-wrap">
                     <div id="wcQrContainer">
-                        <h3 class="wc-qr-title">Scan WalletConnect QR</h3>
-                        <p id="wcInstructions" class="wc-qr-desc">
-                            Scan this code from your wallet app, or copy/open the URI link below.
-                        </p>
                         <div id="wcQrCode" class="wc-qr-code" aria-label="WalletConnect QR code"></div>
                         <div id="wcCopyBtnContainer" class="wc-copy-btn-container"></div>
                     </div>
                     <button id="wcBackBtn" class="back-btn" type="button" style="display:none;margin:0.85rem auto 0;" onclick="showWalletConnectOptions()">← Choose another method</button>
                 </div>
-                <div id="walletConnectPanelStatus" class="status-message" style="margin-top:0.85rem;"></div>
             </div>
 
 
@@ -4565,7 +4559,9 @@
                 const panel = document.getElementById('walletConnectPanelStatus');
                 const wcOptions = document.getElementById('walletConnectOptions');
                 if (panel && wcOptions && wcOptions.classList.contains('visible')) {
-                    panel.className = 'status-message ' + type;
+                    // Keep the `wc-status-banner` hook — assigning className
+                    // wholesale would drop it and the banner styling with it.
+                    panel.className = 'status-message wc-status-banner ' + type;
                     panel.textContent = message;
                 }
             }
@@ -5501,32 +5497,14 @@
             qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=' + qrPx + 'x' + qrPx + '&data=' + encodeURIComponent(uri);
             qrEl.appendChild(qrImg);
             
-            // Setup back button to toggle between QR and instructions
+            // The deep links below are the primary path on mobile (a phone
+            // cannot scan its own screen), so the "Choose another method"
+            // escape stays visible under them. The old handler toggled
+            // #wcQrContainer against #wcInstructions — but #wcInstructions
+            // lives INSIDE #wcQrContainer, so the toggle was dead, and it also
+            // overwrote the button's label on the first click.
             const backBtn = document.getElementById('wcBackBtn');
-            const qrContainer = document.getElementById('wcQrContainer');
-            const instructions = document.getElementById('wcInstructions');
-            if (backBtn && qrContainer && instructions) {
-                backBtn.style.display = 'block';
-                backBtn.addEventListener('mouseover', function() {
-                    this.style.background = 'rgba(0,0,0,0.1)';
-                });
-                backBtn.addEventListener('mouseout', function() {
-                    this.style.background = 'rgba(0,0,0,0.05)';
-                });
-                let showingInstructions = false;
-                backBtn.addEventListener('click', function() {
-                    showingInstructions = !showingInstructions;
-                    if (showingInstructions) {
-                        qrContainer.style.display = 'none';
-                        instructions.style.display = 'block';
-                        backBtn.textContent = '✕';
-                    } else {
-                        qrContainer.style.display = 'flex';
-                        instructions.style.display = 'none';
-                        backBtn.textContent = '←';
-                    }
-                });
-            }
+            if (backBtn) backBtn.style.display = 'block';
         }
 
         let _wcConnecting = false;
@@ -5795,13 +5773,16 @@
             const enc = encodeURIComponent(uri);
             const box = document.createElement('div');
             box.id = 'wcDeepLinks';
-            box.style.cssText = 'margin-top:10px;display:flex;flex-direction:column;gap:8px;max-width:260px;';
-            const btnStyle = 'display:block;text-align:center;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:600;font-size:0.9rem;color:#fff;';
+            // One compact row instead of three stacked full-width buttons —
+            // they are alternatives, not sequential steps, and the stacked
+            // version pushed the status message below the phone fold.
+            box.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center;';
+            const btnStyle = 'flex:1 1 0;min-width:104px;text-align:center;padding:8px 6px;border-radius:9px;text-decoration:none;font-weight:600;font-size:0.76rem;color:#fff;white-space:nowrap;';
             box.innerHTML =
-                '<a href="' + safeHref + '" style="' + btnStyle + 'background:#6366f1;">🔗 Open in installed wallet</a>' +
-                '<a href="https://link.trustwallet.com/wc?uri=' + enc + '" target="_blank" rel="noopener noreferrer" style="' + btnStyle + 'background:#3375bb;">🛡 Open in Trust Wallet</a>' +
-                '<a href="https://metamask.app.link/wc?uri=' + enc + '" target="_blank" rel="noopener noreferrer" style="' + btnStyle + 'background:#f6851b;">🦊 Open in MetaMask</a>' +
-                '<div style="text-align:center;font-size:0.78rem;color:#9ca3af;margin-top:2px;">On desktop? Scan the QR above with your wallet app instead.</div>';
+                '<a href="' + safeHref + '" style="' + btnStyle + 'background:#6366f1;">🔗 Installed</a>' +
+                '<a href="https://link.trustwallet.com/wc?uri=' + enc + '" target="_blank" rel="noopener noreferrer" style="' + btnStyle + 'background:#3375bb;">🛡 Trust</a>' +
+                '<a href="https://metamask.app.link/wc?uri=' + enc + '" target="_blank" rel="noopener noreferrer" style="' + btnStyle + 'background:#f6851b;">🦊 MetaMask</a>' +
+                '<div style="flex:1 1 100%;text-align:center;font-size:0.72rem;color:#9ca3af;margin-top:2px;">On desktop? Scan the QR above instead.</div>';
             qrWrap.appendChild(box);
         }
 
