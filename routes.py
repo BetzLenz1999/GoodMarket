@@ -2794,11 +2794,14 @@ def admin_local_wallet_verification():
                 res = fallback.execute()
                 accounts = getattr(res, "data", None) or []
 
-        # Mask the wallet address for display (codebase convention) — never
-        # return the full address to the browser.
+        # Mask the wallet address for display (codebase convention); the full
+        # address stays in `address` and a CeloScan link is derived from it so
+        # the admin can inspect any account's on-chain history.
         for acc in accounts:
             addr = acc.get("address") or ""
             acc["wallet_short"] = _mask_wallet(addr) if addr else ""
+            if addr:
+                acc["celoscan_url"] = f"https://celoscan.io/address/{addr}"
 
         return jsonify({
             "success": True,
