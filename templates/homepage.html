@@ -409,13 +409,13 @@
             height: 8px;
             border-radius: 50%;
             background: #10b981;
-            box-shadow: 0 0 0 0 rgba(16,185,129,0.6);
-            animation: heroDotPulse 2s ease-out infinite;
+            box-shadow: 0 0 8px 1px rgba(16,185,129,0.55);
+            animation: heroDotPulse 2s ease-in-out infinite;
         }
+        /* Opacity-only pulse — never animate box-shadow (full repaint). */
         @keyframes heroDotPulse {
-            0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.55); }
-            70% { box-shadow: 0 0 0 10px rgba(16,185,129,0); }
-            100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.45; }
         }
 
         .hero-title {
@@ -2318,6 +2318,476 @@
             .cert-caption-amount { font-size: 0.82rem; }
         }
 
+        /* ═══════════════════════════════════════════════════════════════
+           GoodMarket homepage design system — "Deep Indigo" (2026-10)
+
+           Appended at the END of the original stylesheet so equal-specificity
+           rules here win by cascade order. No rule above was edited, so this
+           whole restyle is one reviewable/revertable block.
+
+           Principles (this is what fixes the "nakakalito" feel):
+             • ONE action colour — G$ gold (--action). Reserved for real money
+               actions (Get Started, Create wallet, connect when detected).
+             • Violet (--primary) is structure only: links, eyebrows, borders.
+             • Green/amber/red are SEMANTIC only, never decoration.
+             • Decorative background layers are capped (no stacked glows).
+             • All text on the indigo canvas meets WCAG AA (>= 4.5:1).
+           ═══════════════════════════════════════════════════════════════ */
+        :root {
+            /* Canvas */
+            --bg:        #0B0F2A;
+            --bg-2:      #130D35;
+            --bg-3:      #1A103D;
+            --surface:   rgba(255, 255, 255, 0.045);
+            --surface-2: rgba(255, 255, 255, 0.08);
+            --border:    rgba(255, 255, 255, 0.10);
+
+            /* Brand — structure, links, eyebrows */
+            --primary:      #7c3aed;
+            --primary-2:    #6d28d9;
+            --primary-soft: rgba(124, 58, 237, 0.14);
+            --primary-text: #c4b5fd;   /* AA-safe violet text on indigo */
+
+            /* THE action colour — G$ gold. Money actions only. */
+            --action:      #fbbf24;
+            --action-2:    #f59e0b;
+            --action-text: #1f1300;    /* dark text on gold — meets AA */
+
+            /* Semantic only */
+            --success: #34d399;
+            --warn:    #fcd34d;
+            --danger:  #f87171;
+
+            /* Text */
+            --text:       #e2e8f0;
+            --text-dim:   rgba(226, 232, 240, 0.72);
+            --text-muted: rgba(226, 232, 240, 0.52);
+
+            /* Light modal sheet (kept, matches the wallet's light theme) */
+            --sheet:        #ffffff;
+            --sheet-border: #e5e7eb;
+            --sheet-text:   #1f2937;
+            --sheet-dim:    #6b7280;
+
+            --card-shadow: 0 18px 44px rgba(4, 7, 26, 0.5);
+        }
+
+        /* ── Canvas: one gradient + one soft glow (was 5 stacked) ── */
+        body {
+            background: linear-gradient(160deg, var(--bg) 0%, var(--bg-2) 52%, var(--bg-3) 100%);
+            color: var(--text);
+        }
+        body::before {
+            background: radial-gradient(ellipse at 50% 34%,
+                rgba(124, 58, 237, 0.12) 0%, transparent 68%);
+        }
+        .hero-section::before {
+            background: radial-gradient(58% 66% at 14% 32%,
+                rgba(124, 58, 237, 0.18) 0%, transparent 62%);
+        }
+        .hero-section::after { opacity: 0.7; }
+
+        .gm-welcome-loader {
+            background:
+                radial-gradient(circle at 50% 38%, rgba(124, 58, 237, 0.28), transparent 55%),
+                linear-gradient(160deg, #070b1f 0%, #0d1032 100%);
+        }
+        .gm-loader-orb {
+            background:
+                radial-gradient(circle at 32% 28%, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0) 44%),
+                conic-gradient(from 180deg, var(--action), var(--action-2), var(--primary), var(--action));
+            box-shadow: 0 0 40px rgba(251, 191, 36, 0.5), 0 12px 30px rgba(2,6,23,0.5);
+        }
+        .gm-loader-gs { text-shadow: 0 2px 10px rgba(120, 53, 15, 0.55); }
+        .gm-loader-chip {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        /* ── Header ── */
+        .header {
+            background: rgba(11, 15, 42, 0.86);
+            border-bottom: 1px solid var(--border);
+        }
+        .logo { color: var(--action); }
+        .nav-links a { color: var(--text-dim); }
+        .nav-links a:hover, .nav-links a.active { color: var(--action); }
+        .connect-wallet-btn {
+            background: var(--action);
+            color: var(--action-text);
+            border-color: transparent;
+        }
+        .connect-wallet-btn:hover { background: var(--action-2); }
+
+        /* ── Hero ── */
+        .hero-eyebrow {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--action);
+        }
+        .hero-eyebrow .pulse-dot {
+            background: var(--action);
+            box-shadow: 0 0 8px 1px rgba(251, 191, 36, 0.55);
+        }
+        .hero-title { color: #ffffff; }
+        .hero-title .highlight {
+            background: linear-gradient(120deg, var(--action) 0%, var(--action-2) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-shadow: 0 0 34px rgba(251, 191, 36, 0.22);
+        }
+        .hero-description { color: var(--text-dim); }
+        .hero-community-note {
+            background: var(--primary-soft);
+            border: 1px solid rgba(124, 58, 237, 0.34);
+            color: var(--primary-text);
+        }
+        .hero-community-note strong { color: var(--text); }
+
+        .btn-primary {
+            background: var(--action);
+            color: var(--action-text);
+            box-shadow: 0 12px 30px rgba(251, 191, 36, 0.28);
+        }
+        .btn-primary:hover { background: var(--action-2); box-shadow: 0 16px 34px rgba(251, 191, 36, 0.36); }
+        .btn-secondary {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        .btn-secondary:hover {
+            border-color: rgba(167, 139, 250, 0.5);
+            color: var(--primary-text);
+            background: var(--primary-soft);
+        }
+        .hero-checks { color: var(--text-dim); }
+        .hero-check::before {
+            background: rgba(251, 191, 36, 0.16);
+            color: var(--action);
+        }
+        .hero-tagline-tl { color: var(--text-muted); }
+
+        .hero-orb::before {
+            background: radial-gradient(circle at 35% 35%,
+                rgba(251, 191, 36, 0.55) 0%, rgba(245, 158, 11, 0.25) 42%, transparent 74%);
+        }
+        .hero-stat-card {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border);
+            box-shadow: var(--card-shadow);
+        }
+        .hero-stat-card .stat-eyebrow { color: var(--text-muted); }
+        .hero-stat-card .stat-value { color: #ffffff; }
+        .hero-stat-card .stat-foot { color: var(--text-muted); }
+        .hero-stat-card .stat-usd { color: var(--action); }
+        .hero-stat-card .stat-usd-rate { color: var(--text-muted); }
+        /* Stats share one accent family: gold for money, violet for people.
+           (Was cyan / green / gold — three unrelated hues.) */
+        .hero-stat-card.stat-disbursed .stat-value { color: var(--action); }
+        .hero-stat-card.stat-disbursed .stat-foot  { color: var(--action); }
+        .hero-stat-card.stat-earners { border-color: rgba(124,58,237,0.34); }
+        .hero-stat-card.stat-earners .stat-value   { color: var(--primary-text); }
+        .hero-stat-card.stat-tasks .stat-value     { color: #ffffff; }
+
+        /* ── Feature showcase ── */
+        .feature-showcase-head .fs-eyebrow {
+            color: var(--primary-text);
+            border: 1px solid rgba(167, 139, 250, 0.34);
+            background: var(--primary-soft);
+        }
+        .feature-showcase-head h2 { color: #ffffff; }
+        .feature-showcase-head p  { color: var(--text-dim); }
+        .feature-card-ui {
+            background: rgba(15, 23, 42, 0.62);
+            border: 1px solid var(--border);
+            box-shadow: var(--card-shadow);
+        }
+        .feature-card-ui:hover {
+            border-color: rgba(167, 139, 250, 0.45);
+            box-shadow: 0 26px 56px rgba(124, 58, 237, 0.24);
+        }
+        .feature-card-ui::before {
+            background: radial-gradient(120% 100% at 50% 0%, rgba(124, 58, 237, 0.14), transparent 70%);
+        }
+        .fs-card-label { color: var(--text-muted); }
+        /* Tags share one violet family (was blue / violet / green). */
+        .fs-tag-blue, .fs-tag-violet, .fs-tag-green {
+            background: var(--primary-soft);
+            border: 1px solid rgba(167, 139, 250, 0.36);
+            color: var(--primary-text);
+        }
+        .fs-card-title { color: #f8fafc; }
+        .fs-card-sub   { color: var(--text-dim); }
+        .fs-cta {
+            color: var(--primary-text);
+            background: var(--primary-soft);
+            border: 1px solid rgba(167, 139, 250, 0.34);
+        }
+        .fs-cta:hover {
+            background: rgba(124, 58, 237, 0.26);
+            color: #ddd6fe;
+            border-color: rgba(167, 139, 250, 0.6);
+        }
+        /* Book stack: one violet family (was blue / violet / green). */
+        .fs-book-b1 { background: linear-gradient(160deg, #a78bfa 0%, #7c3aed 70%, #6d28d9 100%); }
+        .fs-book-b2 { background: linear-gradient(160deg, #c4b5fd 0%, #8b5cf6 70%, #7c3aed 100%); }
+        .fs-book-b3 { background: linear-gradient(160deg, #ddd6fe 0%, #a78bfa 70%, #8b5cf6 100%); }
+        .fs-game-pad { background: linear-gradient(150deg, rgba(124,58,237,0.92), rgba(76,29,149,0.92)); }
+        .fs-phone-screen {
+            background: radial-gradient(80% 60% at 50% 12%, rgba(124,58,237,0.3), transparent 60%),
+                        linear-gradient(180deg, rgba(30,27,75,0.55), rgba(15,23,42,0.5));
+        }
+        .fs-data-track::after { background: linear-gradient(90deg, var(--primary), var(--primary-text)); }
+
+        /* ── How-it-works strip ── */
+        .hiw-step {
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        .hiw-step-num {
+            background: var(--primary-soft);
+            border: 1px solid rgba(167, 139, 250, 0.4);
+            color: var(--primary-text);
+        }
+        .hiw-step-title { color: #f1f5f9; }
+        .hiw-step-desc  { color: var(--text-dim); }
+
+        /* ── Section tabs / panels ── */
+        .section-tab, .submenu-nav .section-tab {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+        .section-tab:hover { color: var(--primary-text); border-color: rgba(167,139,250,0.4); }
+        .section-tab.active, .submenu-nav .section-tab.active {
+            background: var(--primary-soft);
+            border-color: rgba(167, 139, 250, 0.5);
+            color: var(--primary-text);
+        }
+        .panel-title { color: #ffffff; }
+        .panel-subtitle { color: var(--text-dim); }
+        .earn-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: var(--card-shadow);
+        }
+        .earn-card:hover {
+            border-color: rgba(167, 139, 250, 0.34);
+            background: var(--surface-2);
+            box-shadow: 0 8px 32px rgba(124, 58, 237, 0.2);
+        }
+        .earn-card-title { color: #ffffff; }
+        .earn-card-desc  { color: var(--text-dim); }
+        .earn-card-list li { color: var(--text-dim); }
+        .earn-card-note  { color: var(--text-muted); }
+        .earn-card-badge { background: var(--primary); color: #ffffff; }
+
+        /* ── "Why choose" feature cards (were white-on-dark) ── */
+        .feature-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: var(--card-shadow);
+        }
+        .feature-card:hover {
+            border-color: rgba(167, 139, 250, 0.34);
+            box-shadow: 0 8px 24px rgba(124, 58, 237, 0.18);
+        }
+        .feature-title { color: #ffffff; }
+        .feature-description { color: var(--text-dim); }
+
+        /* ── Developer cards (were white-on-dark) ── */
+        .dev-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        .dev-card:hover { border-color: rgba(167, 139, 250, 0.34); }
+        .dev-name { color: #ffffff; }
+        .dev-role { color: var(--text-dim); }
+        .community-bar { background: linear-gradient(135deg, var(--primary), var(--primary-2)); }
+
+        /* ── Footer ── */
+        .site-footer { color: var(--text-muted); }
+
+        /* ═══════════════════════════════════════════════════════════════
+           Wallet modal — one recommended (gold) card, everything else calm
+           ═══════════════════════════════════════════════════════════════ */
+        .wallet-modal { background: rgba(5, 8, 22, 0.66); }
+        .wallet-modal-content {
+            background: var(--sheet);
+            border: 1px solid var(--sheet-border);
+            box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
+        }
+        .modal-title { color: var(--sheet-text); }
+        .modal-subtitle { color: var(--sheet-dim); }
+        .close-modal { background: #f3f4f6; color: var(--sheet-dim); }
+        .close-modal:hover { background: #e5e7eb; color: var(--sheet-text); }
+
+        /* Calm surface card — the default for every option */
+        .wallet-option-card,
+        .wallet-option-card.wc-option {
+            background: var(--sheet);
+            border: 2px solid var(--sheet-border);
+        }
+        .wallet-option-card:hover,
+        .wallet-option-card.wc-option:hover {
+            border-color: var(--primary);
+            background: #faf7ff;
+            box-shadow: 0 6px 18px rgba(124, 58, 237, 0.14);
+            transform: translateY(-2px);
+        }
+        /* ONE loud card: the recommended create action is G$-gold. */
+        .wallet-option-card.primary {
+            background: linear-gradient(135deg, var(--action), var(--action-2));
+            border-color: transparent;
+        }
+        .wallet-option-card.primary:hover {
+            box-shadow: 0 10px 24px rgba(251, 191, 36, 0.35);
+            border-color: transparent;
+        }
+        .wallet-option-card.primary .option-title,
+        .wallet-option-card.primary .option-desc { color: var(--action-text); }
+        .wallet-option-card.primary .option-desc { opacity: 0.92; }
+        .wallet-option-card.primary .option-icon { background: rgba(31, 19, 0, 0.14); }
+        .wallet-option-card.primary .option-arrow { color: var(--action-text); }
+
+        /* Calm cards keep dark sheet text + violet icon plate */
+        .wallet-option-card.wc-option .option-title,
+        .wallet-option-card.wc-option .option-desc { color: var(--sheet-text); }
+        .wallet-option-card.wc-option .option-desc { opacity: 1; color: var(--sheet-dim); }
+        .wallet-option-card.wc-option .option-icon { background: #f3f0ff; }
+        .wallet-option-card.wc-option .option-arrow { color: var(--primary); }
+
+        .back-btn { color: var(--primary); }
+        .back-btn:hover { color: var(--primary-2); }
+        .wallet-label { color: var(--sheet-text); }
+        .wallet-input { border: 2px solid var(--sheet-border); color: var(--sheet-text); background: #fff; }
+        .wallet-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1); }
+        .connect-btn {
+            background: var(--action);
+            color: var(--action-text);
+            box-shadow: 0 4px 14px rgba(251, 191, 36, 0.3);
+        }
+        .connect-btn:hover { background: var(--action-2); box-shadow: 0 8px 22px rgba(251, 191, 36, 0.4); }
+        .connect-btn:disabled { opacity: 0.55; }
+        .wc-panel-note { color: var(--sheet-dim); }
+        .wc-qr-title { color: var(--sheet-text); }
+        .wc-qr-desc  { color: var(--sheet-dim); }
+        .lw-warning {
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            color: #92400e;
+        }
+        .lw-recovery-instruction { color: var(--sheet-text); }
+        .lw-copy-btn {
+            background: var(--primary-soft);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            color: var(--primary-2);
+        }
+        .lw-copy-btn:hover { background: #ede9fe; }
+
+        /* ── New: "you're already in a wallet" detection banner ── */
+        .wallet-detect-banner {
+            display: none;
+            align-items: flex-start;
+            gap: 0.6rem;
+            padding: 0.7rem 0.85rem;
+            margin-bottom: 0.75rem;
+            border-radius: 12px;
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+            color: #065f46;
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+        .wallet-detect-banner.show { display: flex; }
+        .wallet-detect-banner strong { font-weight: 800; }
+        .wallet-detect-banner .wdb-icon { font-size: 1.05rem; flex-shrink: 0; }
+
+        /* ── New: pre-create reminder step ── */
+        .lw-preflight-panel {
+            border: 2px solid #fde68a;
+            background: #fffbeb;
+            border-radius: 14px;
+            padding: 0.95rem 1rem;
+            margin-bottom: 0.85rem;
+        }
+        .lw-preflight-title {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 1rem;
+            font-weight: 800;
+            color: #92400e;
+            margin-bottom: 0.5rem;
+        }
+        .lw-preflight-lead {
+            font-size: 0.84rem;
+            color: #78350f;
+            line-height: 1.5;
+            margin: 0 0 0.7rem;
+        }
+        .lw-preflight-list {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 0.7rem;
+        }
+        .lw-preflight-list li {
+            font-size: 0.84rem;
+            color: #78350f;
+            padding: 0.18rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .lw-preflight-alert {
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: #991b1b;
+            line-height: 1.5;
+            margin: 0 0 0.7rem;
+        }
+        .lw-preflight-ack {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.55rem;
+            background: #ffffff;
+            border: 1px solid #fde68a;
+            border-radius: 10px;
+            padding: 0.65rem 0.75rem;
+            margin-bottom: 0.85rem;
+            cursor: pointer;
+            font-size: 0.83rem;
+            font-weight: 600;
+            color: #78350f;
+            line-height: 1.45;
+        }
+        .lw-preflight-ack input { margin-top: 0.15rem; flex-shrink: 0; width: 18px; height: 18px; }
+        .lw-preflight-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+        .lw-preflight-connect {
+            width: 100%;
+            background: var(--sheet);
+            border: 2px solid var(--primary);
+            color: var(--primary-2);
+            padding: 0.7rem 1rem;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .lw-preflight-connect:hover { background: #faf7ff; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .hero-orb::before,
+            .wallet-option-card,
+            .wallet-option-card:hover {
+                animation: none;
+                transition: none;
+            }
+        }
+
     </style>
     <!-- WalletConnect bridge for users without injected wallet -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
@@ -2381,37 +2851,33 @@
     <section class="hero-section" id="overview">
         <div class="hero-grid">
             <div class="hero-content">
-                <span class="hero-eyebrow"><span class="pulse-dot"></span>Community-powered · Live on Celo</span>
+                <span class="hero-eyebrow"><span class="pulse-dot"></span>Community-built · Live on Celo</span>
                 <h1 class="hero-title">
-                    <span class="line">Earn free <span class="highlight">G$</span> daily.</span>
-                    <span class="line">Learn. Play. Earn.</span>
+                    <span class="line">Earn <span class="highlight">G$</span> every day.</span>
                     <span class="line">Cash out to <span class="highlight">GCash</span>.</span>
                 </h1>
                 <p class="hero-description">
-                    Answer quizzes, finish daily tasks, and play minigames to earn real G$ tokens on the GoodDollar protocol — sent straight to your wallet, gas-free. Then cash out to GCash anytime.
+                    Answer quizzes, finish daily social tasks, and play minigames to earn real G$ tokens on the GoodDollar protocol. Rewards land straight in your wallet — then cash out to GCash whenever you like.
                 </p>
                 <p class="hero-tagline-tl">
                     🇵🇭 Libreng G$ araw-araw — kumita habang natututo, diretso sa wallet mo.
-                </p>
-                <p class="hero-community-note">
-                    🤝 <strong>Community-built tools for G$ users</strong> &mdash; easing claims, swaps &amp; onboarding.
                 </p>
                 <div class="hero-buttons">
                     <button class="btn-primary" onclick="openWalletModal()">
                         Get Started <span class="arrow">→</span>
                     </button>
-                    <button class="btn-secondary main-menu-btn" onclick="toggleMainMenu()">
-                        ☰ Main Menu
+                    <button class="btn-secondary" onclick="showSection('learn-earn')">
+                        Explore features
                     </button>
-                    <a class="btn-secondary" href="https://docs.gooddollar.org/" target="_blank" rel="noopener">
-                        <span aria-hidden="true">📖</span> Read the Docs
-                    </a>
                 </div>
                 <div class="hero-checks">
                     <span class="hero-check">Gas-free claims</span>
-                    <span class="hero-check">Cash out to GCash</span>
-                    <span class="hero-check">Open source</span>
+                    <span class="hero-check">On-chain rewards</span>
+                    <span class="hero-check">GCash cash-out</span>
                 </div>
+                <p class="hero-community-note">
+                    🤝 Independent community project for users of the <strong>G$</strong> token on the GoodDollar protocol — easing claims, swaps &amp; onboarding. Not an official GoodDollar product.
+                </p>
             </div>
 
             <div class="hero-stats-stage" aria-label="Live platform statistics">
@@ -2954,7 +3420,14 @@
 
             <!-- Step 1: injected-wallet-first login -->
             <div class="wallet-options" id="walletOptions">
-                <button id="localWalletBtn" class="wallet-option-card primary" type="button" onclick="showLocalWalletPanel('create')">
+                <!-- Shown only when a wallet is detected in the current browser
+                     (e.g. the user opened the app inside MiniPay). Nudges them
+                     to CONNECT instead of creating a second wallet. -->
+                <div class="wallet-detect-banner" id="walletDetectBanner" role="status" aria-live="polite">
+                    <span class="wdb-icon" aria-hidden="true">👛</span>
+                    <span id="walletDetectText"></span>
+                </div>
+                <button id="localWalletBtn" class="wallet-option-card primary" type="button" onclick="openCreatePreflight()">
                     <div class="option-icon">🆓</div>
                     <div class="option-text">
                         <div class="option-title">Create GoodMarket Wallet</div>
@@ -2962,7 +3435,7 @@
                     </div>
                     <span class="option-arrow">→</span>
                 </button>
-                <button id="injectedWalletBtn" class="wallet-option-card primary" type="button" onclick="connectInjectedWallet()" style="display:none">
+                <button id="injectedWalletBtn" class="wallet-option-card injected" type="button" onclick="connectInjectedWallet()" style="display:none">
                     <div class="option-icon" id="injectedWalletIcon">👛</div>
                     <div class="option-text">
                         <div class="option-title" id="injectedWalletTitle">Injected Wallet</div>
@@ -3005,6 +3478,46 @@
                  keystore reaches the server (phone-loss recovery). -->
             <div class="wallet-form" id="localWalletOptions">
                 <button class="back-btn" type="button" onclick="showWalletOptions()">← Back to login options</button>
+
+                <!-- Reminder shown before the email + PIN form. Creating a
+                     second wallet for a face that is already verified on
+                     GoodDollar cannot claim G$ — so we ask the user to confirm
+                     they don't already have MiniPay / GoodWallet / another
+                     wallet before continuing. This is copy + an acknowledgment
+                     only; the create logic itself is unchanged. -->
+                <div id="lwPreflightStep" style="display:none">
+                    <div class="lw-preflight-panel">
+                        <div class="lw-preflight-title">
+                            <span aria-hidden="true">⚠️</span> Before you create a new wallet
+                        </div>
+                        <p class="lw-preflight-lead">
+                            GoodMarket is <strong>one account per person</strong> — required by GoodDollar's face verification.
+                        </p>
+                        <p class="lw-preflight-lead">
+                            If you <strong>already have</strong> any of these, don't create a new wallet — connect it instead:
+                        </p>
+                        <ul class="lw-preflight-list">
+                            <li><span aria-hidden="true">📱</span> MiniPay (you claim G$ there)</li>
+                            <li><span aria-hidden="true">💚</span> GoodWallet / GoodDapp</li>
+                            <li><span aria-hidden="true">🦊</span> MetaMask / Trust Wallet</li>
+                        </ul>
+                        <p class="lw-preflight-alert">
+                            Two wallets for the same face cannot both be verified — the second one will not be able to claim G$.
+                        </p>
+                        <label class="lw-preflight-ack" for="lwPreflightAck">
+                            <input type="checkbox" id="lwPreflightAck" onchange="onPreflightAckChange(this)">
+                            <span>I don't have a GoodWallet or MiniPay wallet yet, and I have not claimed G$ on another wallet before.</span>
+                        </label>
+                        <div class="lw-preflight-actions">
+                            <button id="lwPreflightContinue" class="connect-btn" type="button" onclick="ackCreatePreflight()" disabled>
+                                Continue creating a new wallet
+                            </button>
+                            <button class="lw-preflight-connect" type="button" onclick="cancelCreatePreflight()">
+                                I already have a wallet — connect instead
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
                 <div id="lwCreateStep">
                     <p class="wc-panel-note" id="lwModeNote">
@@ -3506,6 +4019,13 @@
             document.getElementById('localWalletOptions').classList.add('visible');
             document.getElementById('lwPhraseStep').style.display = 'none';
             document.getElementById('lwUsernameStep').style.display = 'none';
+            if (mode === 'create' && !_lwPreflightAcked) {
+                // Reminder gate: ask once per browser session before creating.
+                // Unlock (existing users) never sees it.
+                _lwShowPreflightStep();
+                return;
+            }
+            document.getElementById('lwPreflightStep').style.display = 'none';
             document.getElementById('lwCreateStep').style.display = 'block';
             setLocalWalletMode(mode || 'create');
             // Prefill from a same-device keystore for a quick unlock.
@@ -3521,6 +4041,74 @@
                 } catch (e) {}
             }
             lwStatus('', 'info');
+        }
+
+        // ─── Pre-create reminder ("isang account per tao") ──────────────────
+        // A second wallet for a face already verified on GoodDollar cannot
+        // claim G$, so we ask the user to confirm they don't already have
+        // MiniPay / GoodWallet before creating. Copy + an acknowledgment only;
+        // the create logic below is unchanged. Acked once per session so
+        // returning users aren't nagged every time they open the modal.
+        let _lwPreflightAcked = false;
+
+        function openCreatePreflight() {
+            showLocalWalletPanel('create');
+        }
+
+        function _lwShowPreflightStep() {
+            document.getElementById('lwPreflightStep').style.display = 'block';
+            document.getElementById('lwCreateStep').style.display = 'none';
+            const ack = document.getElementById('lwPreflightAck');
+            if (ack) ack.checked = false;
+            const cont = document.getElementById('lwPreflightContinue');
+            if (cont) cont.disabled = true;
+        }
+
+        function onPreflightAckChange(cb) {
+            const cont = document.getElementById('lwPreflightContinue');
+            if (cont) cont.disabled = !(cb && cb.checked);
+        }
+
+        function ackCreatePreflight() {
+            const ack = document.getElementById('lwPreflightAck');
+            if (!ack || !ack.checked) return;
+            _lwPreflightAcked = true;
+            document.getElementById('lwPreflightStep').style.display = 'none';
+            document.getElementById('lwCreateStep').style.display = 'block';
+            const mode = (typeof _lwMode !== 'undefined') ? _lwMode : 'create';
+            setLocalWalletMode(mode === 'unlock' ? 'unlock' : 'create');
+            try { document.getElementById('lwEmail').focus(); } catch (_) {}
+        }
+
+        function cancelCreatePreflight() {
+            document.getElementById('lwPreflightStep').style.display = 'none';
+            document.getElementById('lwCreateStep').style.display = 'block';
+            showWalletOptions();
+        }
+
+        // Device-aware nudge: when a wallet is detected, surface it and hoist
+        // the connect option above the create option. MiniPay gets the loud
+        // (gold) treatment because it is the most common "already has a G$
+        // wallet" case.
+        function _lwApplyDetectionNudge(provider) {
+            const banner = document.getElementById('walletDetectBanner');
+            const text = document.getElementById('walletDetectText');
+            if (!banner || !text) return;
+            if (!provider) { banner.classList.remove('show'); return; }
+            const name = (typeof getInjectedProviderLabel === 'function')
+                ? getInjectedProviderLabel(provider) : 'Wallet';
+            const isMini = !!(provider && provider.isMiniPay);
+            text.innerHTML = isMini
+                ? "<strong>You're in MiniPay.</strong> You likely already have a G$ wallet here — connect it instead of creating a new one."
+                : "<strong>" + name + " detected.</strong> If you already use this wallet for G$, connect it instead of creating a new one.";
+            banner.classList.add('show');
+            const injectedBtn = document.getElementById('injectedWalletBtn');
+            if (injectedBtn) {
+                if (banner.parentElement && injectedBtn.previousElementSibling !== banner) {
+                    banner.insertAdjacentElement('afterend', injectedBtn);
+                }
+                injectedBtn.classList.toggle('primary', isMini);
+            }
         }
 
         function setLocalWalletMode(mode) {
@@ -4306,6 +4894,7 @@
                     desc.textContent = 'Not detected — install MetaMask extension or use WalletConnect QR.';
                 }
                 btn.style.opacity = '0.78';
+                if (typeof _lwApplyDetectionNudge === 'function') _lwApplyDetectionNudge(null);
                 if (depth < maxDepth) {
                     _detectWalletTimerId = setTimeout(() => {
                         _detectWalletTimerId = null;
@@ -4319,6 +4908,7 @@
             if (icon) icon.textContent = getInjectedProviderIcon(provider);
             desc.textContent = `${name} detected — connect wallet, then approve signature to login`;
             btn.style.opacity = '1';
+            if (typeof _lwApplyDetectionNudge === 'function') _lwApplyDetectionNudge(provider);
         }
 
         // Aggressive EIP-6963 re-dispatch loop for mobile dApp contexts.
@@ -5307,6 +5897,12 @@
         window.beginPrivyLogin         = beginPrivyLogin;
         window.closeWalletModal        = closeWalletModal;
         window.showWalletOptions       = showWalletOptions;
+        window.showLocalWalletPanel    = showLocalWalletPanel;
+        window.setLocalWalletMode      = setLocalWalletMode;
+        window.openCreatePreflight     = openCreatePreflight;
+        window.onPreflightAckChange    = onPreflightAckChange;
+        window.ackCreatePreflight      = ackCreatePreflight;
+        window.cancelCreatePreflight   = cancelCreatePreflight;
         window.showWalletConnectOptions= showWalletConnectOptions;
         window.connectInjectedWallet   = connectInjectedWallet;
         window.connectWalletConnect    = connectWalletConnect;
