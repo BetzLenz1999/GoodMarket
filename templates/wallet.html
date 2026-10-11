@@ -3084,7 +3084,8 @@
 
             <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);">
                 <div style="font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;">Login Method</div>
-                <div style="font-size:0.88rem;color:var(--text);">{{ 'GoodMarket' if login_method == 'walletconnect' else (login_method | replace('_', ' ') | title) }}</div>
+                {% set _lm = (login_method or '')|lower %}
+                <div style="font-size:0.88rem;color:var(--text);">{{ 'WalletConnect' if _lm in ['walletconnect', 'manual', 'manual_address'] else (_lm | replace('_', ' ') | title) }}</div>
             </div>
 
             {% if (login_method or '')|lower == 'local' %}
