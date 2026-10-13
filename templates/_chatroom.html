@@ -20,13 +20,19 @@
 
     <div class="gm-chat-messages" role="log" aria-live="polite" data-gm-chat-messages></div>
     <div class="gm-chat-status" data-gm-chat-status></div>
+    <div class="gm-chat-attach-preview" data-gm-chat-attach-preview hidden></div>
     <form class="gm-chat-form" data-gm-chat-form>
+      <button type="button" class="gm-chat-attach-btn" data-gm-chat-attach-btn
+              title="Attach an image" aria-label="Attach an image">📎</button>
+      <input type="file" accept="image/*" data-gm-chat-file hidden />
       <input class="gm-chat-input" name="message" type="text" autocomplete="off"
              maxlength="500" placeholder="Message the community…" data-gm-chat-input />
       <button type="submit">Send</button>
     </form>
   </section>
 </div>
+
+<div class="gm-chat-drop-hint" data-gm-chat-drop-hint hidden>Drop an image to share it</div>
 
 {# Per-request values for the tip flow (which signer to use). The wallet
    address is the viewer's OWN and is only used to sign in their browser. #}
