@@ -1934,6 +1934,18 @@ window.openCreatePreflight     = openCreatePreflight;
 window.onPreflightAckChange    = onPreflightAckChange;
 window.ackCreatePreflight      = ackCreatePreflight;
 window.cancelCreatePreflight   = cancelCreatePreflight;
+// The local-wallet form buttons are wired with inline onclick/oninput in
+// templates/_get_started_modal.html, so they MUST resolve as globals. This
+// bundle is wrapped in an IIFE — without these the Create / Log in /
+// Continue / Set username buttons throw "submitLocalWallet is not defined"
+// and appear dead (the whole email + PIN flow silently does nothing).
+window.submitLocalWallet         = submitLocalWallet;
+window.finishLocalWalletSignup   = finishLocalWalletSignup;
+window.submitLocalWalletUsername = submitLocalWalletUsername;
+window.skipLocalWalletUsername   = skipLocalWalletUsername;
+window.lwCopyRecoveryWords       = lwCopyRecoveryWords;
+window.lwPinStrengthHint         = lwPinStrengthHint;
+window.syncReferralInputs        = syncReferralInputs;
 window.showWalletConnectOptions= showWalletConnectOptions;
 window.openGoodWalletConnect   = openGoodWalletConnect;
 window.connectInjectedWallet   = connectInjectedWallet;
