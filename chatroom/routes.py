@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
+from collections import defaultdict, deque
 
 from flask import Blueprint, jsonify, redirect, render_template, request, session
 
@@ -21,6 +24,26 @@ from . import tips
 logger = logging.getLogger(__name__)
 
 chatroom_bp = Blueprint("chatroom", __name__, url_prefix="/chatroom")
+
+# In-process upload throttle (per wallet). Best-effort per gunicorn worker —
+# enough to blunt an abusive upload burst without a shared store.
+_UPLOAD_LOCK = threading.Lock()
+_UPLOAD_HITS: dict[str, deque] = defaultdict(deque)
+
+
+def _upload_allowed(wallet: str) -> int:
+    """Returns 0 when allowed, else the seconds the caller must wait."""
+    window = max(1, svc.UPLOAD_RATE_LIMIT_SECONDS)
+    key = (wallet or "anon").lower()
+    now = time.time()
+    with _UPLOAD_LOCK:
+        hits = _UPLOAD_HITS[key]
+        while hits and hits[0] <= now - window:
+            hits.popleft()
+        if hits:
+            return max(1, int(window - (now - hits[0])))
+        hits.append(now)
+    return 0
 
 
 def _session_wallet() -> str | None:
@@ -159,13 +182,94 @@ def api_post_message():
         return jsonify({"success": False, "error": "Not authenticated"}), 401
 
     data = request.get_json(silent=True) or {}
-    result = svc.post_message(wallet, data.get("message", ""), data.get("reply_to_id"))
+    result = svc.post_message(
+        wallet,
+        data.get("message", ""),
+        data.get("reply_to_id"),
+        attachment=data.get("attachment"),
+    )
     status = 200 if result.get("success") else 400
     if result.get("code") == "rate_limited":
         status = 429
     if result.get("code") == "banned":
         status = 403
     return jsonify(result), status
+
+
+@chatroom_bp.route("/api/upload", methods=["POST"])
+def api_upload_image():
+    """Upload an image attachment to ImgBB and return its public URL.
+
+    The browser then posts a normal message carrying the returned descriptor.
+    Images only (ImgBB is image-only). Never trusts the client: MIME + size are
+    enforced here, and the URL is re-validated when the message is stored.
+    """
+    if not svc.is_enabled():
+        return _disabled_response()
+
+    wallet = _session_wallet()
+    if not wallet:
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+    if svc.is_banned(wallet):
+        return jsonify({"success": False, "error": "You cannot post in the chatroom.",
+                        "code": "banned"}), 403
+
+    wait = _upload_allowed(wallet)
+    if wait:
+        return jsonify({"success": False, "error": "Please wait before uploading again.",
+                        "code": "rate_limited", "retry_after": wait}), 429
+
+    file = request.files.get("file") or request.files.get("image")
+    if not file or not (file.filename or "").strip():
+        return jsonify({"success": False, "error": "No image provided."}), 400
+
+    mime = (file.mimetype or "").lower()
+    if mime not in svc.IMAGE_MIME_TYPES:
+        return jsonify({"success": False,
+                        "error": "Only PNG, JPEG, GIF or WEBP images are supported."}), 415
+
+    # Read once to enforce our own byte cap (do not trust Content-Length).
+    try:
+        file.seek(0, os.SEEK_END)
+        size = file.tell()
+        file.seek(0)
+    except Exception:  # noqa: BLE001
+        size = 0
+    if size <= 0:
+        return jsonify({"success": False, "error": "The image is empty."}), 400
+    if size > svc.MAX_ATTACHMENT_BYTES:
+        return jsonify({"success": False,
+                        "error": f"Image is too large (max {svc.MAX_UPLOAD_MB} MB)."}), 413
+
+    expiration = svc.IMAGE_EXPIRATION_DAYS * 86400 if svc.IMAGE_EXPIRATION_DAYS > 0 else None
+    try:
+        from object_storage_client import upload_to_imgbb
+        upload = upload_to_imgbb(file, expiration=expiration)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("chatroom: image upload failed: %s", exc)
+        return jsonify({"success": False, "error": "Upload failed. Please try again."}), 502
+
+    if not upload.get("success"):
+        return jsonify({"success": False,
+                        "error": upload.get("error") or "Upload failed."}), 502
+
+    url = upload.get("url") or ""
+    if not svc._attachment_url_allowed(url):
+        # A host mismatch means we cannot safely render it — refuse loudly
+        # rather than store an unvalidated URL.
+        logger.error("chatroom: upload returned a non-allow-listed URL: %s", url)
+        return jsonify({"success": False, "error": "Upload host is not allowed."}), 502
+
+    return jsonify({
+        "success": True,
+        "attachment": {
+            "url": url,
+            "kind": "image",
+            "mime": mime,
+            "name": (file.filename or "image")[:120],
+            "bytes": size,
+        },
+    })
 
 
 @chatroom_bp.route("/api/report", methods=["POST"])
