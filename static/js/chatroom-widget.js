@@ -37,33 +37,45 @@
 
   // Message text is untrusted. Build URL anchors with DOM nodes rather than
   // innerHTML so links are useful without turning chat into an XSS surface.
-  var URL_RE = /(https?:\/\/[^\s<>]+)/gi;
-  function appendLinkedText(node, text) {
+  //
+  // NOTE: the regex is deliberately NON-capturing. With a capturing group,
+  // String.replace's callback signature shifts (2nd arg becomes the group, not
+  // the offset) — which is exactly the bug that used to drop all the plain text
+  // around a link. We also read the offset from `arguments` defensively so a
+  // future regex edit cannot silently reintroduce that shift.
+  var URL_RE = /https?:\/\/[^\s<>]+/gi;
+  function linkifyInto(node, text, createLink) {
     var value = String(text || '');
-    // Keep the common no-link path as a direct textContent assignment. Besides
-    // being faster, this retains the same literal-message behavior everywhere.
     URL_RE.lastIndex = 0;
     if (!URL_RE.test(value)) { node.textContent = value; return; }
     URL_RE.lastIndex = 0;
     var cursor = 0;
-    value.replace(URL_RE, function (match, offset) {
+    value.replace(URL_RE, function (match) {
+      // offset is the 2nd-to-last callback arg (…groups, offset, string); with
+      // no groups this is arguments[length - 2].
+      var offset = arguments[arguments.length - 2];
+      if (typeof offset !== 'number') offset = value.indexOf(match, cursor);
       if (offset > cursor) node.appendChild(el('span', '', value.slice(cursor, offset)));
       // Trim sentence punctuation while preserving it as ordinary text.
       var url = match.replace(/[),.!?;:]+$/, '');
-      if (url) {
-        var link = document.createElement('a');
-        link.className = 'gm-chat-message-link';
-        link.href = url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.textContent = url;
-        node.appendChild(link);
-      }
+      if (url) node.appendChild(createLink(url));
       if (url.length < match.length) node.appendChild(el('span', '', match.slice(url.length)));
       cursor = offset + match.length;
       return match;
     });
     if (cursor < value.length) node.appendChild(el('span', '', value.slice(cursor)));
+  }
+
+  function appendLinkedText(node, text) {
+    linkifyInto(node, text, function (url) {
+      var link = document.createElement('a');
+      link.className = 'gm-chat-message-link';
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = url;
+      return link;
+    });
   }
 
   function messageBody(className, text) {
@@ -454,6 +466,7 @@
     }
 
     var isTip = msg.message_type === 'tip' && msg.tip;
+    var isImage = msg.message_type === 'image' && msg.attachment && msg.attachment.url;
     if (isTip) {
       row.classList.add('is-tip');
       var card = el('div', 'gm-chat-tip-card');
@@ -469,6 +482,32 @@
         card.appendChild(link);
       }
       row.appendChild(card);
+    } else if (isImage) {
+      var bubble = el('div', 'gm-chat-bubble gm-chat-bubble-image');
+      // Build the <img> with the DOM API; the URL is set via the `src` property,
+      // never by injecting markup. A strict no-referrer policy keeps the room
+      // origin out of the image host's logs; loading=lazy avoids a burst of
+      // requests on a long backlog.
+      var imgLink = document.createElement('a');
+      imgLink.className = 'gm-chat-image-link';
+      imgLink.href = msg.attachment.url;
+      imgLink.target = '_blank';
+      imgLink.rel = 'noopener noreferrer';
+      var img = document.createElement('img');
+      img.className = 'gm-chat-attachment';
+      img.src = msg.attachment.url;
+      img.alt = msg.attachment.name || 'shared image';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      imgLink.appendChild(img);
+      bubble.appendChild(imgLink);
+      // An image post may still carry a caption.
+      if (msg.message) {
+        var caption = el('div', 'gm-chat-caption');
+        appendLinkedText(caption, msg.message);
+        bubble.appendChild(caption);
+      }
+      row.appendChild(bubble);
     } else {
       // Previously: el('div', 'gm-chat-bubble', msg.message). messageBody keeps that
       // text-only safety while replacing only validated http(s) URLs with anchors.
@@ -526,7 +565,126 @@
     var toggle = root.querySelector('[data-gm-chat-toggle]');
     var badge = root.querySelector('[data-gm-chat-badge]');
     var closeBtn = root.querySelector('[data-gm-chat-close]');
+    var fileInput = root.querySelector('[data-gm-chat-file]');
+    var attachBtn = root.querySelector('[data-gm-chat-attach-btn]');
+    var attachPreview = root.querySelector('[data-gm-chat-attach-preview]');
+    var dropHint = document.querySelector('[data-gm-chat-drop-hint]');
     if (!list || !form) return null;
+
+    // Pending image attachment: uploaded to ImgBB, waiting for the user to hit
+    // Send. `{ status, url, ... }`; cleared once the message is sent.
+    var pendingAttachment = null;
+    var uploading = false;
+
+    function renderAttachPreview() {
+      if (!attachPreview) return;
+      attachPreview.innerHTML = '';
+      if (!pendingAttachment) { attachPreview.hidden = true; return; }
+      attachPreview.hidden = false;
+      var chip = el('div', 'gm-chat-attach-chip is-' + (pendingAttachment.status || 'ready'));
+      if (pendingAttachment.status === 'uploading') {
+        chip.appendChild(el('span', 'gm-chat-attach-spin', '⏳'));
+        chip.appendChild(el('span', '', 'Uploading image…'));
+      } else if (pendingAttachment.status === 'error') {
+        chip.appendChild(el('span', '', '⚠️ ' + (pendingAttachment.error || 'Upload failed')));
+      } else {
+        var thumb = document.createElement('img');
+        thumb.className = 'gm-chat-attach-thumb';
+        thumb.src = pendingAttachment.url;
+        thumb.alt = 'attachment preview';
+        chip.appendChild(thumb);
+        chip.appendChild(el('span', '', 'Image ready to send'));
+      }
+      var remove = el('button', 'gm-chat-attach-remove', '✕');
+      remove.type = 'button';
+      remove.title = 'Remove attachment';
+      remove.addEventListener('click', function () {
+        pendingAttachment = null;
+        renderAttachPreview();
+      });
+      chip.appendChild(remove);
+      attachPreview.appendChild(chip);
+    }
+
+    async function uploadImage(file) {
+      if (!file || uploading) return;
+      uploading = true;
+      pendingAttachment = { status: 'uploading' };
+      renderAttachPreview();
+      try {
+        var body = new FormData();
+        body.append('file', file, file.name || 'image');
+        var res = await fetch('/chatroom/api/upload', { method: 'POST', body: body });
+        var data = await res.json().catch(function () { return null; });
+        if (res.ok && data && data.success && data.attachment) {
+          pendingAttachment = { status: 'ready', url: data.attachment.url,
+            kind: data.attachment.kind, mime: data.attachment.mime,
+            name: data.attachment.name, bytes: data.attachment.bytes };
+        } else {
+          pendingAttachment = { status: 'error',
+            error: (data && data.error) || 'Upload failed.' };
+        }
+      } catch (_) {
+        pendingAttachment = { status: 'error', error: 'Upload failed.' };
+      } finally {
+        uploading = false;
+        renderAttachPreview();
+      }
+    }
+
+    function pickFirstImage(list) {
+      if (!list || !list.length) return null;
+      for (var i = 0; i < list.length; i++) {
+        var f = list[i];
+        if (f && typeof f.type === 'string' && f.type.indexOf('image/') === 0) return f;
+      }
+      return null;
+    }
+
+    if (attachBtn && fileInput) {
+      attachBtn.addEventListener('click', function () { fileInput.click(); });
+      fileInput.addEventListener('change', function () {
+        var f = fileInput.files && fileInput.files[0];
+        fileInput.value = '';
+        if (f) uploadImage(f);
+      });
+    }
+
+    // Paste an image straight into the composer (Ctrl/Cmd+V screenshots).
+    if (input) {
+      input.addEventListener('paste', function (event) {
+        var items = (event.clipboardData && event.clipboardData.items) || [];
+        var files = [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === 'file') {
+            var f = items[i].getAsFile();
+            if (f) files.push(f);
+          }
+        }
+        var image = pickFirstImage(files);
+        if (image) { event.preventDefault(); uploadImage(image); }
+      });
+    }
+
+    // Drag & drop an image over the panel.
+    if (panel) {
+      ['dragenter', 'dragover'].forEach(function (evt) {
+        panel.addEventListener(evt, function (event) {
+          event.preventDefault();
+          if (dropHint) dropHint.hidden = false;
+        });
+      });
+      ['dragleave', 'dragend'].forEach(function (evt) {
+        panel.addEventListener(evt, function () { if (dropHint) dropHint.hidden = true; });
+      });
+      panel.addEventListener('drop', function (event) {
+        event.preventDefault();
+        if (dropHint) dropHint.hidden = true;
+        var files = (event.dataTransfer && event.dataTransfer.files) || [];
+        var image = pickFirstImage(files);
+        if (image) uploadImage(image);
+      });
+    }
 
     var replyTarget = null;
     var replyBar = null;
@@ -743,23 +901,40 @@
 
     async function send(text) {
       var clean = (text || '').trim();
-      if (!clean) return;
+      var hasImage = pendingAttachment && pendingAttachment.status === 'ready';
+      if (!clean && !hasImage) return;
+      if (pendingAttachment && pendingAttachment.status === 'uploading') {
+        setStatus('Please wait for the image to finish uploading.');
+        return;
+      }
       if (retryUntil && Date.now() < retryUntil) {
         setStatus('Please wait a moment before posting again.');
         return;
       }
       input.value = '';
       setStatus('Sending…');
+      var payload = { message: clean, reply_to_id: replyTarget ? replyTarget.id : null };
+      if (hasImage) {
+        payload.attachment = {
+          url: pendingAttachment.url,
+          kind: pendingAttachment.kind || 'image',
+          mime: pendingAttachment.mime,
+          name: pendingAttachment.name,
+          bytes: pendingAttachment.bytes
+        };
+      }
       try {
         var res = await fetch('/chatroom/api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: clean, reply_to_id: replyTarget ? replyTarget.id : null })
+          body: JSON.stringify(payload)
         });
         var data = await res.json();
         if (data && data.success && data.message) {
           setStatus('');
           clearReply();
+          pendingAttachment = null;
+          renderAttachPreview();
           if (input) input.placeholder = 'Message the community…';
           appendMessages([data.message]);
         } else if (res.status === 429) {
