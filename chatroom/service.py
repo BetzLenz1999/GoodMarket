@@ -27,14 +27,30 @@ ROOM = "general"
 MAX_MESSAGE_LENGTH = int(os.getenv("CHATROOM_MAX_MESSAGE_LENGTH", "500"))
 MIN_MESSAGE_LENGTH = 1
 RATE_LIMIT_SECONDS = int(os.getenv("CHATROOM_RATE_LIMIT_SECONDS", "3"))
+UPLOAD_RATE_LIMIT_SECONDS = int(os.getenv("CHATROOM_UPLOAD_RATE_LIMIT_SECONDS", "10"))
+IMAGE_EXPIRATION_DAYS = int(os.getenv("CHATROOM_IMAGE_EXPIRATION_DAYS", "0"))
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
 FEATURE_NAME = "chatroom_feature"
 
+# Attachments (images only). ImgBB hosts the bytes; we only store + validate the
+# resulting URL. See docs/CHATROOM_LINKS_TEXT_IMAGES_PROPOSAL.md.
+IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+ATTACHMENT_HOSTS = {
+    h.strip().lower()
+    for h in os.getenv("CHATROOM_ATTACHMENT_HOSTS", "i.ibb.co,ibb.co").split(",")
+    if h.strip()
+}
+MAX_UPLOAD_MB = int(os.getenv("CHATROOM_MAX_UPLOAD_MB", "5"))
+MAX_ATTACHMENT_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
 # Strip control characters (including zero-width/line-separator tricks) so a
-# message can never smuggle invisible content into the rendered log.
-_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029]")
-_WHITESPACE = re.compile(r"\s+")
+# message can never smuggle invisible content into the rendered log. NOTE: the
+# newline (\x0a) is deliberately NOT in this class - line breaks are legitimate
+# message content, collapsed per-line by sanitize_message instead.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029]")
+_HSPACE = re.compile(r"[ \t\f\v]+")
+_BLANK_RUN = re.compile(r"\n{3,}")
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,24}$")
 
 
@@ -307,11 +323,72 @@ def can_post(wallet: str | None) -> dict:
 # ── Messages ─────────────────────────────────────────────────────────────────
 
 def sanitize_message(raw: str | None) -> str:
-    """Collapse whitespace and strip control characters. Length is validated
-    by the caller so the two rules stay independently testable."""
-    text = _CONTROL_CHARS.sub("", str(raw or ""))
-    text = _WHITESPACE.sub(" ", text).strip()
-    return text
+    """Normalize a message while preserving intentional line breaks.
+
+    - ``\\r\\n`` / ``\\r`` are normalized to ``\\n``.
+    - Control characters are stripped (invisible-content guard) EXCEPT the
+      newline, so multi-line messages keep their structure.
+    - Runs of spaces/tabs are collapsed, per-line trailing space is trimmed, and
+      3+ consecutive blank lines collapse to 2 (floor/ceiling trim).
+    Length is validated by the caller so the two rules stay independently
+    testable.
+    """
+    text = str(raw or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _CONTROL_CHARS.sub("", text)
+    lines = [_HSPACE.sub(" ", line).rstrip() for line in text.split("\n")]
+    text = "\n".join(lines)
+    text = _BLANK_RUN.sub("\n\n", text)
+    return text.strip("\n").strip()
+
+
+def _attachment_url_allowed(url: str | None) -> bool:
+    """Only https URLs on an allow-listed image host may become an attachment."""
+    if not url or not isinstance(url, str):
+        return False
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:  # noqa: BLE001
+        return False
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower() in ATTACHMENT_HOSTS
+    )
+
+
+def normalize_attachment(raw) -> dict | None:
+    """Validate + shape a client-supplied attachment descriptor.
+
+    Returns the DB-ready dict, or ``None`` when absent/invalid. The server is the
+    source of truth: an arbitrary URL, a non-image ``kind`` or an oversized byte
+    count is dropped rather than trusted.
+    """
+    if not isinstance(raw, dict):
+        return None
+    url = (raw.get("url") or "").strip()
+    if not _attachment_url_allowed(url):
+        return None
+    mime = (raw.get("mime") or "").strip().lower()
+    kind = (raw.get("kind") or "image").strip().lower()
+    # Only images are supported today (ImgBB is image-only).
+    if kind != "image" or (mime and mime not in IMAGE_MIME_TYPES):
+        return None
+    if not mime:
+        mime = "image/png"
+    name = _CONTROL_CHARS.sub("", str(raw.get("name") or "image"))[:120].strip() or "image"
+    try:
+        size = int(raw.get("bytes") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    size = max(0, min(size, MAX_ATTACHMENT_BYTES))
+    return {
+        "attachment_url": url,
+        "attachment_kind": "image",
+        "attachment_mime": mime,
+        "attachment_name": name,
+        "attachment_bytes": size,
+    }
 
 
 def _public_row(row: dict, viewer_wallet: str | None,
@@ -354,6 +431,17 @@ def _public_row(row: dict, viewer_wallet: str | None,
             "token": row.get("tip_token"),
             "amount": row.get("tip_amount"),
             "tx_hash": tx_hash,
+        }
+
+    # Image attachments: expose only the public host URL + display metadata.
+    # The URL is validated on write; the client still never receives a wallet.
+    if row.get("attachment_url"):
+        public["attachment"] = {
+            "url": row.get("attachment_url"),
+            "kind": row.get("attachment_kind") or "image",
+            "mime": row.get("attachment_mime"),
+            "name": row.get("attachment_name"),
+            "bytes": row.get("attachment_bytes"),
         }
     return public
 
@@ -407,7 +495,8 @@ def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
             supabase.table("community_chat_messages")
             .select(
                 "id, username, wallet_address, message, created_at, message_type, "
-                "tip_token, tip_amount, tip_tx_hash, reply_to_id, reply_to_username, reply_to_wallet"
+                "tip_token, tip_amount, tip_tx_hash, reply_to_id, reply_to_username, reply_to_wallet, "
+                "attachment_url, attachment_kind, attachment_mime, attachment_name, attachment_bytes"
             )
             .eq("room", ROOM)
             .eq("is_deleted", False)
@@ -444,9 +533,13 @@ def get_messages(after_id: int | None = None, limit: int = DEFAULT_PAGE_SIZE,
         return {"success": False, "error": "Failed to load messages", "messages": []}
 
 
-def post_message(wallet: str, raw_message: str, reply_to_id: int | None = None) -> dict:
+def post_message(wallet: str, raw_message: str, reply_to_id: int | None = None,
+                 attachment: dict | None = None) -> dict:
     text = sanitize_message(raw_message)
-    if len(text) < MIN_MESSAGE_LENGTH:
+    # An image post may carry no caption (the attachment is the content); a
+    # text-only post must not be empty.
+    attachment_cols = normalize_attachment(attachment) if attachment else None
+    if len(text) < MIN_MESSAGE_LENGTH and not attachment_cols:
         return {"success": False, "error": "Message cannot be empty", "code": "empty"}
     if len(text) > MAX_MESSAGE_LENGTH:
         return {
@@ -495,16 +588,20 @@ def post_message(wallet: str, raw_message: str, reply_to_id: int | None = None) 
         except Exception as exc:  # noqa: BLE001
             logger.warning("chatroom: reply target lookup failed: %s", exc)
             return {"success": False, "error": "Could not validate reply target", "code": "reply_target"}
+    row = {
+        "room": ROOM,
+        "wallet_address": wallet,
+        "username": username,
+        "message": text,
+        **reply,
+    }
+    if attachment_cols:
+        row.update(attachment_cols)
+        row["message_type"] = "image"
     try:
         result = (
             supabase.table("community_chat_messages")
-            .insert({
-                "room": ROOM,
-                "wallet_address": wallet,
-                "username": username,
-                "message": text,
-                **reply,
-            })
+            .insert(row)
             .execute()
         )
         if not result or not result.data:
