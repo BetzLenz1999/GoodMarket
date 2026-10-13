@@ -443,6 +443,8 @@
             });
         }
     </script>
+    <!-- Shared Get Started modal styles (guest connect flow). -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/get-started.css', v=ASSET_VERSION) }}">
 </head>
 <body>
 
@@ -450,6 +452,11 @@
     <nav class="navbar">
         <div class="nav-container">
             <a href="/wallet" class="back-wallet-btn">← Back to Wallet</a>
+            {% if is_guest %}
+            <!-- Persistent connect entry point so closing the modal doesn't
+                 strand a guest — same flow as the homepage. -->
+            <button type="button" class="gs-nav-cta" onclick="openGoodMarketGetStarted()">Get Started</button>
+            {% endif %}
         </div>
     </nav>
 
@@ -3364,6 +3371,20 @@ window._savingsStartWc = function() {
         statusEl.textContent = 'Connection failed: ' + (err.message || 'Unknown error');
     });
 };
+</script>
+{% endif %}
+
+{% if is_guest %}
+<!-- Guest: reuse the homepage "Get Started" connect flow. After a successful
+     connect the user is returned to this exact savings page. -->
+{% set get_started_boot = {'return_to': request.full_path if request else ''} %}
+{% include "_get_started_modal.html" %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof window.openGoodMarketGetStarted === 'function') {
+            window.openGoodMarketGetStarted();
+        }
+    });
 </script>
 {% endif %}
 
