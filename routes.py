@@ -21,6 +21,9 @@ from collaboration_automation import (
     automate_collaboration_assets,
     generate_collaboration_quiz_draft as generate_collaboration_quiz_draft_rows
 )
+# Server-side resolution of the /swap deep-link tab state (see the module docstring).
+# Kept in lockstep with autoSelectSwapTab() in static/js/swap-reserve.js.
+from swap_tab_state import resolve_swap_tab_state
 
 # Initialize notification service
 notification_service = NotificationService()
@@ -8065,6 +8068,14 @@ def lifi_bridge_diagnostics():
     return jsonify({"success": True, "diagnostics": info})
 
 
+# The alias tables + resolver live in swap_tab_state.py (imported at the top of
+# this module, dependency-free so it is unit-testable). The tables MUST stay in
+# sync with autoSelectSwapTab() in static/js/swap-reserve.js — the server
+# renders the initial focused tab (so a ?tab=bridge link never flashes
+# GoodSwap), and the client re-runs the same mapping for hash links (#bridge),
+# which the browser never sends to the server.
+
+
 @routes.route("/swap")
 def swap_page():
     """Swap page: DEX (Uniswap V3 on Celo) and GoodReserve (Mento) tabs.
@@ -8129,6 +8140,19 @@ def swap_page():
     fuse_wfuse_contract = os.getenv("FUSE_WFUSE_TOKEN", "0x0BE9e53fd7EDaC9F859882AfdDa116645287C629")
     voltage_router_contract = os.getenv("VOLTAGE_ROUTER", "0xE3F85aAd0c8DD7337427B9dF5d0fB741d65EEEB5")
 
+    # Resolve the initial tab from the deep link SERVER-SIDE so a ?tab=bridge
+    # URL never paints GoodSwap first (the client-side autoSelectSwapTab() then
+    # only matters for hash links, which the server cannot see).
+    lifi_enabled = _lifi_bridge_enabled()
+    swap_tab = resolve_swap_tab_state(request.args)
+    # Fall back when the requested pane isn't rendered for this request:
+    # GoodReserve may be hidden by feature flag, and Celo→Base only ships when
+    # LI.FI is enabled. Mirror setGoodSwapSubTab()/setBridgeSubTab() fallbacks.
+    if swap_tab["goodswap_pane"] == "reserve" and not reserve_visible:
+        swap_tab["goodswap_pane"] = "dex"
+    if swap_tab["bridge_dir"] == "celo_to_base" and not lifi_enabled:
+        swap_tab["bridge_dir"] = "celo_to_xdc"
+
     return render_template(
         "swap.html",
         wallet=wallet,
@@ -8153,10 +8177,15 @@ def swap_page():
         # LI.FI (Jumper) bridge — Celo → Base. The pane ships dark unless the
         # operator flips LIFI_BRIDGE_ENABLED; the client only ever calls our
         # own /api/bridge/lifi/* proxy (no integrator key in the browser).
-        lifi_bridge_enabled=_lifi_bridge_enabled(),
+        lifi_bridge_enabled=lifi_enabled,
         lifi_base_chain_id=get_env_int("BASE_CHAIN_ID", 8453),
         lifi_celo_erc20=os.getenv("CELO_ERC20_TOKEN", "0x471EcE3750Da237f93B8E339c536989b8978a438"),
         lifi_source_tokens=_lifi_source_tokens(),
+        # Server-resolved initial tab state (see _resolve_swap_tab_state).
+        swap_tab=swap_tab["tab"],
+        swap_goodswap_pane=swap_tab["goodswap_pane"],
+        swap_bridge_dir=swap_tab["bridge_dir"],
+        swap_focused=swap_tab["focused"],
         # Guest visitors get the shared "Get Started" connect modal instead of a
         # redirect; signed-in users see the normal swap UI. The modal's Privy
         # option is left OFF here because swap.html already ships its own Privy
