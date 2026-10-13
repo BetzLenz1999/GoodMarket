@@ -53,6 +53,18 @@ ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS reply_to_id BIGINT
 ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS reply_to_username TEXT;
 ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS reply_to_wallet TEXT;
 
+-- ── Image attachments (images only, hosted on ImgBB) ─────────────────────────
+-- The browser uploads to /chatroom/api/upload (ImgBB), then posts a message
+-- carrying the returned descriptor. `attachment_url` is a PUBLIC image-host URL
+-- (never a wallet address). ImgBB's API has no delete endpoint, so admin
+-- soft-delete hides the row but does NOT remove the hosted copy — set
+-- CHATROOM_IMAGE_EXPIRATION_DAYS for an upload-time auto-expiry if desired.
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS attachment_kind TEXT;
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS attachment_mime TEXT;
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE community_chat_messages ADD COLUMN IF NOT EXISTS attachment_bytes INTEGER;
+
 -- ── Reports (user-flagged messages) ──────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS community_chat_reports (
     id             BIGSERIAL PRIMARY KEY,
