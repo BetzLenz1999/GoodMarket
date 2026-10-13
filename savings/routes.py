@@ -26,13 +26,16 @@ def _require_auth():
 @savings_bp.route("/")
 def savings_home():
     wallet, verified = _require_auth()
-    if not wallet or not verified:
-        return redirect("/login")
+    is_guest = not (wallet and verified)
+    if is_guest:
+        wallet = ""
 
     # NOTE: /savings is intentionally NOT behind the human (face)
     # verification gate — unverified users are allowed to save G$.
     # Other earning/spending pages (dashboard, learn & earn, play & earn,
     # reloadly) still bounce unverified wallets to /wallet?fv_required=1.
+    # Guests (no session) may view the page and are offered the shared
+    # "Get Started" connect modal instead of a hard redirect to /login.
 
     wc_pid = os.environ.get('WALLETCONNECT_PROJECT_ID', '')
     has_explicit_sidecar = bool(os.getenv("WC_SERVICE_URL"))
@@ -41,6 +44,7 @@ def savings_home():
     return render_template(
         "savings.html",
         wallet=wallet,
+        is_guest=is_guest,
         savings_contract=SAVINGS_CONTRACT_ADDRESS,
         legacy_v5_contract=LEGACY_V5_CONTRACT_ADDRESS,
         savings_deployment_block=svc.SAVINGS_DEPLOYMENT_BLOCK,
