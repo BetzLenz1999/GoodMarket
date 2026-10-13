@@ -1202,26 +1202,26 @@
              inside). Same pattern at both levels so users learn one
              interaction model across the page. Available to MiniPay
              users too — Uniswap V3 here uses CIP-64 fee abstraction. -->
-        <div id="swapTabSwitcher" class="swap-tabs" role="tablist" aria-label="Swap mode">
-            <button type="button" id="tabBtnGoodSwap" class="swap-tab-btn active" role="tab" aria-selected="true" onclick="setSwapTab('goodswap')">GoodSwap</button>
-            <button type="button" id="tabBtnBridge" class="swap-tab-btn" role="tab" aria-selected="false" onclick="setSwapTab('bridge')">Bridge</button>
+        <div id="swapTabSwitcher" class="swap-tabs" role="tablist" aria-label="Swap mode"{% if swap_focused|default(false) %} style="display:none"{% endif %}>
+            <button type="button" id="tabBtnGoodSwap" class="swap-tab-btn{% if (swap_tab|default('goodswap')) != 'bridge' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_tab|default('goodswap')) != 'bridge' else 'false' }}" onclick="setSwapTab('goodswap')">GoodSwap</button>
+            <button type="button" id="tabBtnBridge" class="swap-tab-btn{% if (swap_tab|default('goodswap')) == 'bridge' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_tab|default('goodswap')) == 'bridge' else 'false' }}" onclick="setSwapTab('bridge')">Bridge</button>
         </div>
 
         <!-- GoodSwap top pane: wraps the Uniswap V3 and GoodReserve
              sub-panes. Designs of each sub-pane are preserved 1:1 from
              before consolidation; this wrapper just adds the sub-tab
              switcher and groups them under a single top tab. -->
-        <div id="swapPaneGoodSwap" class="pane pane-goodswap">
+        <div id="swapPaneGoodSwap" class="pane pane-goodswap{% if (swap_tab|default('goodswap')) == 'bridge' %} hidden-tab{% endif %}">
 
             <div id="goodswapSubTabSwitcher" class="goodswap-sub-tabs" role="tablist" aria-label="GoodSwap mode">
-                <button type="button" id="goodswapSubBtnDex" class="goodswap-sub-tab-btn active" role="tab" aria-selected="true" onclick="setGoodSwapSubTab('dex')">Uniswap V3</button>
+                <button type="button" id="goodswapSubBtnDex" class="goodswap-sub-tab-btn{% if (swap_goodswap_pane|default('dex')) != 'reserve' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_goodswap_pane|default('dex')) != 'reserve' else 'false' }}" onclick="setGoodSwapSubTab('dex')">Uniswap V3</button>
                 {% if reserve_swap_visible %}
-                <button type="button" id="goodswapSubBtnReserve" class="goodswap-sub-tab-btn" role="tab" aria-selected="false" onclick="setGoodSwapSubTab('reserve')">GoodReserve</button>
+                <button type="button" id="goodswapSubBtnReserve" class="goodswap-sub-tab-btn{% if (swap_goodswap_pane|default('dex')) == 'reserve' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_goodswap_pane|default('dex')) == 'reserve' else 'false' }}" onclick="setGoodSwapSubTab('reserve')">GoodReserve</button>
                 {% endif %}
             </div>
 
         <!-- Uniswap V3 sub-pane (existing, unchanged content) -->
-        <div id="swapPaneDex" class="goodswap-sub-pane goodswap-sub-pane-dex">
+        <div id="swapPaneDex" class="goodswap-sub-pane goodswap-sub-pane-dex{% if (swap_goodswap_pane|default('dex')) == 'reserve' %} hidden-tab{% endif %}">
 
         <!-- Swap Card -->
         <div class="swap-card">
@@ -1364,7 +1364,7 @@
 
         {% if reserve_swap_visible %}
         <!-- GoodReserve sub-pane (existing, unchanged content) -->
-        <div id="swapPaneReserve" class="goodswap-sub-pane goodswap-sub-pane-reserve hidden-tab">
+        <div id="swapPaneReserve" class="goodswap-sub-pane goodswap-sub-pane-reserve{% if (swap_goodswap_pane|default('dex')) != 'reserve' %} hidden-tab{% endif %}">
             <div class="swap-card">
 
                 {% if is_guest %}
@@ -1496,7 +1496,8 @@
         </div><!-- /.pane-goodswap -->
 
         <!-- Bridge Pane (Celo G$ ↔ XDC G$) -->
-        <div id="swapPaneBridge" class="pane pane-bridge hidden-tab">
+        {% set _bridge_dir = swap_bridge_dir|default('celo_to_xdc') or 'celo_to_xdc' %}
+        <div id="swapPaneBridge" class="pane pane-bridge{% if (swap_tab|default('goodswap')) != 'bridge' %} hidden-tab{% endif %}">
 
             <!-- Bridge sub-tabs: pick direction. Each direction gets its own
                  self-contained sub-pane with its own design preserved 1:1
@@ -1504,15 +1505,15 @@
                  here; XDC → Celo was ported from /xdc-wallet so the user
                  doesn't have to leave /swap to bridge in either direction). -->
             <div id="bridgeSubTabSwitcher" class="bridge-sub-tabs" role="tablist" aria-label="Bridge direction">
-                <button type="button" id="bridgeSubBtnCeloToXdc" class="bridge-sub-tab-btn active" role="tab" aria-selected="true" onclick="setBridgeSubTab('celo_to_xdc')">Celo → XDC</button>
-                <button type="button" id="bridgeSubBtnXdcToCelo" class="bridge-sub-tab-btn" role="tab" aria-selected="false" onclick="setBridgeSubTab('xdc_to_celo')">XDC → Celo</button>
+                <button type="button" id="bridgeSubBtnCeloToXdc" class="bridge-sub-tab-btn{% if _bridge_dir == 'celo_to_xdc' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if _bridge_dir == 'celo_to_xdc' else 'false' }}" onclick="setBridgeSubTab('celo_to_xdc')">Celo → XDC</button>
+                <button type="button" id="bridgeSubBtnXdcToCelo" class="bridge-sub-tab-btn{% if _bridge_dir == 'xdc_to_celo' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if _bridge_dir == 'xdc_to_celo' else 'false' }}" onclick="setBridgeSubTab('xdc_to_celo')">XDC → Celo</button>
                 {% if lifi_bridge_enabled %}
-                <button type="button" id="bridgeSubBtnCeloToBase" class="bridge-sub-tab-btn" role="tab" aria-selected="false" onclick="setBridgeSubTab('celo_to_base')">Celo → Base</button>
+                <button type="button" id="bridgeSubBtnCeloToBase" class="bridge-sub-tab-btn{% if _bridge_dir == 'celo_to_base' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if _bridge_dir == 'celo_to_base' else 'false' }}" onclick="setBridgeSubTab('celo_to_base')">Celo → Base</button>
                 {% endif %}
             </div>
 
             <!-- Celo → XDC sub-pane (existing, unchanged content) -->
-            <div id="bridgeSubPaneCeloToXdc" class="bridge-sub-pane">
+            <div id="bridgeSubPaneCeloToXdc" class="bridge-sub-pane{% if _bridge_dir != 'celo_to_xdc' %} hidden-tab{% endif %}">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
 
                 {% if is_guest %}
@@ -1628,7 +1629,7 @@
                  1:1 — same wording, same Bridge Summary panel, same
                  itemized "Not enough XDC" / "Not enough G$" errors that
                  ship in PR #353. -->
-            <div id="bridgeSubPaneXdcToCelo" class="bridge-sub-pane hidden-tab">
+            <div id="bridgeSubPaneXdcToCelo" class="bridge-sub-pane{% if _bridge_dir != 'xdc_to_celo' %} hidden-tab{% endif %}">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
 
                 {% if is_guest %}
@@ -1742,7 +1743,7 @@
                  in a SINGLE step. Native CELO is currently rejected by LI.FI's
                  own step-0 simulation (TransferFromFailed), so the pane offers a
                  stablecoin fallback. See docs/JUMPER_LIFI_CELO_SOURCE_FIX_PLAN.md. -->
-            <div id="bridgeSubPaneCeloToBase" class="bridge-sub-pane hidden-tab">
+            <div id="bridgeSubPaneCeloToBase" class="bridge-sub-pane{% if _bridge_dir != 'celo_to_base' %} hidden-tab{% endif %}">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
 
                 {% if is_guest %}
