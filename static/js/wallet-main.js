@@ -3169,7 +3169,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
     const AI_SWAP_UNISWAP_ROUTER = '0x643770E279d5D0733F21d6DC03A8efbABf3255B4';
     const AI_SWAP_PERMIT2        = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
     const AI_SWAP_QUOTER         = '0x82825d0554fA07f7FC52Ab63c961F330fdEFa8E8';
-    const AI_SWAP_FEE_TIERS      = [10000, 3000, 500]; // G$/CELO pool is 1% — try it first
+    // Mirror swap-core.js FEE_TIERS: the deep Celo stablecoin pools are at
+    // 0.01% (100), so the AI-chat swap must query it too or G$/stablecoin
+    // quotes silently fall back to the thin 1% G$ pools.
+    const AI_SWAP_FEE_TIERS      = [100, 500, 3000, 10000];
     const AI_SWAP_ERC20_ABI = [
         'function balanceOf(address owner) view returns (uint256)',
         'function allowance(address owner, address spender) view returns (uint256)',
