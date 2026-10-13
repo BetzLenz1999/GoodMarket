@@ -8067,10 +8067,17 @@ def lifi_bridge_diagnostics():
 
 @routes.route("/swap")
 def swap_page():
-    """Swap page: DEX (Uniswap V3 on Celo) and GoodReserve (Mento) tabs"""
+    """Swap page: DEX (Uniswap V3 on Celo) and GoodReserve (Mento) tabs.
+
+    Guests (no session wallet) are allowed to view the page instead of being
+    bounced to the homepage: the shared "Get Started" connect modal renders so
+    a shared swap link still converts. Signing stays impossible without a
+    connect, so nothing is exposed by allowing the view.
+    """
     wallet = session.get("wallet")
-    if not wallet or not session.get("verified"):
-        return redirect(url_for("routes.index"))
+    is_guest = not (wallet and session.get("verified"))
+    if is_guest:
+        wallet = ""
 
     # NOTE: /swap is intentionally NOT behind the human (face) verification
     # gate — unverified users are allowed to swap G$ (goodswap + bridge).
@@ -8150,6 +8157,11 @@ def swap_page():
         lifi_base_chain_id=get_env_int("BASE_CHAIN_ID", 8453),
         lifi_celo_erc20=os.getenv("CELO_ERC20_TOKEN", "0x471EcE3750Da237f93B8E339c536989b8978a438"),
         lifi_source_tokens=_lifi_source_tokens(),
+        # Guest visitors get the shared "Get Started" connect modal instead of a
+        # redirect; signed-in users see the normal swap UI. The modal's Privy
+        # option is left OFF here because swap.html already ships its own Privy
+        # module — loading a second one would double the SDK cost for guests.
+        is_guest=is_guest,
     )
 
 
