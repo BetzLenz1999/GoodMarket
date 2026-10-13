@@ -1,0 +1,450 @@
+{# Shared "Get Started" connect modal (create / log in / WalletConnect).
+   Include with: {% set get_started_boot = {'return_to': '/swap?tab=goodswap'} %}
+                 {% include "_get_started_modal.html" %}
+   Used by homepage.html (return_to defaults to /wallet) and by guest-facing
+   feature pages (/swap, /savings) so a not-logged-in visitor can connect
+   without being bounced off the page. The parent must load, BEFORE this
+   include: static/js/wc-bridge.js, static/js/local-wallet.js, ethers.js.
+   This partial pulls static/css/get-started.css (in <head>) itself is the
+   caller's job; the connect-logic bundle is loaded at the end here. #}
+{% set _gs_boot = get_started_boot|default({}) %}
+
+    <!-- Wallet Modal -->
+    <div class="wallet-modal" id="walletModal">
+        <div class="wallet-modal-content">
+            <div class="modal-header">
+                <div class="modal-header-inner">
+                    <h2 class="modal-title">Create your GoodMarket account</h2>
+                    <p class="modal-subtitle">Choose how you want to join</p>
+                </div>
+                <button class="close-modal" onclick="closeWalletModal()">×</button>
+            </div>
+
+            <!-- Step 1: injected-wallet-first login -->
+            <div class="wallet-options" id="walletOptions">
+                <!-- Shown only when a wallet is detected in the current browser
+                     (e.g. the user opened the app inside MiniPay). Nudges them
+                     to CONNECT instead of creating a second wallet. -->
+                <div class="wallet-detect-banner" id="walletDetectBanner" role="status" aria-live="polite">
+                    <span class="wdb-icon" aria-hidden="true">👛</span>
+                    <span id="walletDetectText"></span>
+                </div>
+                <button id="localWalletBtn" class="wallet-option-card primary" type="button" onclick="openCreatePreflight()">
+                    <div class="option-icon">🆓</div>
+                    <div class="option-text">
+                        <div class="option-title">Create GoodMarket Wallet</div>
+                        <p class="option-desc">Email + PIN — no wallet app needed. Your wallet is created instantly, free.</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
+                <button id="injectedWalletBtn" class="wallet-option-card injected" type="button" onclick="connectInjectedWallet()" style="display:none">
+                    <div class="option-icon" id="injectedWalletIcon">👛</div>
+                    <div class="option-text">
+                        <div class="option-title" id="injectedWalletTitle">Injected Wallet</div>
+                        <p class="option-desc" id="injectedWalletDesc">Connect with MiniPay, Trust Wallet, MetaMask, or another injected wallet</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
+                {% if enable_privy_login %}
+                <button id="privyPrimaryButton" class="wallet-option-card wc-option" type="button" onclick="beginPrivyLogin(true)" aria-live="polite">
+                    <div class="option-icon">✨</div>
+                    <div class="option-text">
+                        <div class="option-title" id="privyPrimaryTitle">Open Privy Login</div>
+                        <p class="option-desc" id="privyPrimaryDesc">Email, Google, embedded wallet, or connect wallet</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
+                <button id="privyRetryButton" class="wallet-option-card wc-option" type="button" onclick="beginPrivyLogin(true)" style="display:none">
+                    <div class="option-icon">🔐</div>
+                    <div class="option-text">
+                        <div class="option-title">Open Privy Login</div>
+                        <p class="option-desc">Tap here if the Privy window did not open automatically</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
+                {% endif %}
+                <button id="walletConnectPrimaryButton" class="wallet-option-card" type="button" onclick="openGoodWalletConnect()">
+                    <div class="option-icon">💚</div>
+                    <div class="option-text">
+                        <div class="option-title">Connect GoodWallet</div>
+                        <p class="option-desc">Already using GoodWallet for G$? Scan the QR or copy the URI link to connect it</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
+                <div id="privyLoginMount" style="display:none"></div>
+                <div id="walletConnectStatus" class="status-message" style="margin-top:0.85rem;"></div>
+            </div>
+
+            <!-- Local self-custodial account: email + PIN. The private key is
+                 generated and encrypted in the browser; only the encrypted
+                 keystore reaches the server (phone-loss recovery). -->
+            <div class="wallet-form" id="localWalletOptions">
+                <button class="back-btn" type="button" onclick="showWalletOptions()">← Back to login options</button>
+
+                <!-- Reminder shown before the email + PIN form. Creating a
+                     second wallet for a face that is already verified on
+                     GoodDollar cannot claim G$ — so we ask the user to confirm
+                     they don't already have MiniPay / GoodWallet / another
+                     wallet before continuing. This is copy + an acknowledgment
+                     only; the create logic itself is unchanged. -->
+                <div id="lwPreflightStep" style="display:none">
+                    <div class="lw-preflight-panel">
+                        <div class="lw-preflight-title">
+                            <span aria-hidden="true">⚠️</span> Before you create a new wallet
+                        </div>
+                        <p class="lw-preflight-lead">
+                            GoodMarket is <strong>one account per person</strong> — required by GoodDollar's face verification.
+                        </p>
+                        <p class="lw-preflight-lead">
+                            If you <strong>already have</strong> any of these, don't create a new wallet — connect it instead:
+                        </p>
+                        <ul class="lw-preflight-list">
+                            <li><span aria-hidden="true">📱</span> MiniPay (you claim G$ there)</li>
+                            <li><span aria-hidden="true">💚</span> GoodWallet / GoodDapp</li>
+                            <li><span aria-hidden="true">🦊</span> MetaMask / Trust Wallet</li>
+                        </ul>
+                        <p class="lw-preflight-alert">
+                            Two wallets for the same face cannot both be verified — the second one will not be able to claim G$.
+                        </p>
+                        <label class="lw-preflight-ack" for="lwPreflightAck">
+                            <input type="checkbox" id="lwPreflightAck" onchange="onPreflightAckChange(this)">
+                            <span>I don't have a GoodWallet or MiniPay wallet yet, and I have not claimed G$ on another wallet before.</span>
+                        </label>
+                        <div class="lw-preflight-actions">
+                            <button id="lwPreflightContinue" class="connect-btn" type="button" onclick="ackCreatePreflight()" disabled>
+                                Continue creating a new wallet
+                            </button>
+                            <button class="lw-preflight-connect" type="button" onclick="cancelCreatePreflight()">
+                                I already have a wallet — connect instead
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="lwCreateStep">
+                    <p class="wc-panel-note" id="lwModeNote">
+                        Make a free GoodMarket account & wallet — secured by your email and an 8-digit PIN. No app install, no fees.
+                    </p>
+                    <div class="wallet-input-group">
+                        <label class="wallet-label" for="lwEmail">Email <small style="opacity:0.7;font-weight:normal">(we store only a masked copy)</small></label>
+                        <input id="lwEmail" class="wallet-input" type="email" autocomplete="email" placeholder="you@example.com">
+                    </div>
+                    <div class="wallet-input-group">
+                        <label class="wallet-label" for="lwPin" id="lwPinLabel">8-digit PIN</label>
+                        <input id="lwPin" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password" placeholder="••••••••" oninput="lwPinStrengthHint()">
+                        <div id="lwPinStrength" style="display:none;font-size:0.78rem;margin-top:0.35rem;font-weight:600"></div>
+                    </div>
+                    <div class="wallet-input-group" id="lwPinConfirmWrap">
+                        <label class="wallet-label" for="lwPinConfirm">Confirm PIN</label>
+                        <input id="lwPinConfirm" class="wallet-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password" placeholder="••••••••">
+                    </div>
+                    <div class="wallet-input-group" id="lwReferralWrap">
+                        <label class="wallet-label" for="lwReferralCode">Referral code <span style="font-weight:500;color:#9ca3af">(optional)</span></label>
+                        <input id="lwReferralCode" class="wallet-input" type="text" maxlength="16" autocomplete="off" placeholder="Referral code" oninput="syncReferralInputs(this)">
+                    </div>
+                    <button id="lwSubmitBtn" class="connect-btn" type="button" onclick="submitLocalWallet()">Create my free wallet</button>
+                    <p class="wc-panel-note" style="margin-top:0.7rem;text-align:center;" id="lwToggleNote">
+                        Already have an account?
+                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="setLocalWalletMode('unlock')">Log in with email + PIN</button>
+                    </p>
+                </div>
+
+                <div id="lwPhraseStep" style="display:none">
+                    <p class="wc-panel-note"><strong>Save your 12 recovery words.</strong> These restore your wallet if you forget your PIN or lose your phone:</p>
+                    <div class="lw-words" id="lwWords"></div>
+
+                    <!-- The words are shown ONCE and are never stored on our
+                         servers, so this copy button is the only way to keep
+                         them. Instructions are bold by design — losing the
+                         phrase means losing the funds. -->
+                    <div class="lw-recovery-instruction">
+                        <strong>⚠️ IMPORTANT: You MUST copy and save your 12 recovery words.</strong><br>
+                        <strong>These 12 words are the ONLY way to recover your account and your funds.</strong><br>
+                        <strong>To recover into MetaMask or Trust Wallet, import this exact 12-word phrase there.</strong><br>
+                        <strong>If you lose these words, nobody — not even GoodMarket support — can recover your wallet.</strong>
+                    </div>
+
+                    <button id="lwCopyWordsBtn" class="lw-copy-btn" type="button" onclick="lwCopyRecoveryWords(this)">📋 Copy my 12 recovery words</button>
+
+                    <div class="lw-warning">
+                        ⚠️ Anyone with these words can access your funds. GoodMarket support can never reset your PIN or recover your account for you — write the words down and keep them private.
+                        <br><small>🔒 We store only a masked copy of your email — the full address is never saved on our servers.</small>
+                    </div>
+                    <label class="lw-confirm-row">
+                        <input type="checkbox" id="lwPhraseConfirm" onchange="document.getElementById('lwFinishBtn').disabled = !this.checked">
+                        <span>I wrote down my 12 recovery words and understand my PIN cannot be reset.</span>
+                    </label>
+                    <button id="lwFinishBtn" class="connect-btn" type="button" onclick="finishLocalWalletSignup()" disabled>Continue to GoodMarket</button>
+
+                    <p class="wc-panel-note lw-community-note">
+                        <strong>Need assistance? Join the GoodMarket Telegram community:</strong>
+                        <a href="https://t.me/GoodMarketCommunity" target="_blank" rel="noopener noreferrer" class="lw-community-link">t.me/GoodMarketCommunity</a>
+                    </p>
+                </div>
+
+                <!-- Shown after ANY local login while the account has no
+                     username yet, so users can receive money via @username. -->
+                <div id="lwUsernameStep" style="display:none">
+                    <p class="wc-panel-note"><strong>🎉 Setting up username.</strong><br>
+                        You can now receive money using your username — so set your username now.</p>
+                    <div class="wallet-input-group">
+                        <label class="wallet-label" for="lwUsername">Username</label>
+                        <input id="lwUsername" class="wallet-input" type="text" maxlength="24" autocomplete="off" placeholder="e.g. juana_dela_cruz" onkeydown="if(event.key==='Enter'){event.preventDefault();submitLocalWalletUsername();}">
+                        <small style="opacity:0.7">3–24 characters: letters, numbers, and underscore (_) only. Others can send you G$ with @username.</small>
+                    </div>
+                    <button id="lwUsernameBtn" class="connect-btn" type="button" onclick="submitLocalWalletUsername()">Set my username</button>
+                    <p class="wc-panel-note" style="margin-top:0.7rem;text-align:center;">
+                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="skipLocalWalletUsername()">Skip for now</button>
+                    </p>
+                </div>
+
+                <div id="localWalletStatus" class="status-message" style="margin-top:0.85rem;"></div>
+            </div>
+
+            <!-- Optional WalletConnect path kept separate from Privy so users can
+                 scan a QR/barcode or copy a URI without disrupting Privy login. -->
+            <div class="wallet-form" id="walletConnectOptions">
+                <button class="back-btn" type="button" onclick="showWalletOptions()">← Back to login options</button>
+                <!-- The live step banner is FIRST so the instruction that drives
+                     the flow ("Awaiting wallet approval…", "Approve the
+                     signature…") is always above the fold on a phone — it used
+                     to sit below the QR + deep links and needed a scroll. -->
+                <div id="walletConnectPanelStatus" class="status-message wc-status-banner"
+                     role="status" aria-live="polite"></div>
+                <!-- Tapping "Connect GoodWallet" starts the session immediately, so
+                     there is no second button — just a progress state while the
+                     relay round-trip that produces the URI completes. -->
+                <div id="wcLoading" class="wc-loading" role="status" aria-live="polite" hidden>
+                    <span class="wc-spinner" aria-hidden="true"></span>
+                    <p class="wc-loading-text">Processing barcode and URI code…</p>
+                    <p class="wc-loading-sub">Generating a secure session. This takes a few seconds.</p>
+                </div>
+                <div id="wcQrWrap" class="wc-qr-wrap">
+                    <div id="wcQrContainer">
+                        <div id="wcQrCode" class="wc-qr-code" aria-label="WalletConnect QR code"></div>
+                        <div id="wcCopyBtnContainer" class="wc-copy-btn-container"></div>
+                    </div>
+                    <button id="wcBackBtn" class="back-btn" type="button" style="display:none;margin:0.85rem auto 0;" onclick="showWalletConnectOptions()">← Choose another method</button>
+                </div>
+            </div>
+
+
+        </div>
+    </div>
+
+<script>
+    window.GM_GET_STARTED_BOOT = {
+        returnTo: {{ _gs_boot.get('return_to', '')|default('', true)|tojson }},
+        wcSidecarEnabled: {{ 'true' if walletconnect_sidecar_enabled|default(false) else 'false' }},
+        projectId: {{ walletconnect_project_id|default('', true)|tojson }},
+        wcBundleUrl: {{ url_for('static', filename='js/wc-bundle.js', v=ASSET_VERSION)|tojson }},
+        assetVersion: {{ ASSET_VERSION|tojson }}
+    };
+</script>
+
+    <script>
+        window.GM_PRIVY_CONFIG = {
+            enabled: {{ enable_privy_login|default(false)|tojson }},
+            appId: {{ privy_app_id|default('', true)|tojson }},
+            clientId: {{ privy_client_id|default('', true)|tojson }}
+        };
+    </script>
+    {% if enable_privy_login %}
+    <script type="module">
+        import React, {useEffect, useRef} from 'https://esm.sh/react@18.3.1';
+        import {createRoot} from 'https://esm.sh/react-dom@18.3.1/client';
+        import {PrivyProvider, usePrivy, useWallets} from 'https://esm.sh/@privy-io/react-auth@3.32.2?deps=react@18.3.1,react-dom@18.3.1';
+
+        const CELO_MAINNET = {
+            id: 42220,
+            name: 'Celo',
+            network: 'celo',
+            nativeCurrency: {name: 'CELO', symbol: 'CELO', decimals: 18},
+            rpcUrls: {default: {http: ['https://forno.celo.org']}},
+            blockExplorers: {default: {name: 'Celoscan', url: 'https://celoscan.io'}}
+        };
+
+        function PrivyLoginController() {
+            const {ready, authenticated, login, logout, signMessage} = usePrivy();
+            const {ready: walletsReady, wallets} = useWallets();
+            const processingRef = useRef(false);
+            const walletWaitTimerRef = useRef(null);
+            const loginRef = useRef(login);
+            const logoutRef = useRef(logout);
+
+            useEffect(() => { loginRef.current = login; }, [login]);
+            useEffect(() => { logoutRef.current = logout; }, [logout]);
+
+            useEffect(() => {
+                window.GMPrivyLogin = async function (fromUserTap) {
+                    if (!window.GM_PRIVY_CONFIG.appId) {
+                        window.showWalletStatus?.('walletConnectStatus', '❌ Privy is not configured. Set PRIVY_APP_ID in the server environment.', 'error');
+                        return;
+                    }
+                    if (!ready) {
+                        window.GMPrivyAutoOpenRequested = false;
+                        window.showWalletStatus?.('walletConnectStatus', '⏳ Loading Privy… tap Open Privy Login again in a moment.', 'info');
+                        window.showPrivyRetry?.();
+                        return;
+                    }
+                    window.GMPrivyAutoOpenRequested = false;
+                    window.GMPrivyLoginStarted = true;
+                    window.showWalletStatus?.('walletConnectStatus', '🔐 Opening Privy login…', 'info');
+                    try {
+                        if (authenticated && typeof logoutRef.current === 'function') {
+                            window.showWalletStatus?.('walletConnectStatus', '🔄 Refreshing Privy session so you can choose Email/Google or Connect Wallet…', 'info');
+                            try { await logoutRef.current(); } catch (_) {}
+                        }
+                        // Keep MiniPay's injected provider visible to Privy. The
+                        // MiniPay dapp browser should use the same Privy-first
+                        // form as regular browsers, including Privy's Connect
+                        // Wallet option, so the GoodMarket session source stays
+                        // `privy` even when the user connects MiniPay there.
+                        const loginResult = loginRef.current();
+                        window.hideWalletModalForPrivy?.();
+                        window.watchPrivyOpen?.();
+                        if (loginResult && typeof loginResult.catch === 'function') {
+                            loginResult.catch((err) => {
+                                window.GMPrivyAutoOpenRequested = true;
+                                window.restoreWalletModalAfterPrivy?.();
+                                const msg = err && err.message ? err.message : 'Privy did not open automatically.';
+                                window.showWalletStatus?.('walletConnectStatus', '⚠️ ' + msg + ' Please tap Open Privy Login.', 'warning');
+                                window.showPrivyRetry?.();
+                            });
+                        }
+                        // Privy's sheet is rendered outside this modal. Hide the
+                        // GoodMarket modal after a real user-triggered login so it
+                        // cannot sit above Privy's UI; a watchdog restores it with a
+                        // retry CTA if Privy was blocked or failed to render.
+                        window.schedulePrivyRetry?.();
+                    } catch (err) {
+                        window.GMPrivyAutoOpenRequested = true;
+                        window.restoreWalletModalAfterPrivy?.();
+                        window.showWalletStatus?.('walletConnectStatus', '⚠️ Privy did not open automatically. Please tap Open Privy Login.', 'warning');
+                        window.showPrivyRetry?.();
+                    }
+                };
+
+                if (ready && window.GMPrivyAutoOpenRequested && document.getElementById('walletModal')?.classList.contains('active')) {
+                    window.GMPrivyAutoOpenRequested = false;
+                    window.showWalletStatus?.('walletConnectStatus', '✅ Privy is ready. Tap Open Privy Login to continue.', 'success');
+                    window.showPrivyRetry?.();
+                }
+            }, [ready, authenticated]);
+
+            useEffect(() => {
+                async function completePrivyLogin() {
+                    if (authenticated) window.GMPrivyAuthenticated = true;
+                    if (!ready || !authenticated || !walletsReady || processingRef.current) return;
+                    if (!window.GMPrivyLoginStarted) return;
+                    clearTimeout(window.GMPrivyOpenWatchTimer);
+                    if (!wallets || wallets.length === 0) {
+                        window.showWalletStatus?.('walletConnectStatus', '⏳ Creating your Privy wallet…', 'info');
+                        if (!walletWaitTimerRef.current) {
+                            walletWaitTimerRef.current = setTimeout(() => {
+                                walletWaitTimerRef.current = null;
+                                if (!processingRef.current) {
+                                    window.restoreWalletModalAfterPrivy?.(true);
+                                    window.showPrivyRetry?.();
+                                    window.showWalletStatus?.('walletConnectStatus', '⚠️ Privy authenticated you, but no EVM wallet address was returned. Please reopen Privy and choose Email/Google again, or use Connect Wallet.', 'warning');
+                                }
+                            }, 20000);
+                        }
+                        return;
+                    }
+                    if (walletWaitTimerRef.current) {
+                        clearTimeout(walletWaitTimerRef.current);
+                        walletWaitTimerRef.current = null;
+                    }
+                    processingRef.current = true;
+                    try {
+                        const privyEmbeddedWallet = wallets.find(w => w && w.walletClientType === 'privy');
+                        // Always complete homepage auth through Privy. If the user
+                        // chooses Privy's Connect Wallet inside MiniPay, Privy returns
+                        // that connected wallet here; verifying below still records the
+                        // GoodMarket login source as `privy`.
+                        const wallet = privyEmbeddedWallet || wallets[0];
+                        const address = wallet && wallet.address;
+                        if (!address) throw new Error('Privy did not return an EVM wallet address.');
+                        window.showWalletStatus?.('walletConnectStatus', '✍️ Sign the GoodMarket login message in Privy…', 'info');
+                        const provider = await wallet.getEthereumProvider();
+                        window.GMPrivyProvider = provider;
+                        window.GMPrivyWalletAddress = address;
+                        try { localStorage.setItem('privy_wallet_address', address); } catch (_) {}
+                        const message = window.makeLoginMessage(address);
+                        const isPrivyEmbeddedWallet = wallet && wallet.walletClientType === 'privy';
+                        let signature;
+                        if (isPrivyEmbeddedWallet) {
+                            const sigResult = await signMessage({message}, {address});
+                            signature = (typeof sigResult === 'string') ? sigResult : (sigResult && sigResult.signature);
+                        } else {
+                            // Some in-app wallet providers behind Privy's Connect Wallet
+                            // expect personal_sign messages to be hex encoded. Sending
+                            // the plain text `Login to GoodMarket...` can surface as
+                            // "Expected a hexadecimal digit at index 0, but was L".
+                            const messageHex = (typeof window.utf8ToHex === 'function')
+                                ? window.utf8ToHex(message)
+                                : ('0x' + Array.from(new TextEncoder().encode(message)).map(b => b.toString(16).padStart(2, '0')).join(''));
+                            signature = await provider.request({ method: 'personal_sign', params: [messageHex, address] });
+                        }
+                        if (!signature) throw new Error('Privy did not return a login signature.');
+                        // Referral codes are only collected on the local
+                        // (email + PIN) create-account form — never on Privy
+                        // or any other wallet login.
+                        const verifyData = await window.postVerifyIdentity(
+                            address,
+                            signature,
+                            message,
+                            '',
+                            'privy',
+                            {
+                                referralEligible: false,
+                                privyWalletClientType: wallet && wallet.walletClientType ? wallet.walletClientType : ''
+                            }
+                        );
+                        const okMsg = verifyData && verifyData.referral_warning
+                            ? ('✅ Privy login verified. ⚠️ ' + verifyData.referral_warning + ' Redirecting…')
+                            : '✅ Privy login verified. Redirecting…';
+                        window.showWalletStatus?.('walletConnectStatus', okMsg, verifyData && verifyData.referral_warning ? 'warning' : 'success');
+                        const redirectTo = (verifyData && verifyData.redirect_to) || '/wallet';
+                        try { sessionStorage.setItem('verified', 'true'); } catch (_) {}
+                        window.GMPrivyLoginStarted = false;
+                        setTimeout(() => { window.location.assign(redirectTo); }, verifyData && verifyData.referral_warning ? 2400 : 900);
+                    } catch (err) {
+                        processingRef.current = false;
+                        const msg = err && err.message ? err.message : 'Privy login failed';
+                        const rejected = /reject|denied|cancel/i.test(msg);
+                        window.restoreWalletModalAfterPrivy?.();
+                        window.showWalletStatus?.('walletConnectStatus', (rejected ? '❌ Signature or login was cancelled. ' : '❌ ') + msg, rejected ? 'warning' : 'error');
+                        if (rejected) window.showPrivyRetry?.();
+                    }
+                }
+                completePrivyLogin();
+            }, [ready, authenticated, walletsReady, wallets]);
+
+            return null;
+        }
+
+        const cfg = window.GM_PRIVY_CONFIG || {};
+        const mount = document.getElementById('privyLoginMount');
+        if (mount && cfg.appId) {
+            createRoot(mount).render(
+                React.createElement(PrivyProvider, {
+                    appId: cfg.appId,
+                    clientId: cfg.clientId || undefined,
+                    config: {
+                        defaultChain: CELO_MAINNET,
+                        supportedChains: [CELO_MAINNET],
+                        // MiniPay should behave like regular browsers here: show
+                        // the full Privy form and let Privy detect/connect the
+                        // MiniPay wallet from its Connect Wallet option.
+                        loginMethods: ['email', 'google', 'wallet'],
+                        embeddedWallets: {ethereum: {createOnLogin: 'users-without-wallets'}},
+                        appearance: {theme: 'light', accentColor: '#10b981', logo: '/static/icons/goodmarket-icon.png'}
+                    }
+                }, React.createElement(PrivyLoginController))
+            );
+        }
+    </script>
+    {% endif %}
+<script src="{{ url_for('static', filename='js/get-started.js', v=ASSET_VERSION) }}"></script>
