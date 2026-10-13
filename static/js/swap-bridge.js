@@ -328,6 +328,9 @@ function _computeCeloBridgeProtocolFeeGdWei(amountWei) {
 function updateCeloBridgeBalanceDisplay() {
     const fromEl = document.getElementById('bridgeFromBalance');
     const feeEl  = document.getElementById('bridgeFeeBalance');
+    // Guests render the connect card instead of the bridge form, so the
+    // balance elements are absent — skip the RPC reads entirely.
+    if (!fromEl && !feeEl) return;
     if (fromEl) {
         const gd = (typeof gdBalanceNum === 'number') ? gdBalanceNum : 0;
         fromEl.textContent = gd.toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' G$';
