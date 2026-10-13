@@ -1469,7 +1469,7 @@ async function ensureWalletPermit2Allowance(token, amountIn, signer, stepIndicat
 
 // ─── State ────────────────────────────────────────────────────────────────
 let fromToken       = "GD";
-let toToken         = "CELO";
+let toToken         = "USDT";
 let slippage        = 1.0;   // default 1% — 0.5% causes "Too little received" on multi-hop routes
 let currentQuote    = null;
 let quoteTimer      = null;
