@@ -423,3 +423,87 @@
 .gm-chat-message-link { color: #bfdbfe; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 .gm-chat-message-link:hover { color: #fef3c7; }
 .gm-chat-message-link:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+
+/* ── Image attachments ─────────────────────────────────────────────────────
+   Dark-canvas palette (AA on the widget surfaces). The <img> is created with
+   the DOM API in chatroom-widget.js; the URL is set via a property, never
+   innerHTML. */
+.gm-chat-attach-btn {
+  border: 1px solid rgba(134, 239, 172, .28);
+  background: rgba(255, 255, 255, .06);
+  color: #e2e8f0;
+  border-radius: 12px;
+  padding: 0 12px;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.gm-chat-attach-btn:hover { border-color: #fbbf24; color: #fde68a; }
+.gm-chat-attach-btn:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+
+.gm-chat-bubble-image { padding: 6px; }
+.gm-chat-image-link { display: block; line-height: 0; }
+.gm-chat-attachment {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  cursor: zoom-in;
+}
+.gm-chat-caption {
+  margin-top: 6px;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1.35;
+  color: #f8fafc;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.gm-chat-attach-preview { padding: 0 12px 6px; }
+.gm-chat-attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(124, 58, 237, .18);
+  color: #ddd6fe;
+  font-size: 12px;
+}
+.gm-chat-attach-chip.is-error { background: rgba(248, 113, 113, .18); color: #fecaca; }
+.gm-chat-attach-thumb {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, .18);
+}
+.gm-chat-attach-spin { font-size: 14px; }
+.gm-chat-attach-remove {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.gm-chat-attach-remove:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+
+.gm-chat-drop-hint {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 99999;
+  padding: 14px 20px;
+  border-radius: 12px;
+  background: rgba(11, 15, 42, .94);
+  border: 2px dashed #fbbf24;
+  color: #fde68a;
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+}
