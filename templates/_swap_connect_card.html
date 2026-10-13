@@ -1,0 +1,34 @@
+{# Guest "Get Started" connect card for the swap/reserve/bridge card slots.
+
+   Rendered INSIDE an existing `.swap-card` (so it inherits the card chrome)
+   only when `is_guest` is true — a not-logged-in visitor sees this instead of
+   the token boxes / amount inputs / action button, which are not rendered at
+   all until connected (server-side gate, not a CSS hide).
+
+   The button opens the shared homepage connect modal via the public
+   `openGoodMarketGetStarted()` entry point (single source of truth). On
+   success the connect flow returns the user to this exact swap view
+   (`get_started_boot.return_to`), where the real form now renders.
+
+   Optional per-pane copy via context vars (set with a Jinja `{% with %}`
+   around the include): `connect_card_kicker`, `connect_card_title`,
+   `connect_card_body`. #}
+<div class="swap-connect-card">
+    <div class="swap-connect-icon" aria-hidden="true">🔄</div>
+    <div class="swap-connect-kicker">{{ connect_card_kicker|default('Connect to continue') }}</div>
+    <h2 class="swap-connect-title">{{ connect_card_title|default('Swap and bridge G$') }}</h2>
+    <p class="swap-connect-body">
+        {{ connect_card_body|default('Connect or create a free GoodMarket wallet — email + PIN, no app to install. Your keys stay on your device.') }}
+    </p>
+    <button
+        type="button"
+        class="swap-connect-btn"
+        onclick="if (typeof window.openGoodMarketGetStarted === 'function') { window.openGoodMarketGetStarted(); } else { window.location.href = '/'; }"
+    >
+        Get Started →
+    </button>
+    <p class="swap-connect-foot">
+        Already have a wallet?
+        <a href="#" onclick="if (typeof window.openGoodMarketGetStarted === 'function') { window.openGoodMarketGetStarted(); } else { window.location.href = '/'; } return false;">Log in</a>
+    </p>
+</div>
