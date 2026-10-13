@@ -422,6 +422,74 @@
             transform: none;
         }
 
+        /* ── Guest connect card (occupies the swap-card slot until connected) ── */
+        .swap-connect-card {
+            text-align: center;
+            padding: 0.5rem 0.25rem 0.25rem;
+        }
+        .swap-connect-icon {
+            font-size: 2.4rem;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+        .swap-connect-kicker {
+            display: inline-block;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #b45309;
+            background: rgba(var(--accent-rgb), 0.12);
+            border: 1px solid rgba(var(--accent-rgb), 0.28);
+            border-radius: 999px;
+            padding: 0.2rem 0.7rem;
+            margin-bottom: 0.7rem;
+        }
+        .swap-connect-title {
+            font-family: var(--serif);
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--text);
+            margin: 0 0 0.5rem;
+        }
+        .swap-connect-body {
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: var(--text-dim);
+            max-width: 30rem;
+            margin: 0 auto 1.1rem;
+        }
+        .swap-connect-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #7c3aed, #5b21b6);
+            border: none;
+            border-radius: 16px;
+            color: #fff;
+            font-size: 1rem;
+            font-weight: 700;
+            padding: 1rem;
+            cursor: pointer;
+            font-family: inherit;
+            letter-spacing: 0.02em;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .swap-connect-btn:hover {
+            background: linear-gradient(135deg, #6d28d9, #4c1d95);
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(124,58,237,0.35);
+        }
+        .swap-connect-foot {
+            font-size: 0.82rem;
+            color: var(--text-dim);
+            margin: 0.85rem 0 0;
+        }
+        .swap-connect-foot a {
+            color: #b45309;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        .swap-connect-foot a:hover { text-decoration: underline; }
+
         /* ── Alert ── */
         .alert {
             border-radius: 12px;
@@ -1156,6 +1224,17 @@
         <!-- Swap Card -->
         <div class="swap-card">
 
+            {% if is_guest %}
+            {# Guest: the amount input + "Enter an amount" button are NOT
+               rendered at all until connected — the connect card occupies the
+               swap-card slot (server-side gate, not a CSS hide). #}
+            {% with connect_card_kicker='Connect to swap',
+                    connect_card_title='Swap on Celo',
+                    connect_card_body='Connect or create a free GoodMarket wallet to swap G$, CELO, cUSD and USDT on Uniswap V3. Email + PIN — no app to install.' %}
+            {% include "_swap_connect_card.html" %}
+            {% endwith %}
+            {% else %}
+
             <div class="network-badge">
                 <span class="network-dot"></span>
                 Celo Mainnet · Uniswap V3
@@ -1258,6 +1337,7 @@
             <!-- Alert -->
             <div class="alert" id="swapAlert"></div>
 
+            {% endif %}
         </div>
 
         <!-- Smart Routing Tip -->
@@ -1284,6 +1364,14 @@
         <!-- GoodReserve sub-pane (existing, unchanged content) -->
         <div id="swapPaneReserve" class="goodswap-sub-pane goodswap-sub-pane-reserve hidden-tab">
             <div class="swap-card">
+
+                {% if is_guest %}
+                {% with connect_card_kicker='Connect to swap',
+                        connect_card_title='Buy or sell G$',
+                        connect_card_body='Connect or create a free GoodMarket wallet to buy and sell G$ directly with the GoodDollar Reserve. Email + PIN — no app to install.' %}
+                {% include "_swap_connect_card.html" %}
+                {% endwith %}
+                {% else %}
 
                 <div class="network-badge">
                     <span class="network-dot"></span>
@@ -1385,6 +1473,8 @@
 
                 <!-- Alert -->
                 <div class="alert" id="reserveAlert"></div>
+
+                {% endif %}
             </div>
 
             <!-- Info -->
@@ -1422,6 +1512,14 @@
             <!-- Celo → XDC sub-pane (existing, unchanged content) -->
             <div id="bridgeSubPaneCeloToXdc" class="bridge-sub-pane">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
+
+                {% if is_guest %}
+                {% with connect_card_kicker='Connect to bridge',
+                        connect_card_title='Bridge G$ to XDC',
+                        connect_card_body='Connect or create a free GoodMarket wallet to bridge G$ from Celo to XDC. Email + PIN — no app to install.' %}
+                {% include "_swap_connect_card.html" %}
+                {% endwith %}
+                {% else %}
 
                 <div class="network-badge">
                     <span class="network-dot"></span>
@@ -1507,6 +1605,8 @@
                 </div>
 
                 <div class="alert" id="bridgeAlertCeloToXdc"></div>
+
+                {% endif %}
             </div>
 
             <div class="info-card" style="margin-top:1rem;">
@@ -1528,6 +1628,14 @@
                  ship in PR #353. -->
             <div id="bridgeSubPaneXdcToCelo" class="bridge-sub-pane hidden-tab">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
+
+                {% if is_guest %}
+                {% with connect_card_kicker='Connect to bridge',
+                        connect_card_title='Bridge G$ back to Celo',
+                        connect_card_body='Connect or create a free GoodMarket wallet to bridge G$ from XDC back to Celo. Email + PIN — no app to install.' %}
+                {% include "_swap_connect_card.html" %}
+                {% endwith %}
+                {% else %}
 
                 <div class="network-badge">
                     <span class="network-dot"></span>
@@ -1610,6 +1718,8 @@
                 </div>
 
                 <div class="alert" id="bridgeAlertXdcToCelo"></div>
+
+                {% endif %}
             </div>
 
             <div class="info-card" style="margin-top:1rem;">
@@ -1632,6 +1742,14 @@
                  stablecoin fallback. See docs/JUMPER_LIFI_CELO_SOURCE_FIX_PLAN.md. -->
             <div id="bridgeSubPaneCeloToBase" class="bridge-sub-pane hidden-tab">
             <div class="swap-card" style="border:1px solid rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
+
+                {% if is_guest %}
+                {% with connect_card_kicker='Connect to bridge',
+                        connect_card_title='Bridge Celo → Base ETH',
+                        connect_card_body='Connect or create a free GoodMarket wallet to bridge CELO or a stablecoin to native ETH on Base. Email + PIN — no app to install.' %}
+                {% include "_swap_connect_card.html" %}
+                {% endwith %}
+                {% else %}
 
                 <div class="network-badge">
                     <span class="network-dot"></span>
@@ -1717,6 +1835,8 @@
                 </div>
 
                 <div class="alert" id="lifiBridgeAlert"></div>
+
+                {% endif %}
             </div>
 
             <div class="info-card" style="margin-top:1rem;">
@@ -1814,19 +1934,14 @@
     <script src="{{ url_for('static', filename='js/minipay-nav.js') }}"></script>
 
     {% if is_guest %}
-    <!-- Guest: reuse the homepage "Get Started" connect flow. After a
-         successful connect the user is returned to this exact swap view. -->
+    <!-- Guest: reuse the homepage "Get Started" connect flow. The guest
+         connect card in each swap-card slot is the entry point (it calls
+         openGoodMarketGetStarted()); we deliberately do NOT auto-open the
+         modal on load so the visitor isn't ambushed by a popup. After a
+         successful connect the user is returned to this exact swap view,
+         where the server now renders the real form. -->
     {% set get_started_boot = {'return_to': request.full_path if request else ''} %}
     {% include "_get_started_modal.html" %}
-    <script>
-        // Open the connect modal immediately for guests so a shared swap link
-        // converts instead of dead-ending on a page that needs an account.
-        document.addEventListener('DOMContentLoaded', function () {
-            if (typeof window.openGoodMarketGetStarted === 'function') {
-                window.openGoodMarketGetStarted();
-            }
-        });
-    </script>
     {% endif %}
 </body>
 </html>
