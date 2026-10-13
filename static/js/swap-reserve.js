@@ -30,6 +30,15 @@ const RESERVE_SLIPPAGE_BPS = 50n; // 0.5% safety margin between quote and tx
 
 // Auto-switch to a specific tab if requested via the URL (e.g.
 // ?tab=goodswap, ?tab=bridge, #reserve, etc). Runs once on load.
+//
+// NOTE: the ?tab= / ?pane= / ?dir= query-string case is now resolved
+// SERVER-SIDE in routes.py::_resolve_swap_tab_state() and rendered into the
+// initial HTML, so a deep link never flashes the wrong tab before this bundle
+// loads. This client-side mapping still runs (it produces the identical
+// result) and remains the only handler for HASH links (#bridge), because the
+// browser never sends the fragment to the server. Keep the alias tables in
+// sync with the server.
+//
 // MiniPay users get the same set of sub-tabs (Uniswap V3 here uses
 // CIP-64 fee abstraction). The default landing top tab is the same
 // for everyone (GoodSwap → Uniswap V3); users can switch freely.
