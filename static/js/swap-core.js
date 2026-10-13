@@ -1563,6 +1563,10 @@ function updateUI() {
     const from = TOKENS[fromToken];
     const to   = TOKENS[toToken];
 
+    // Guests get the connect card instead of the swap form, so these
+    // elements are absent — no-op rather than throwing.
+    if (!document.getElementById("fromTokenIcon")) return;
+
     document.getElementById("fromTokenIcon").className   = `token-icon ${from.iconClass}`;
     document.getElementById("fromTokenIcon").textContent = from.iconText;
     document.getElementById("fromTokenSymbol").textContent = from.symbol;
@@ -1597,8 +1601,13 @@ function displayBalances() {
     const fromDp  = TOKENS[fromToken].displayDecimals;
     const toDp    = TOKENS[toToken].displayDecimals;
 
-    document.getElementById("fromBalance").textContent = `${floorToFixed(fromNum, fromDp)} ${TOKENS[fromToken].symbol}`;
-    document.getElementById("toBalance").textContent   = `${floorToFixed(toNum, toDp)} ${TOKENS[toToken].symbol}`;
+    // The swap form (and its balance labels) is not rendered for guests.
+    const fromBalEl = document.getElementById("fromBalance");
+    if (fromBalEl) {
+        const toBalEl = document.getElementById("toBalance");
+        fromBalEl.textContent = `${floorToFixed(fromNum, fromDp)} ${TOKENS[fromToken].symbol}`;
+        if (toBalEl) toBalEl.textContent = `${floorToFixed(toNum, toDp)} ${TOKENS[toToken].symbol}`;
+    }
 
     // Keep the bridge tab balance/summary fresh whenever balances refresh.
     if (typeof updateCeloBridgeBalanceDisplay === "function") {
