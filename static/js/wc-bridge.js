@@ -150,6 +150,15 @@
         return String(method == null ? "" : method).toLowerCase();
     }
 
+    // The WalletConnect expiry guard is only meaningful for a real WC login:
+    // login_method === "walletconnect" AND a session wallet. A guest-facing
+    // page (e.g. /savings for a not-logged-in visitor) must never trip the
+    // "session expired" banner / auto-logout, so both conditions are required.
+    function _shouldRunExpiryGuard() {
+        if (_normLogin(_config.loginMethod) !== 'walletconnect') return false;
+        return !!String(_config.walletAddress || "").trim();
+    }
+
     function _shouldPrefer() {
         return ["walletconnect", "manual", "manual_address"].indexOf(_normLogin(_config.loginMethod)) >= 0;
     }
@@ -1420,7 +1429,10 @@
 
         // Only run for strictly WalletConnect sessions — NOT for injected,
         // manual, or manual_address logins, even if they share the wc-bridge.js file.
-        if (_normLogin(_config.loginMethod) !== 'walletconnect') return;
+        // Also require a configured wallet address: a page that renders for a
+        // guest (no session wallet) must never be told its session "expired"
+        // and auto-logged-out. A real WC login always has both.
+        if (!_shouldRunExpiryGuard()) return;
 
         // Wait until DOM is ready
         if (!document.body) {
@@ -1484,11 +1496,12 @@
         setTimeout(_guardCheck, 1500);
     }
 
-    // Auto-start when configure() is called — strictly WalletConnect only
+    // Auto-start when configure() is called — strictly WalletConnect only,
+    // and only when a session wallet is configured (never for guests).
     var _origConfigure = configure;
     configure = function (opts) {
         _origConfigure(opts);
-        if (_normLogin(_config.loginMethod) === 'walletconnect') _startExpiryGuard();
+        if (_shouldRunExpiryGuard()) _startExpiryGuard();
     };
 
     global.GMWalletConnect = {
