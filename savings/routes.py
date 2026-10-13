@@ -57,7 +57,13 @@ def savings_home():
         walletconnect_sidecar_enabled=wc_sidecar,
         privy_app_id=os.environ.get("PRIVY_APP_ID", ""),
         privy_client_id=os.environ.get("PRIVY_CLIENT_ID", ""),
-        login_method=session.get("login_method", "walletconnect"),
+        # Guests have no session, so there is no login_method. Defaulting to
+        # "walletconnect" here made the page configure GMWalletConnect as a WC
+        # session, which auto-starts wc-bridge.js's expiry guard: with no
+        # stored WC session it decides the session is "expired", shows the red
+        # banner and auto-logouts to "/" — the reported "session expired"
+        # bounce. Empty is correct: the guard only belongs to a real WC login.
+        login_method=session.get("login_method", ""),
     )
 
 
