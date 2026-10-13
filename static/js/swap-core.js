@@ -1260,7 +1260,18 @@ const TOKENS = {
 const UNISWAP_ROUTER   = "0x643770E279d5D0733F21d6DC03A8efbABf3255B4";
 const UNISWAP_PERMIT2  = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const UNISWAP_QUOTER   = "0x82825d0554fA07f7FC52Ab63c961F330fdEFa8E8";
-const FEE_TIERS        = [10000, 3000, 500]; // G$/CELO pool is 1% (10000), try it first
+// Every Uniswap V3 fee tier deployed on Celo. The deepest stablecoin pools
+// (CELO/USDT, CUSD/USDT, CELO/CUSD) live at 0.01% (fee 100) — omitting it made
+// G$/stablecoin quotes fall back to the thin 1% G$ pools and return a fraction
+// of the fair rate. G$'s own pools are 1%, so that tier is still tried; the
+// caller keeps whichever result is best, so order only affects speed.
+const FEE_TIERS        = [100, 500, 3000, 10000];
+
+// Price-impact guard thresholds (percent). A thin pool can return a
+// "successful" quote that pays out a fraction of fair value; the warning shows
+// at/above WARN and the swap requires an explicit confirmation at/above BLOCK.
+const HIGH_IMPACT_WARN_PCT  = 5;
+const HIGH_IMPACT_BLOCK_PCT = 15;
 
 // Voltage Finance on Fuse Mainnet (Uniswap V2-compatible router).
 const FUSE_CHAIN_ID       = Number(window.GM_SWAP_BOOT.fuseChainId);
@@ -1890,9 +1901,12 @@ async function fetchQuote() {
             );
         }
 
-        // Multi-hop: route through cUSD and USDT as intermediates
+        // Multi-hop: route through cUSD and USDT as intermediates.
+        // HOP_FEES must match FEE_TIERS — a missing 0.01% hop cannot reach the
+        // deep CELO/USDT and CUSD/USDT 0.01% pools, which is the whole point
+        // of routing G$ through a stablecoin.
         const INTERMEDIATES = ['CUSD', 'USDT'];
-        const HOP_FEES = [10000, 3000, 500];
+        const HOP_FEES = FEE_TIERS;
         for (const midKey of INTERMEDIATES) {
             if (midKey === fromToken || midKey === toToken) continue;
             const mid = TOKENS[midKey];
@@ -1963,6 +1977,11 @@ async function fetchQuote() {
             return;
         }
 
+        const route = { fee: bestFee, path: bestPath, isMulti: bestIsMulti };
+        const priceImpactPct = await _computePriceImpactPct(
+            quoter, from, to, amountIn, route, bestQuote);
+        if (myReqId !== _quoteRequestId) return;
+
         currentQuote = {
             amountIn,
             amountOut: bestQuote,
@@ -1971,7 +1990,8 @@ async function fetchQuote() {
             isMulti:   bestIsMulti,
             midToken:  bestMidToken,
             fromToken,
-            toToken
+            toToken,
+            priceImpactPct
         };
 
         showQuote(currentQuote);
@@ -1982,6 +2002,20 @@ async function fetchQuote() {
         // newer attempt succeeded). Without this, the bad alert
         // lingers next to a perfectly valid quote.
         clearAlert();
+
+        // Warn on a genuinely bad rate. Previously the impact label was
+        // hardcoded "< 1%", so a thin-pool quote that pays a fraction of fair
+        // value looked normal. Show the measured value and steer the user to a
+        // better route (GoodReserve for G$↔cUSD is far deeper than the 1% pool).
+        if (typeof priceImpactPct === "number" && isFinite(priceImpactPct)
+                && priceImpactPct >= HIGH_IMPACT_WARN_PCT) {
+            const pctTxt = priceImpactPct.toFixed(1);
+            const alt = (fromToken === "GD" && toToken === "CUSD") || (fromToken === "CUSD" && toToken === "GD")
+                ? " Try the <strong>GoodReserve</strong> tab — it swaps G$ ↔ cUSD directly against the protocol and is far deeper."
+                : " Try a smaller amount, or route G$ → cUSD via the <strong>GoodReserve</strong> tab first.";
+            showAlert("alert-warning",
+                `⚠️ <strong>High price impact (~${pctTxt}%)</strong> — this trade is large for the available Uniswap pool, so you'd receive a poor rate.${alt}`);
+        }
 
         // Users who logged in via WalletConnect (or manual address)
         // don't have an injected `window.ethereum`, but we can still
@@ -2018,6 +2052,45 @@ function effectiveSlippage(quote) {
     return (quote && quote.isMulti) ? Math.max(slippage, 2.0) : slippage;
 }
 
+// Quote a specific route (the one the app just chose) at an arbitrary amount.
+// Used to probe the near-spot price for the price-impact calculation so the
+// reference goes through the exact same pools/fees as the real swap.
+async function _quoteRouteOnQuoter(quoter, from, to, amountIn, route) {
+    if (route.isMulti && route.path) {
+        const [out] = await quoter.quoteExactInput.staticCall(route.path, amountIn);
+        return out;
+    }
+    const [out] = await quoter.quoteExactInputSingle.staticCall({
+        tokenIn: from.address,
+        tokenOut: to.address,
+        amountIn: amountIn,
+        fee: route.fee,
+        sqrtPriceLimitX96: 0n
+    });
+    return out;
+}
+
+// Real price impact (percent) for the chosen route. A tiny slice of the SAME
+// route is quoted and scaled up to a near-spot reference; the difference from
+// the actual output is the slippage the thin pool imposes on this size. Returns
+// null when the probe can't be measured, so the UI can show a dash rather than
+// a misleading "< 1%".
+async function _computePriceImpactPct(quoter, from, to, amountIn, route, bestOut) {
+    try {
+        const probeAmount = amountIn / 1000n > 0n ? amountIn / 1000n : 1n;
+        const probeOut = await _quoteRouteOnQuoter(quoter, from, to, probeAmount, route);
+        if (!probeOut || probeOut <= 0n) return null;
+        // Scale the probe output up to the full size without dividing the input
+        // first (integer division would bias the reference downward).
+        const fairOut = probeOut * amountIn / probeAmount;
+        if (fairOut <= 0n) return null;
+        if (bestOut >= fairOut) return 0;
+        return Number(fairOut - bestOut) / Number(fairOut) * 100;
+    } catch (_) {
+        return null;
+    }
+}
+
 function showQuote(quote) {
     const from     = TOKENS[quote.fromToken];
     const to       = TOKENS[quote.toToken];
@@ -2033,7 +2106,22 @@ function showQuote(quote) {
         `1 ${from.symbol} ≈ ${(outHuman / inHuman).toFixed(to.displayDecimals)} ${to.symbol}`;
     document.getElementById("quoteMinOut").textContent =
         `${minOutHuman.toFixed(to.displayDecimals)} ${to.symbol}`;
-    document.getElementById("quotePriceImpact").textContent = "< 1%";
+
+    // Report the measured impact instead of a hardcoded "< 1%". Colour it so a
+    // bad rate is visible before the user signs.
+    const impactEl = document.getElementById("quotePriceImpact");
+    if (impactEl) {
+        const pct = quote.priceImpactPct;
+        if (typeof pct !== "number" || !isFinite(pct)) {
+            impactEl.textContent = "—";
+            impactEl.style.color = "";
+        } else {
+            impactEl.textContent = (pct < 0.1 ? "< 0.1" : pct.toFixed(2)) + "%";
+            impactEl.style.color = pct >= HIGH_IMPACT_BLOCK_PCT ? "#f87171"
+                : pct >= HIGH_IMPACT_WARN_PCT ? "#fcd34d" : "";
+        }
+    }
+
     if (quote.isMulti && quote.midToken) {
         const midSym = TOKENS[quote.midToken].symbol;
         document.getElementById("quotePoolFee").textContent =
@@ -2076,6 +2164,43 @@ async function startSwap() {
     const from  = TOKENS[fromToken];
     const to    = TOKENS[toToken];
     console.log('[swap] swap params:', from.symbol, '->', to.symbol, 'amountIn:', currentQuote.amountIn);
+
+    // High-impact guard: a thin pool can return a "successful" quote that pays
+    // out a fraction of fair value. Require an explicit confirmation before the
+    // wallet is opened for anything at/above the block threshold, so a very bad
+    // rate can't be signed by muscle memory. The finally block resets
+    // _swapInFlight on the early return.
+    const _impact = currentQuote.priceImpactPct;
+    if (typeof _impact === "number" && isFinite(_impact) && _impact >= HIGH_IMPACT_BLOCK_PCT) {
+        const pctTxt = _impact.toFixed(1);
+        const advice = (fromToken === "GD" && toToken === "CUSD") || (fromToken === "CUSD" && toToken === "GD")
+            ? " Consider the GoodReserve tab instead — it swaps G$ ↔ cUSD directly against the protocol and is far deeper."
+            : " Consider a smaller amount, or route G$ → cUSD via the GoodReserve tab first.";
+        let ok = false;
+        if (window.GMTxPreview && typeof GMTxPreview.confirm === "function") {
+            try {
+                await GMTxPreview.confirm({
+                    action: 'swap',
+                    token: from.symbol,
+                    amount: ethers.formatUnits(currentQuote.amountIn, from.decimals),
+                    toLabel: `Uniswap V3 (Celo) — ${from.symbol} → ${to.symbol}`,
+                    network: 'Celo',
+                    warning: `High price impact (~${pctTxt}%). This trade is very large for the available pool and you would receive a poor rate.${advice}`,
+                    note: 'Cancel and try a smaller amount for a better rate.',
+                });
+                ok = true;
+            } catch (e) {
+                ok = false; // includes GMTxPreview.isCancelled(e)
+            }
+        } else {
+            ok = window.confirm(`High price impact (~${pctTxt}%). You would receive a poor rate for this size.${advice}\n\nContinue anyway?`);
+        }
+        if (!ok) {
+            showAlert("alert-warning", `Swap cancelled — price impact was ~${pctTxt}%.${advice}`);
+            setSwapBtnState("ready");
+            return;
+        }
+    }
 
     // MiniPay-only pre-flight: if the user holds CELO but has zero
     // stablecoin balance, MiniPay's CIP-64 fee abstraction has
