@@ -1,0 +1,695 @@
+
+/* ═══════════════════════════════════════════════════════════════════
+   Get Started modal — shared by homepage + guest feature pages.
+   Extracted from homepage.html so the same look ships everywhere.
+   The homepage's :root design tokens (--sheet, --action, --primary, …)
+   drive it; the self-contained fallbacks below keep it readable on pages
+   that use a different palette (wallet / swap dark-purple theme).
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+    --sheet: #ffffff;
+    --sheet-text: #1f1300;
+    --sheet-dim: #6b6257;
+    --sheet-border: rgba(31, 19, 0, 0.14);
+    --primary: #7c3aed;
+    --primary-2: #6d28d9;
+    --primary-text: #ffffff;
+    --action: #fbbf24;
+    --action-2: #f59e0b;
+    --action-text: #1f1300;
+    --card-soft: #f7f1e8;
+}
+        /* Wallet Modal */
+        .wallet-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.55);
+            backdrop-filter: blur(6px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .wallet-modal.active {
+            display: flex;
+        }
+
+        .wallet-modal-content {
+            background: white;
+            border-radius: 20px;
+            padding: 1.25rem;
+            max-width: 440px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2);
+            animation: modalIn 0.25s ease;
+        }
+
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(16px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .modal-header-inner {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+
+        .modal-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #1f2937;
+            margin: 0;
+        }
+
+        .modal-subtitle {
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin: 0;
+        }
+
+        .close-modal {
+            background: #f3f4f6;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            font-size: 1.1rem;
+            cursor: pointer;
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+
+        .close-modal:hover {
+            background: #e5e7eb;
+            color: #1f2937;
+        }
+
+        /* Option cards shown first */
+        .wallet-options {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .wallet-option-card {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.85rem 1rem;
+            border-radius: 14px;
+            border: 2px solid #e5e7eb;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            background: white;
+            text-align: left;
+            width: 100%;
+        }
+
+        .wallet-option-card:hover {
+            border-color: #7c3aed;
+            box-shadow: 0 4px 16px rgba(124, 58, 237, 0.12);
+            transform: translateY(-2px);
+        }
+
+        .wallet-option-card.primary {
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-color: transparent;
+            color: white;
+        }
+
+        .wallet-option-card.primary:hover {
+            box-shadow: 0 8px 20px rgba(16, 185, 129, 0.35);
+            border-color: transparent;
+        }
+
+        /* Blue card — Connect a Wallet */
+        .wallet-option-card.wc-option {
+            background: linear-gradient(135deg, #1d6fe8, #1a56db);
+            border-color: transparent;
+            color: white;
+        }
+
+        .wallet-option-card.wc-option:hover {
+            background: linear-gradient(135deg, #1a56db, #1447c0);
+            box-shadow: 0 8px 24px rgba(29, 111, 232, 0.45);
+            border-color: transparent;
+            transform: translateY(-2px);
+        }
+
+        .option-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.18);
+        }
+
+        .wallet-option-card:not(.primary):not(.wc-option) .option-icon {
+            background: #f3f0ff;
+        }
+
+        .option-text .option-title {
+            font-size: 1rem;
+            font-weight: 800;
+            margin-bottom: 0.15rem;
+            color: white;
+            letter-spacing: -0.01em;
+        }
+
+        .wallet-option-card:not(.primary):not(.wc-option) .option-text .option-title {
+            color: #1f2937;
+        }
+
+        .option-text .option-desc {
+            font-size: 0.78rem;
+            opacity: 0.85;
+            margin: 0;
+            color: rgba(255,255,255,0.9);
+        }
+
+        .wallet-option-card .option-text .option-desc {
+            color: #374151;
+        }
+
+        .option-arrow {
+            margin-left: auto;
+            font-size: 1.1rem;
+            opacity: 0.6;
+            flex-shrink: 0;
+        }
+
+        /* Wallet input form (hidden by default) */
+        .wallet-form {
+            display: none;
+        }
+
+        .wallet-form.visible {
+            display: block;
+        }
+
+        .back-btn {
+            background: none;
+            border: none;
+            color: #7c3aed;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 0;
+            margin-bottom: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .back-btn:hover {
+            color: #6d28d9;
+        }
+
+        .wallet-input-group {
+            margin-bottom: 0.85rem;
+        }
+
+        .wallet-label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+            color: #1f2937;
+            font-size: 0.85rem;
+        }
+
+        .wallet-input {
+            width: 100%;
+            padding: 0.65rem 0.85rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .wallet-input:focus {
+            outline: none;
+            border-color: #7c3aed;
+            box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+        }
+
+        .connect-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: white;
+            border: none;
+            padding: 0.7rem 1rem;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+        }
+
+        .connect-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(124, 58, 237, 0.35);
+        }
+
+        .connect-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .wc-panel-note {
+            margin: 0 0 0.75rem;
+            color: #4b5563;
+            font-size: 0.84rem;
+            line-height: 1.45;
+        }
+
+        /* Local free-account panel */
+        .lw-words {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.4rem;
+            margin: 0.65rem 0;
+        }
+
+        .lw-word {
+            background: #f5f3ff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0.4rem 0.5rem;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: #1f2937;
+            text-align: center;
+        }
+
+        .lw-word span {
+            color: #9ca3af;
+            font-weight: 500;
+            margin-right: 0.3rem;
+            font-size: 0.72rem;
+        }
+
+        .lw-warning {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 10px;
+            padding: 0.6rem 0.75rem;
+            font-size: 0.8rem;
+            color: #92400e;
+            line-height: 1.45;
+            margin-bottom: 0.75rem;
+        }
+
+        /* Recovery-phrase instructions are bold on purpose: the 12 words are
+           the only path back to the funds, and they are never stored here. */
+        .lw-recovery-instruction {
+            background: #fef2f2;
+            border: 2px solid #dc2626;
+            border-radius: 10px;
+            padding: 0.7rem 0.8rem;
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: #991b1b;
+            line-height: 1.5;
+            margin-bottom: 0.7rem;
+        }
+
+        .lw-copy-btn {
+            display: block;
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid #7c3aed;
+            border-radius: 10px;
+            background: #f5f3ff;
+            color: #5b21b6;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .lw-copy-btn:hover { background: #ede9fe; }
+
+        .lw-community-note {
+            margin-top: 0.9rem;
+            text-align: center;
+            font-weight: 700;
+        }
+
+        .lw-community-link {
+            color: #2563eb;
+            font-weight: 700;
+            text-decoration: underline;
+            word-break: break-all;
+        }
+
+        .lw-confirm-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            font-size: 0.84rem;
+            color: #1f2937;
+            margin-bottom: 0.85rem;
+            cursor: pointer;
+            line-height: 1.4;
+        }
+
+        .wc-qr-wrap {
+            display: none;
+            margin-top: 0.75rem;
+            padding: 0.85rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            background: #f9fafb;
+            text-align: center;
+        }
+
+        .wc-qr-code {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 180px;
+            min-height: 180px;
+            padding: 0.55rem;
+            border-radius: 14px;
+            background: #fff;
+            box-shadow: inset 0 0 0 1px #e5e7eb;
+        }
+
+        .wc-qr-code img,
+        .wc-qr-code canvas {
+            display: block;
+            border-radius: 8px;
+        }
+
+        .wc-copy-btn-container {
+            margin-top: 0.75rem;
+        }
+
+        .status-message {
+            margin-top: 0.7rem;
+            padding: 0.65rem 0.85rem;
+            border-radius: 10px;
+            display: none;
+            font-size: 0.85rem;
+        }
+
+        .status-message.error {
+            background: #fee2e2;
+            color: #dc2626;
+            display: block;
+        }
+
+        .status-message.success {
+            background: #dcfce7;
+            color: #16a34a;
+            display: block;
+        }
+
+        .status-message.warning {
+            background: #fffbeb;
+            color: #b45309;
+            border: 1px solid #fcd34d;
+            display: block;
+        }
+
+        .status-message.info {
+            background: rgba(251,191,36,0.12);
+            color: #d97706;
+            border: 1px solid rgba(251,191,36,0.3);
+            display: block;
+        }
+        /* ═══════════════════════════════════════════════════════════════
+           Wallet modal — one recommended (gold) card, everything else calm
+           ═══════════════════════════════════════════════════════════════ */
+        .wallet-modal { background: rgba(5, 8, 22, 0.66); }
+        .wallet-modal-content {
+            background: var(--sheet);
+            border: 1px solid var(--sheet-border);
+            box-shadow: 0 24px 60px rgba(2, 6, 23, 0.5);
+        }
+        .modal-title { color: var(--sheet-text); }
+        .modal-subtitle { color: var(--sheet-dim); }
+        .close-modal { background: #f3f4f6; color: var(--sheet-dim); }
+        .close-modal:hover { background: #e5e7eb; color: var(--sheet-text); }
+
+        /* Calm surface card — the default for every option */
+        .wallet-option-card,
+        .wallet-option-card.wc-option {
+            background: var(--sheet);
+            border: 2px solid var(--sheet-border);
+        }
+        .wallet-option-card:hover,
+        .wallet-option-card.wc-option:hover {
+            border-color: var(--primary);
+            background: #faf7ff;
+            box-shadow: 0 6px 18px rgba(124, 58, 237, 0.14);
+            transform: translateY(-2px);
+        }
+        /* ONE loud card: the recommended create action is G$-gold. */
+        .wallet-option-card.primary {
+            background: linear-gradient(135deg, var(--action), var(--action-2));
+            border-color: transparent;
+        }
+        .wallet-option-card.primary:hover {
+            box-shadow: 0 10px 24px rgba(251, 191, 36, 0.35);
+            border-color: transparent;
+        }
+        .wallet-option-card.primary .option-title,
+        .wallet-option-card.primary .option-desc { color: var(--action-text); }
+        .wallet-option-card.primary .option-desc { opacity: 0.92; }
+        .wallet-option-card.primary .option-icon { background: rgba(31, 19, 0, 0.14); }
+        .wallet-option-card.primary .option-arrow { color: var(--action-text); }
+
+        /* Calm cards keep dark sheet text + violet icon plate */
+        .wallet-option-card.wc-option .option-title,
+        .wallet-option-card.wc-option .option-desc { color: var(--sheet-text); }
+        .wallet-option-card.wc-option .option-desc { opacity: 1; color: var(--sheet-dim); }
+        .wallet-option-card.wc-option .option-icon { background: #f3f0ff; }
+        .wallet-option-card.wc-option .option-arrow { color: var(--primary); }
+
+        .back-btn { color: var(--primary); }
+        .back-btn:hover { color: var(--primary-2); }
+        .wallet-label { color: var(--sheet-text); }
+        .wallet-input { border: 2px solid var(--sheet-border); color: var(--sheet-text); background: #fff; }
+        .wallet-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1); }
+        .connect-btn {
+            background: var(--action);
+            color: var(--action-text);
+            box-shadow: 0 4px 14px rgba(251, 191, 36, 0.3);
+        }
+        .connect-btn:hover { background: var(--action-2); box-shadow: 0 8px 22px rgba(251, 191, 36, 0.4); }
+        .connect-btn:disabled { opacity: 0.55; }
+        .wc-panel-note { color: var(--sheet-dim); }
+
+        /* ── WalletConnect step banner ──
+           Sits directly under the Back button (above the QR) so the live
+           instruction — "Awaiting wallet approval…", "Approve the signature…"
+           — is always the first thing visible without scrolling. */
+        .wc-status-banner {
+            margin-top: 0.6rem;
+            padding: 0.7rem 0.85rem;
+            border-radius: 12px;
+            font-size: 0.86rem;
+            font-weight: 600;
+            line-height: 1.4;
+            text-align: left;
+        }
+        /* The base .status-message is display:none until a state class is set. */
+        .wc-status-banner.error   { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+        .wc-status-banner.success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+        .wc-status-banner.warning { background: #fffbeb; color: #b45309; border: 1px solid #fcd34d; }
+        .wc-status-banner.info    { background: rgba(124, 58, 237, 0.08); color: #5b21b6; border: 1px solid rgba(124, 58, 237, 0.28); }
+
+        /* Progress state shown immediately after "Connect GoodWallet" — a
+           spinner in place of the QR while the session URI is generated. */
+        .wc-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1.6rem 1rem;
+            margin-top: 0.9rem;
+            border: 1px solid var(--sheet-border);
+            border-radius: 16px;
+            background: #f9fafb;
+            text-align: center;
+        }
+        .wc-loading[hidden] { display: none; }
+        .wc-spinner {
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            border: 3px solid rgba(124, 58, 237, 0.22);
+            border-top-color: var(--primary);
+            /* transform-only spin — never animate box-shadow/layout. */
+            animation: wcSpin 0.9s linear infinite;
+        }
+        .wc-loading-text {
+            margin: 0;
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--sheet-text);
+        }
+        .wc-loading-sub {
+            margin: 0;
+            font-size: 0.76rem;
+            color: var(--sheet-dim);
+        }
+        @keyframes wcSpin {
+            to { transform: rotate(360deg); }
+        }
+        .lw-warning {
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            color: #92400e;
+        }
+        .lw-recovery-instruction { color: var(--sheet-text); }
+        .lw-copy-btn {
+            background: var(--primary-soft);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            color: var(--primary-2);
+        }
+        .lw-copy-btn:hover { background: #ede9fe; }
+
+        /* ── New: "you're already in a wallet" detection banner ── */
+        .wallet-detect-banner {
+            display: none;
+            align-items: flex-start;
+            gap: 0.6rem;
+            padding: 0.7rem 0.85rem;
+            margin-bottom: 0.75rem;
+            border-radius: 12px;
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+            color: #065f46;
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+        .wallet-detect-banner.show { display: flex; }
+        .wallet-detect-banner strong { font-weight: 800; }
+        .wallet-detect-banner .wdb-icon { font-size: 1.05rem; flex-shrink: 0; }
+
+        /* ── New: pre-create reminder step ── */
+        .lw-preflight-panel {
+            border: 2px solid #fde68a;
+            background: #fffbeb;
+            border-radius: 14px;
+            padding: 0.95rem 1rem;
+            margin-bottom: 0.85rem;
+        }
+        .lw-preflight-title {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-size: 1rem;
+            font-weight: 800;
+            color: #92400e;
+            margin-bottom: 0.5rem;
+        }
+        .lw-preflight-lead {
+            font-size: 0.84rem;
+            color: #78350f;
+            line-height: 1.5;
+            margin: 0 0 0.7rem;
+        }
+        .lw-preflight-list {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 0.7rem;
+        }
+        .lw-preflight-list li {
+            font-size: 0.84rem;
+            color: #78350f;
+            padding: 0.18rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+        .lw-preflight-alert {
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: #991b1b;
+            line-height: 1.5;
+            margin: 0 0 0.7rem;
+        }
+        .lw-preflight-ack {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.55rem;
+            background: #ffffff;
+            border: 1px solid #fde68a;
+            border-radius: 10px;
+            padding: 0.65rem 0.75rem;
+            margin-bottom: 0.85rem;
+            cursor: pointer;
+            font-size: 0.83rem;
+            font-weight: 600;
+            color: #78350f;
+            line-height: 1.45;
+        }
+        .lw-preflight-ack input { margin-top: 0.15rem; flex-shrink: 0; width: 18px; height: 18px; }
+        .lw-preflight-actions { display: flex; flex-direction: column; gap: 0.5rem; }
+        .lw-preflight-connect {
+            width: 100%;
+            background: var(--sheet);
+            border: 2px solid var(--primary);
+            color: var(--primary-2);
+            padding: 0.7rem 1rem;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .lw-preflight-connect:hover { background: #faf7ff; }
+
+/* ── Navbar "Get Started" button (guest pages) ─────────────────────
+   Shown in the navbar of /swap and /savings when the visitor is not
+   logged in, so closing the modal doesn't leave them with no entry
+   point. Uses the G$ gold action colour (dark text = AA). */
+.gs-nav-cta {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem 0.9rem;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, var(--action), var(--action-2));
+    color: var(--action-text);
+    font-weight: 800;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-family: inherit;
+    transition: filter 0.2s ease;
+}
+.gs-nav-cta:hover { filter: brightness(1.06); }
