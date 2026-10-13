@@ -105,13 +105,15 @@ def download_screenshot(filename: str) -> Optional[bytes]:
         logger.error(f"❌ Error downloading screenshot: {e}")
         return None
 
-def upload_to_imgbb(file) -> dict:
+def upload_to_imgbb(file, expiration: int | None = None) -> dict:
     """
     Upload image to ImgBB and return the URL
-    
+
     Args:
         file: FileStorage object from Flask request.files
-        
+        expiration: optional auto-delete window in seconds (60-15552000). None
+                    keeps the image indefinitely (ImgBB's own default).
+
     Returns:
         dict: {'success': bool, 'url': str, 'error': str}
     """
@@ -163,6 +165,9 @@ def upload_to_imgbb(file) -> dict:
             'image': encoded_image,
             'name': file.filename or 'news_image'
         }
+        # Optional retention window (ImgBB's only API-supported delete path).
+        if expiration:
+            payload['expiration'] = str(int(expiration))
         
         # Upload to ImgBB with retries
         max_retries = 3
