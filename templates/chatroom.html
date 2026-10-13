@@ -95,7 +95,11 @@
             <div class="gm-chat-pane" data-gm-chat-panel>
                 <div class="gm-chat-messages" role="log" aria-live="polite" data-gm-chat-messages></div>
                 <div class="gm-chat-status" data-gm-chat-status></div>
+                <div class="gm-chat-attach-preview" data-gm-chat-attach-preview hidden></div>
                 <form class="gm-chat-form" data-gm-chat-form>
+                    <button type="button" class="gm-chat-attach-btn" data-gm-chat-attach-btn
+                            title="Attach an image" aria-label="Attach an image">📎</button>
+                    <input type="file" accept="image/*" data-gm-chat-file hidden />
                     <input class="gm-chat-input" name="message" type="text" autocomplete="off"
                            maxlength="500" placeholder="Message the community…" data-gm-chat-input />
                     <button type="submit">Send</button>
@@ -108,6 +112,7 @@
        wallet. Local (in-app) logins need ethers + the PIN-decrypted wallet;
        WalletConnect logins need the shared bridge. Loaded here because this
        standalone page has no wallet bundle of its own. #}
+    <div class="gm-chat-drop-hint" data-gm-chat-drop-hint hidden>Drop an image to share it</div>
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
     <script>
