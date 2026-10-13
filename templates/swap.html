@@ -1100,6 +1100,8 @@
             });
         }
     </script>
+    <!-- Shared Get Started modal styles (guest connect flow). -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/get-started.css', v=ASSET_VERSION) }}">
 </head>
 <body>
 
@@ -1107,6 +1109,11 @@
     <nav class="navbar">
         <div class="nav-container">
             <a href="/wallet" class="back-wallet-btn">← Back to Wallet</a>
+            {% if is_guest %}
+            <!-- Persistent connect entry point so closing the modal doesn't
+                 strand a guest — same flow as the homepage. -->
+            <button type="button" class="gs-nav-cta" onclick="openGoodMarketGetStarted()">Get Started</button>
+            {% endif %}
         </div>
     </nav>
 
@@ -1804,6 +1811,22 @@
     <script src="{{ url_for('static', filename='js/swap-core.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/swap-reserve.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/swap-bridge.js', v=ASSET_VERSION) }}"></script>
-<script src="{{ url_for('static', filename='js/minipay-nav.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/minipay-nav.js') }}"></script>
+
+    {% if is_guest %}
+    <!-- Guest: reuse the homepage "Get Started" connect flow. After a
+         successful connect the user is returned to this exact swap view. -->
+    {% set get_started_boot = {'return_to': request.full_path if request else ''} %}
+    {% include "_get_started_modal.html" %}
+    <script>
+        // Open the connect modal immediately for guests so a shared swap link
+        // converts instead of dead-ending on a page that needs an account.
+        document.addEventListener('DOMContentLoaded', function () {
+            if (typeof window.openGoodMarketGetStarted === 'function') {
+                window.openGoodMarketGetStarted();
+            }
+        });
+    </script>
+    {% endif %}
 </body>
 </html>
