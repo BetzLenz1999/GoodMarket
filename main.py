@@ -407,8 +407,11 @@ def _dynamic_service_worker():
       because Werkzeug matches more-specific rules first.
     - Cache-Control is `no-cache` so browsers always revalidate the SW. The
       file is small, so the bandwidth cost is negligible.
-    - `Service-Worker-Allowed` keeps the registration scope at `/static/`
-      (the default for this URL); we don't widen it here.
+    - `Service-Worker-Allowed: /` widens the SW's max scope to the whole
+      origin. The default scope is the SW's own directory (/static/), which
+      would NOT control the manifest's start_url ("/") — and Chrome requires
+      the SW to control both the page and start_url for installability.
+      Registration must still pass `{ scope: '/' }` (see static/js/pwa-install.js).
     """
     sw_path = os.path.join(app.static_folder or "static", "service-worker.js")
     try:
@@ -425,7 +428,7 @@ def _dynamic_service_worker():
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
-    resp.headers["Service-Worker-Allowed"] = "/static/"
+    resp.headers["Service-Worker-Allowed"] = "/"
     return resp
 
 
