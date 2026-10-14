@@ -300,6 +300,44 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         return ['walletconnect', 'manual', 'manual_address'].includes((LOGIN_METHOD || '').toLowerCase());
     }
 
+    // Did the user actually LOG IN with a WalletConnect-family method? This is
+    // the strict signal. `_gmPreferWc()` is broader: it also returns true for a
+    // leftover stored WC session, which must NOT override a real injected login.
+    function _gmWcLoginMethod() {
+        return ['walletconnect', 'manual', 'manual_address'].includes((LOGIN_METHOD || '').toLowerCase());
+    }
+
+    // An injected provider whose ACTIVE account is the session wallet. This is
+    // the discriminator that separates a genuine injected login from a legacy
+    // WalletConnect session mislabeled "injected" (which has no matching
+    // extension and must still recover via WalletConnect).
+    async function _gmInjectedMatchingWallet() {
+        const candidates = _collectInjectedProviders();
+        if (!candidates.length) return null;
+        const want = (WALLET || '').toLowerCase();
+        for (const p of candidates) {
+            try {
+                let accounts = await p.request({ method: 'eth_requestAccounts' });
+                if (!accounts || !accounts.length) accounts = await p.request({ method: 'eth_accounts' });
+                if ((accounts || []).some(a => String(a).toLowerCase() === want)) return p;
+            } catch (_) { /* locked / rejected — try the next provider */ }
+        }
+        return null;
+    }
+
+    // Should a signing flow route through the WalletConnect session? True for a
+    // WC-family login, and for legacy sessions mislabeled "injected" ONLY when
+    // no injected provider holds the session wallet. Without the account check,
+    // a desktop extension user with a leftover WC session was silently routed to
+    // WalletConnect and the extension never received a signature request.
+    async function _gmShouldUseWcSession() {
+        if (_gmWcLoginMethod()) return true;
+        const m = (LOGIN_METHOD || '').toLowerCase();
+        if (m === 'local' || IS_PRIVY_LOGIN) return false;
+        if (await _gmInjectedMatchingWallet()) return false;
+        return _gmPreferWc();
+    }
+
     // Returns an EIP-1193-shaped provider for WC users when no injected
     // provider is available. `null` if the user can't / shouldn't use
     // WalletConnect (e.g. server-side signing, or a regular browser without
@@ -520,11 +558,11 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // MetaMask, MiniPay) we must NOT route through a stale WC session stored in
         // localStorage — doing so silently sends the transaction to the WC relay and
         // no popup ever appears in the wallet app.
-        // _gmPreferWc() is true for WalletConnect/manual logins AND for
-        // pre-existing WC sessions that were mislabeled "injected" before
-        // login_method was persisted — so those users still route through the
-        // WC session instead of an injected MetaMask on a different account.
-        const loginedViaWc = _gmPreferWc();
+        // _gmShouldUseWcSession() is true for WalletConnect/manual logins AND
+        // for pre-existing WC sessions mislabeled "injected" — but ONLY when no
+        // injected provider holds the session wallet, so a desktop extension
+        // user with a leftover session is no longer routed away from MetaMask.
+        const loginedViaWc = await _gmShouldUseWcSession();
         
         const wcTopic = localStorage.getItem('wc_session_topic');
         const wcTimestamp = parseInt(localStorage.getItem('wc_session_timestamp') || '0', 10);
@@ -784,22 +822,29 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         // account and must never be offered.
         if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') return null;
 
-        // WalletConnect / manual-address logins must NEVER use an injected wallet
-        // (e.g. a desktop MetaMask extension): its account differs from the logged-in
-        // GoodMarket wallet, so UBI claim / send / FV signing fail with "Wrong wallet
-        // connected" / "Invalid URL". Block injected discovery so all flows route
-        // through the WalletConnect signer. _gmPreferWc() also recovers
-        // pre-existing WC sessions mislabeled as "injected".
-        if (_gmPreferWc()) return null;
-
         // Re-dispatch EIP-6963 discovery on every call — Trust Wallet mobile
         // and some MetaMask Mobile builds announce only after the dApp asks,
         // and idempotent re-dispatch costs nothing for wallets that don't.
         try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
 
         const candidates = _collectInjectedProviders();
-        if (!candidates.length) return null;
-        return _pickProviderFromCandidates(candidates);
+
+        // A WalletConnect LOGIN must always sign through WalletConnect — never
+        // an injected extension, whose account differs from the logged-in one.
+        const wcFamily = ['walletconnect', 'manual', 'manual_address'].includes((LOGIN_METHOD || '').toLowerCase());
+        if (wcFamily) return null;
+
+        // Injected (default). If the user actually has an extension, use it.
+        // A leftover WC session used to make this return null (routing an
+        // injected user through WalletConnect), which is what left desktop
+        // extension wallets without a signature prompt. An injected provider
+        // now wins over a stale session.
+        if (candidates.length) return _pickProviderFromCandidates(candidates);
+
+        // No injected provider at all — the caller's WalletConnect fallback
+        // recovers a legacy WC session (WC users whose login predates
+        // login_method persistence also report "injected").
+        return null;
     }
 
     // Async variant that tolerates late provider injection. Trust Wallet's
@@ -1433,7 +1478,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         if (IS_PRIVY_LOGIN) {
             ep = await _walletGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
         }
-        if (!ep && _gmPreferWc()) {
+        if (!ep && await _gmShouldUseWcSession()) {
             ep = await _walletGetWcProviderIfPreferred();
         }
         if (!ep) ep = await _vAwaitEthProvider();
@@ -3312,8 +3357,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             }
         }
         // WalletConnect logins must sign via the WC session — an injected
-        // MetaMask on the same browser is a different account.
-        if (_gmPreferWc()) {
+        // MetaMask on the same browser is a different account. A genuine
+        // injected login is NOT diverted here (see _gmShouldUseWcSession).
+        if (await _gmShouldUseWcSession()) {
             const wcProvider = await _walletGetWcProviderIfPreferred();
             if (wcProvider) {
                 const provider = new ethers.BrowserProvider(wcProvider);
@@ -3669,7 +3715,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             ep = GMLocalWallet.getProvider();
         } else if (IS_PRIVY_LOGIN) {
             ep = await _walletGetPrivyProviderIfPreferred({ promptLogin: true, timeoutMs: 10000 });
-        } else if (_gmPreferWc()) {
+        } else if (await _gmShouldUseWcSession()) {
             ep = await _walletGetWcProviderIfPreferred();
         } else {
             ep = await _vAwaitEthProvider();
@@ -4593,7 +4639,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             try {
                 if ((LOGIN_METHOD || '').toLowerCase() === 'local') return null;
                 if (IS_PRIVY_LOGIN) return null;
-                if (_gmPreferWc()) return null;
+                // _getEthProvider() already returns null for WC-family logins
+                // and non-null only for a genuine injected provider, so the
+                // stale-session case needs no extra guard here.
                 return _getEthProvider();
             } catch (_) { return null; }
         }
