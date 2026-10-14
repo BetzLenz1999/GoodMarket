@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from flask import Blueprint, request, jsonify, render_template, session, redirect
+from flask import Blueprint, request, jsonify, render_template, session
 
 from .client import reloadly_client
 from .service import (
@@ -145,15 +145,21 @@ def _require_auth():
 @reloadly_bp.route("/")
 def reloadly_home():
     wallet, verified = _require_auth()
-    if not wallet or not verified:
-        return redirect("/")
-
-    # Human (face) verification gate — all login_methods must be
-    # face-verified on the GoodDollar Identity contract to enter.
-    from human_verification import human_verification_redirect
-    fv_gate = human_verification_redirect(wallet)
-    if fv_gate:
-        return fv_gate
+    # Guests (no session wallet) may view the store instead of being bounced to
+    # the homepage: the shared "Get Started" connect card renders in place of
+    # the tabbed catalogue so a shared /reloadly link still converts. Nothing
+    # can be bought without a connect (every checkout/signing path is session
+    # based), so allowing the view exposes no action.
+    is_guest = not (wallet and verified)
+    if is_guest:
+        wallet = ""
+    else:
+        # Human (face) verification gate — all login_methods must be
+        # face-verified on the GoodDollar Identity contract to enter.
+        from human_verification import human_verification_redirect
+        fv_gate = human_verification_redirect(wallet)
+        if fv_gate:
+            return fv_gate
 
     import os
     gd_price = get_gd_usd_price()
@@ -163,13 +169,14 @@ def reloadly_home():
     return render_template(
         "reloadly.html",
         wallet=wallet,
+        is_guest=is_guest,
         gd_price=gd_price,
         is_sandbox=reloadly_client.is_sandbox,
         merchant_address=os.getenv("MERCHANT_ADDRESS", ""),
         gd_contract=os.getenv("GOODDOLLAR_CONTRACT", "0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A"),
         walletconnect_project_id=os.getenv("WALLETCONNECT_PROJECT_ID", ""),
         walletconnect_sidecar_enabled=wc_sidecar,
-        login_method=session.get("login_method", "walletconnect"),
+        login_method=session.get("login_method", ""),
         privy_app_id=os.getenv("PRIVY_APP_ID", ""),
         privy_client_id=os.getenv("PRIVY_CLIENT_ID", ""),
     )
