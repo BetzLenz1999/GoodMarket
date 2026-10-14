@@ -303,6 +303,14 @@
   margin-bottom: 12px;
 }
 
+.gm-chat-tip-signer {
+  color: #86efac;
+  font-size: 12px;
+  font-weight: 600;
+  margin: -6px 0 10px;
+}
+.gm-chat-tip-signer[hidden] { display: none; }
+
 .gm-chat-tip-row { display: flex; gap: 8px; margin-bottom: 10px; }
 
 .gm-chat-tip-row select,
