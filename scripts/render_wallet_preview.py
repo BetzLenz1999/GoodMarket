@@ -47,6 +47,8 @@ def main():
         # Rendered ON so the connect-dApp surfaces can be inspected; the live
         # app keeps dapp_connect_feature hidden by default.
         dapp_connect_visible=True,
+        # Rendered ON so the one-time "Install app" banner can be inspected.
+        pwa_installable=True,
     )
     out = os.path.join(OUT, "wallet.html")
     with open(out, "w", encoding="utf-8") as fh:
