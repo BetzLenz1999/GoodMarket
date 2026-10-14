@@ -27,6 +27,8 @@
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
     <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
     <link rel="apple-touch-icon" href="/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}">
+    <!-- Shared "Install app" (PWA) banner styles. -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pwa-install.css', v=ASSET_VERSION) }}">
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -2190,6 +2192,10 @@
     <!-- ethers.js for in-browser wallet generation (local self-custodial accounts) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+    <!-- Shared PWA install + service-worker module. Registers the SW at root
+         scope (so it controls "/", the manifest start_url) and drives the
+         "Install app" banner via data-gm-pwa-* attributes. -->
+    <script src="{{ url_for('static', filename='js/pwa-install.js', v=ASSET_VERSION) }}"></script>
     <script>
         if (typeof GMWalletConnect !== "undefined") {
             GMWalletConnect.configure({
@@ -2242,6 +2248,28 @@
     <!-- "How to connect" guidance for new visitors. Dismissible; shown
          once per browser via localStorage. Self-contained styles. -->
     {% include "_wallet_guide_banner.html" %}
+
+    {% if pwa_installable %}
+    <!-- ── Install GoodMarket app (homepage entry point) ──
+         Persistent (until installed or dismissed) so any visitor who wants the
+         app can install it. Revealed by static/js/pwa-install.js
+         (data-gm-pwa-* contract); starts display:none so it cannot flash before
+         the installed-state check. Hidden entirely when already installed. -->
+    <div id="pwaInstallBannerHome" class="gm-pwa-banner" data-gm-pwa-banner
+         data-gm-pwa-mode="persistent" data-gm-pwa-key="home"
+         role="region" aria-label="Install the GoodMarket app">
+        <div class="gm-pwa-icon" aria-hidden="true">📲</div>
+        <div class="gm-pwa-body">
+            <div class="gm-pwa-title">Install the GoodMarket app</div>
+            <div class="gm-pwa-copy">Add GoodMarket to your home screen for one-tap access — no need to type the address again. Works on Android and iPhone.</div>
+        </div>
+        <div class="gm-pwa-actions">
+            <button type="button" class="gm-pwa-install-btn" data-gm-pwa-install>⬇️ Install app</button>
+            <button type="button" class="gm-pwa-dismiss-btn" data-gm-pwa-dismiss aria-label="Dismiss install prompt">×</button>
+        </div>
+        <div class="gm-pwa-status" id="pwaInstallStatusHome" data-gm-pwa-status role="status" aria-live="polite"></div>
+    </div>
+    {% endif %}
 
     <!-- Hero Section -->
     <section class="hero-section" id="overview">
