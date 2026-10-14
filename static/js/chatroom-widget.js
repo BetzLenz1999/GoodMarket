@@ -1,7 +1,10 @@
 // Public Community Chatroom widget — SEPARATE from the GoodMarket Agent.
 //
-// Own floating launcher + panel. Opens automatically on page load and polls
-// on a fast, adaptive interval so a new message shows up within ~1s.
+// Own floating launcher + panel. The panel is CLOSED on load: it is a big
+// overlay on a phone and used to cover the wallet balance card before the user
+// touched anything, so it now opens only when they tap the launcher.
+//
+// Polls on a fast, adaptive interval so a new message shows up within ~1s.
 //
 // Why not SSE / WebSocket: the app runs gunicorn with `gthread` (4 workers ×
 // 4 threads = 16 concurrent slots). A held-open SSE connection would pin one
@@ -17,6 +20,20 @@
   var POLL_IDLE_MS = 5000;
   var POLL_MAX_MS = 15000;      // backoff ceiling after repeated failures
   var MAX_MESSAGE_LEN = 500;
+
+  // Remembers that the user collapsed the room, so a page load does not
+  // re-open the panel over the wallet. Session-scoped on purpose.
+  var COLLAPSED_KEY = 'gmChatCollapsed_v1';
+
+  function readCollapsed() {
+    try { return window.sessionStorage.getItem(COLLAPSED_KEY) === '1'; }
+    catch (_) { return false; }
+  }
+
+  function writeCollapsed() {
+    try { window.sessionStorage.setItem(COLLAPSED_KEY, '1'); }
+    catch (_) { /* private mode — just do not remember */ }
+  }
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
@@ -734,12 +751,18 @@
     function setOpen(next) {
       open = !!next;
       panel.hidden = !open;
-      if (toggle) toggle.hidden = open;
+      if (toggle) {
+        toggle.hidden = open;
+        // Keep the disclosure state truthful — the launcher owns the panel.
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
       if (open) {
         unread = 0;
         renderBadge();
         // Opening is the moment the user reads the room.
         if (input) setTimeout(function () { try { input.focus(); } catch (_) {} }, 0);
+      } else {
+        writeCollapsed();
       }
       restart();
     }
@@ -984,9 +1007,32 @@
       if (!document.hidden && !stopped) restart();
     });
 
-    // Auto-open on load — the room is the point of the widget, so a collapsed
-    // launcher would just hide it.
-    setOpen(opts.autoOpen !== false);
+    // The panel is a large overlay on a phone, so it starts CLOSED and opens
+    // only on an explicit tap of the launcher. The standalone /chatroom page
+    // owns the whole viewport and has no launcher, so there the panel IS the
+    // page and still opens directly. A remembered collapse is likewise only
+    // meaningful where a launcher exists to re-open it.
+    var hasLauncher = !!toggle;
+    setOpen(opts.autoOpen === true && !(hasLauncher && readCollapsed()));
+
+    // Dismiss affordances — launcher-based widget only. On /chatroom there is
+    // nothing to re-open the pane, so closing it would blank the page.
+    if (hasLauncher) {
+      document.addEventListener('keydown', function (event) {
+        if (!open) return;
+        if (event.key === 'Escape' || event.key === 'Esc') setOpen(false);
+      });
+      document.addEventListener('pointerdown', function (event) {
+        if (!open) return;
+        var t = event.target;
+        if (!t || !t.closest) return;
+        // Taps inside the panel (and its tip modal) or on the launcher keep it
+        // open; anything else on the page dismisses it.
+        if (t.closest('.gm-chat-panel') || t.closest('.gm-chat-toggle')) return;
+        if (t.closest('[data-gm-tip-modal]')) return;
+        setOpen(false);
+      });
+    }
 
     return {
       start: start,
