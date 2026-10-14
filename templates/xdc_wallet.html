@@ -801,12 +801,12 @@
         <div class="card" style="border-color: rgba(167,139,250,0.35); background: linear-gradient(135deg, rgba(124,58,237,0.12), rgba(37,99,235,0.05));">
             <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
                 <span>🌉 Bridge G$ (XDC → Celo)</span>
-                <span style="font-size:0.72rem;color:#7a6a52;font-weight:600;">Moved to GoodSwap</span>
+                <span style="font-size:0.72rem;color:#7a6a52;font-weight:600;">Moved to Swap</span>
             </div>
 
             <div class="info-box" style="margin-bottom:1rem; line-height:1.65;">
                 The XDC → Celo bridge has moved to the unified
-                <strong>Bridge</strong> tab on GoodSwap, alongside Celo → XDC.
+                <strong>Bridge</strong> tab on the Swap page, alongside Celo → XDC.
                 Same minimum (2,000 G$), same fees, same itemized errors —
                 just one place for both directions.
             </div>
@@ -2633,6 +2633,48 @@
                         }
                     }
                     // User rejected or other error - proceed anyway, tx will still go to XDC
+                }
+
+                // Proactive RPC repair: users who added XDC months ago may still
+                // point at a dead/flaky legacy RPC (rpc.xinfin.network /
+                // erpc.xinfin.network). Probe the WALLET'S OWN XDC RPC with a
+                // trivial read; if it can't answer, offer to update it to our
+                // healthy list BEFORE the fee field goes red. Declining is fine
+                // — we still attempt the tx below. A JSON-RPC *revert* counts
+                // as healthy (the endpoint answered); only a transport failure
+                // means the RPC is dead.
+                try {
+                    const probe = await ep.request({ method: 'eth_blockNumber', params: [] });
+                    if (!(typeof probe === 'string' && probe.startsWith('0x'))) {
+                        throw new Error('unhealthy');
+                    }
+                } catch (probeErr) {
+                    const probeCode = probeErr && (probeErr.code ?? (probeErr.data && probeErr.data.code));
+                    const probeMsg = ((probeErr && (probeErr.shortMessage || probeErr.message)) || '').toLowerCase();
+                    const probeTransport = probeMsg.includes('failed to fetch')
+                        || probeMsg.includes('timeout') || probeMsg.includes('timed out')
+                        || probeMsg.includes('too many errors') || probeMsg.includes('502')
+                        || probeMsg.includes('503') || probeMsg.includes('504')
+                        || probeMsg.includes('bad gateway') || probeMsg.includes('<html');
+                    if (typeof probeCode === 'number' && !probeTransport) {
+                        // RPC is alive; nothing to repair.
+                    } else {
+                        try {
+                            await ep.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [{
+                                    chainId: XDC_CHAIN_ID_HEX,
+                                    chainName: 'XDC Network',
+                                    rpcUrls: ['https://earpc.xinfin.network', 'https://rpc.ankr.com/xdc', 'https://erpc.xdcrpc.com'],
+                                    nativeCurrency: { name: 'XDC', symbol: 'XDC', decimals: 18 },
+                                    blockExplorerUrls: ['https://xdcscan.com']
+                                }]
+                            });
+                            await new Promise(resolve => setTimeout(resolve, 1200));
+                        } catch (rpcFixErr) {
+                            console.warn('[xdc-wallet] XDC RPC repair declined/failed:', rpcFixErr);
+                        }
+                    }
                 }
                 
                 // Estimate gas for the real claim() calldata and send it with
