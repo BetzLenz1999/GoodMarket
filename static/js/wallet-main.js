@@ -5144,16 +5144,87 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const split = combined.networks
                 .map(n => `${label(n)} ${(claims[n] && claims[n].claimable_formatted) || '0.00'}`)
                 .join(' + ');
+            // The hint stays short (the split only) — the wallet note below the
+            // card carries the "claimed together" explanation. Keeping this to one
+            // line is what lets the whole modal fit without scrolling on small phones.
             return `
                 <div class="claim-network-card is-selected is-unified">
                     <div class="claim-network-main">
                         <div class="claim-network-icon">🟢💠</div>
                         <div>
                             <div class="claim-network-name">Celo + XDC</div>
-                            <div class="claim-network-hint">${_claimEsc(split + ' G$ — claimed together in one PIN-authorized action.')}</div>
+                            <div class="claim-network-hint">${_claimEsc(split + ' G$')}</div>
                         </div>
                     </div>
                     <div class="claim-network-status available">${_claimEsc(combined.total_formatted + ' G$')}</div>
+                </div>`;
+        }
+
+        // ONE card for every local (in-app wallet) claim state. `claimUnifiedCardHtml`
+        // handles the happy path (both legs claimable and confidently read); this is
+        // the adaptive fallback so a local login NEVER sees two competing network
+        // cards — the in-app wallet claims Celo + XDC in one PIN-authorized action,
+        // so two cards would imply two separate actions. It NEVER invents a total:
+        // an unreadable leg is named in the sub-line, never silently counted as 0.
+        function claimLocalCardHtml(claims) {
+            const label = n => (n === 'xdc' ? 'XDC' : 'Celo');
+            const info = n => (claims && claims[n]) || {};
+            const readable = n => info(n).success !== false && info(n).is_available !== false;
+            const claimable = n => readable(n) && !!info(n).can_claim;
+            const amountOf = n => {
+                const c = info(n);
+                return c.claimable_formatted || c.entitlement_formatted
+                    || (c.claimable ? Number(c.claimable).toFixed(2) : '0.00');
+            };
+            const whyNot = n => {
+                const c = info(n);
+                if (c.reason === 'ubi_paused') return `${label(n)} is paused`;
+                if (c.reason === 'ubi_not_started') return `${label(n)} hasn't started yet`;
+                if (c.success === false) return `couldn't check ${label(n)} — we'll retry`;
+                if (c.is_available === false) return `${label(n)} is unavailable right now`;
+                if (c.reason === 'not_verified' || c.reason === 're_verification_needed'
+                    || c.blocked_by === 'celo_identity_verification') return 'verify Face ID to unlock';
+                return `${label(n)} already claimed today`;
+            };
+
+            const picked = ['celo', 'xdc'].filter(claimable);
+            let name = 'Celo + XDC';
+            let statusText = 'Nothing to claim';
+            let statusClass = 'claimed';
+            let hint;
+
+            if (picked.length) {
+                const total = picked.reduce((sum, n) => sum + Number(info(n).claimable || 0), 0);
+                statusText = total.toFixed(2) + ' G$';
+                statusClass = 'available';
+                if (picked.length >= 2) {
+                    hint = picked.map(n => `${label(n)} ${amountOf(n)}`).join(' + ') + ' G$';
+                } else {
+                    name = label(picked[0]);
+                    hint = `${amountOf(picked[0])} G$ available. `
+                        + ['celo', 'xdc'].filter(n => n !== picked[0]).map(whyNot).join(' · ');
+                }
+            } else {
+                hint = ['celo', 'xdc'].map(whyNot).join(' · ');
+                if (['celo', 'xdc'].some(n => info(n).reason === 'ubi_paused')) {
+                    statusText = 'Paused'; statusClass = 'warning';
+                } else if (['celo', 'xdc'].some(n => info(n).reason === 'ubi_not_started')) {
+                    statusText = 'Not Started'; statusClass = 'warning';
+                } else if (['celo', 'xdc'].some(n => !readable(n))) {
+                    statusText = 'Unavailable'; statusClass = 'warning';
+                }
+            }
+
+            return `
+                <div class="claim-network-card is-unified${picked.length ? ' is-selected' : ''}">
+                    <div class="claim-network-main">
+                        <div class="claim-network-icon">🟢💠</div>
+                        <div>
+                            <div class="claim-network-name">${_claimEsc(name)}</div>
+                            <div class="claim-network-hint">${_claimEsc(hint)}</div>
+                        </div>
+                    </div>
+                    <div class="claim-network-status ${statusClass}">${_claimEsc(statusText)}</div>
                 </div>`;
         }
 
@@ -5241,10 +5312,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             const caps = getClaimWalletCapabilities();
             const claims = claimAvailability.claims || {};
             const unified = _unifiedLocalClaimTotal();
-            if (unified) {
-                // Local login with both networks claimable: one summary card,
-                // one action. No per-network claim buttons.
-                list.innerHTML = claimUnifiedCardHtml(unified, claims);
+            if (_isUnifiedLocalUbiClaim()) {
+                // Local login (in-app GoodMarket wallet): ALWAYS exactly one card.
+                // The unified amount when both legs are claimable + confidently
+                // read; otherwise an adaptive single card that names whatever is
+                // blocking the other leg. Two cards here would imply two separate
+                // actions, but the wallet claims Celo + XDC in one PIN action.
+                list.innerHTML = unified
+                    ? claimUnifiedCardHtml(unified, claims)
+                    : claimLocalCardHtml(claims);
             } else {
                 list.innerHTML = ['celo', 'xdc'].map(n => claimNetworkStatusHtml(n, claims[n] || {}, caps)).join('');
             }
@@ -5254,7 +5330,9 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 } else if (caps.isTrustWallet) {
                     note.textContent = 'Trust Wallet network prompts can be unreliable for XDC. Use MetaMask or compatible WalletConnect for XDC.';
                 } else if (unified) {
-                    note.textContent = 'Your in-app GoodMarket wallet will claim both available Celo and XDC UBI in one PIN-authorized action.';
+                    note.textContent = 'Both networks are claimed together in one PIN-authorized action.';
+                } else if (_isUnifiedLocalUbiClaim()) {
+                    note.textContent = 'Your in-app GoodMarket wallet handles Celo and XDC together.';
                 } else if (selectedClaimNetwork) {
                     note.textContent = `You chose ${selectedClaimNetwork.toUpperCase()}. Tap its button again to claim, or pick another network.`;
                 } else {
@@ -5577,7 +5655,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                     if (note) {
                         note.textContent = d.paused
                             ? 'The GoodDollar UBI pool is currently paused — figures are the last known values.'
-                            : 'Live figures from the GoodDollar UBI pool — the same ones shown on GoodDapp.';
+                            : 'Live figures from the GoodDollar UBI pool.';
                     }
                     if (live) {
                         live.textContent = d.paused ? 'Paused' : 'Live';
