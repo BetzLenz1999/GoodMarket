@@ -573,16 +573,34 @@
             });
         }
     </script>
+    <!-- Shared Get Started modal styles (guest connect flow). -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/get-started.css', v=ASSET_VERSION) }}">
 </head>
 <body>
+<script>window.GM_RELOADLY_GUEST = {% if is_guest %}true{% else %}false{% endif %};</script>
 
 <div class="top-bar">
     <a href="/wallet"><i class="fas fa-arrow-left"></i> Back to Wallet</a>
     <h1>GoodMarket Store</h1>
     {% if is_sandbox %}<span class="sandbox-badge">SANDBOX</span>{% endif %}
     <div class="gd-rate">1 G$ ≈ <span id="liveGdRate">${{ "%.6f"|format(gd_price) }}</span> <span style="font-size:9px;color:#15803d;opacity:0.8" id="rateSource">CoinGecko</span></div>
+    {% if is_guest %}
+    <!-- Persistent connect entry point so closing the modal doesn't strand a
+         guest — same flow as the homepage. -->
+    <button type="button" class="gs-nav-cta" onclick="openGoodMarketGetStarted()">Get Started</button>
+    {% endif %}
 </div>
 
+{% if is_guest %}
+<div class="tab-content active" style="display:block">
+    {% with guest_card_icon='🛍️',
+            guest_card_kicker='Connect to shop',
+            guest_card_title='Shop with G$',
+            guest_card_body='Connect or create a free GoodMarket wallet to buy mobile airtime, gift cards and more with G$. Email + PIN — no app to install.' %}
+    {% include "_guest_connect_card.html" %}
+    {% endwith %}
+</div>
+{% else %}
 <div class="tabs">
     <button class="tab-btn active" onclick="switchTab('topup', this)"><i class="fas fa-mobile-alt"></i> Mobile Top-Up</button>
     <button class="tab-btn" onclick="switchTab('virtualcard', this)"><i class="fas fa-credit-card"></i> Virtual Card</button>
@@ -751,6 +769,7 @@
         <div id="orderList"><div class="loading"><i class="fas fa-spinner"></i></div></div>
     </div>
 </div>
+{% endif %}
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      PAYMENT MODAL
@@ -2877,6 +2896,7 @@ function initiateUtility() {
 // ─── ORDERS ───────────────────────────────────────────────────────────────────
 async function loadOrders() {
     const list = document.getElementById('orderList');
+    if (!list) return;   // guest view renders the connect card, not the orders tab
     list.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading history…</div>';
     try {
         const data = await apiFetch('/reloadly/api/orders');
@@ -3116,6 +3136,9 @@ async function applyAiMobileLoad(action) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Guest view renders only the shared "Get Started" connect card — the
+    // tabbed catalogue is not in the DOM, so skip every init that expects it.
+    if (window.GM_RELOADLY_GUEST) return;
     applyStoreVisibility();
     loadOrders();
     handleTabHash();
@@ -3123,5 +3146,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 window.addEventListener('hashchange', handleTabHash);
 </script>
+
+{% if is_guest %}
+<!-- Guest: reuse the homepage "Get Started" connect flow. The guest connect
+     card is the entry point (it calls openGoodMarketGetStarted()). After a
+     successful connect the user is returned to this exact store page, where
+     the server renders the real catalogue. -->
+{% set get_started_boot = {'return_to': request.full_path if request else ''} %}
+{% include "_get_started_modal.html" %}
+{% endif %}
 </body>
 </html>
