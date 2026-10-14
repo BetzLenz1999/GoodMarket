@@ -1,0 +1,34 @@
+{# Generic guest "Get Started" connect card for feature pages.
+
+   Shown when a not-logged-in visitor opens a feature page (/farming,
+   /reloadly, /learn-earn, /community-stories) instead of bouncing them to the
+   homepage — the same pattern already used on /swap and /savings.
+
+   The button opens the shared homepage connect modal through the public
+   `openGoodMarketGetStarted()` entry point (single source of truth for the
+   create / log-in / WalletConnect flow). On success the connect flow returns
+   the user to this exact page (`get_started_boot.return_to`), where the server
+   now renders the real feature.
+
+   Optional per-page copy via context vars (set with a Jinja `{% with %}`):
+   `guest_card_icon`, `guest_card_kicker`, `guest_card_title`,
+   `guest_card_body`, `guest_card_button`. #}
+<div class="gm-guest-connect-card">
+    <div class="gm-guest-connect-icon" aria-hidden="true">{{ guest_card_icon|default('👋') }}</div>
+    <div class="gm-guest-connect-kicker">{{ guest_card_kicker|default('Connect to continue') }}</div>
+    <h2 class="gm-guest-connect-title">{{ guest_card_title|default('Connect your GoodMarket wallet') }}</h2>
+    <p class="gm-guest-connect-body">
+        {{ guest_card_body|default('Connect or create a free GoodMarket wallet to continue — email + PIN, no app to install. Your keys stay on your device.') }}
+    </p>
+    <button
+        type="button"
+        class="gm-guest-connect-btn"
+        onclick="if (typeof window.openGoodMarketGetStarted === 'function') { window.openGoodMarketGetStarted(); } else { window.location.href = '/'; }"
+    >
+        {{ guest_card_button|default('Get Started →') }}
+    </button>
+    <p class="gm-guest-connect-foot">
+        Already have a wallet?
+        <a href="#" onclick="if (typeof window.openGoodMarketGetStarted === 'function') { window.openGoodMarketGetStarted(); } else { window.location.href = '/'; } return false;">Log in</a>
+    </p>
+</div>
