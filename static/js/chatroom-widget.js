@@ -177,6 +177,9 @@
   var TIP_GAS_CEILING = { celo: 600000n, xdc: 900000n };
   var TIP_SIGN_TIMEOUT_MS = 120000;
   var tipBusy = false;
+  // Human label of the signer the tip will use ("MetaMask", "WalletConnect"…),
+  // surfaced on the sheet so a user can see what will be prompted.
+  var TIP_SIGNER = '';
 
   // EIP-1193 errors are not uniform: MetaMask and friends often nest the real
   // code under `cause` / `data.originalError`, so a bare `err.code` check misses
@@ -278,6 +281,171 @@
     } catch (_) { return false; }
   }
 
+  // A WalletConnect-family LOGIN. This is the only signal that should route a
+  // tip to the WC bridge up front — `_prefersWc()` is broader (it also returns
+  // true for a leftover stored WC session), and using it here routed injected
+  // users with a stale session away from their extension.
+  function _isWcLogin() {
+    var m = (TIP_BOOT.loginMethod || '').toLowerCase();
+    return m === 'walletconnect' || m === 'manual' || m === 'manual_address';
+  }
+
+  function _hasWcSession() {
+    try {
+      if (typeof GMWalletConnect === 'undefined') return false;
+      if (typeof GMWalletConnect.hasStoredSession === 'function') {
+        return !!GMWalletConnect.hasStoredSession(TIP_BOOT.wallet);
+      }
+      return _prefersWc();
+    } catch (_) { return false; }
+  }
+
+  // EIP-6963 discovery. wallet-main.js seeds window.__announced6963Providers on
+  // the wallet page; the standalone /chatroom page loads no wallet bundle, so
+  // the widget seeds its own listener here. Without this the tip could only see
+  // `window.ethereum` (last-writer-wins) and picked the wrong extension.
+  (function _initTip6963() {
+    try {
+      window.__announced6963Providers = window.__announced6963Providers || [];
+      window.addEventListener('eip6963:announceProvider', function (event) {
+        var detail = event && event.detail;
+        if (!detail || !detail.provider) return;
+        var uuid = detail.info && detail.info.uuid;
+        var already = window.__announced6963Providers.find(function (d) {
+          return (d.info && d.info.uuid && uuid && d.info.uuid === uuid) || d.provider === detail.provider;
+        });
+        if (!already) window.__announced6963Providers.push(detail);
+      });
+      try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+    } catch (_) { /* older browsers / strict CSPs */ }
+  })();
+
+  function _tipInjectedCandidates() {
+    var out = [];
+    var push = function (p) {
+      if (!p) return;
+      if (typeof p.request !== 'function') {
+        if (p.ethereum && typeof p.ethereum.request === 'function') p = p.ethereum;
+        else if (p.provider && typeof p.provider.request === 'function') p = p.provider;
+        else return;
+      }
+      if (out.indexOf(p) < 0) out.push(p);
+    };
+    if (typeof window.ethereum !== 'undefined') {
+      if (Array.isArray(window.ethereum.providers)) window.ethereum.providers.forEach(push);
+      push(window.ethereum);
+    }
+    push(window.trustwallet);
+    push(window.trustWallet);
+    var announced = Array.isArray(window.__announced6963Providers) ? window.__announced6963Providers : [];
+    for (var i = 0; i < announced.length; i++) push(announced[i] && announced[i].provider);
+    return out;
+  }
+
+  function _tipProviderLabel(p) {
+    if (!p) return 'your wallet';
+    if (p.isMiniPay) return 'MiniPay';
+    if (p.isTrust || p.isTrustWallet) return 'Trust Wallet';
+    if (p.isCoinbaseWallet) return 'Coinbase Wallet';
+    if (p.isBraveWallet) return 'Brave Wallet';
+    if (p.isMetaMask) return 'MetaMask';
+    return 'your browser wallet';
+  }
+
+  // Bind to the account that actually holds the GoodMarket wallet. `window.ethereum`
+  // is last-writer-wins, so with two extensions installed (or a late-injecting
+  // one) the bare global points at the wrong account and the extension holding
+  // the funds is never prompted. Ask EVERY candidate for its accounts and use
+  // the one that matches.
+  async function _tipResolveInjected() {
+    var candidates = _tipInjectedCandidates();
+    if (!candidates.length) {
+      try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+      candidates = _tipInjectedCandidates();
+    }
+    var wanted = (TIP_BOOT.wallet || '').toLowerCase();
+    var first = null;
+    for (var i = 0; i < candidates.length; i++) {
+      var p = candidates[i];
+      if (!first) first = p;
+      var accounts = [];
+      try { accounts = await p.request({ method: 'eth_requestAccounts' }) || []; } catch (_) {}
+      if (!accounts.length) {
+        try { accounts = await p.request({ method: 'eth_accounts' }) || []; } catch (_) {}
+      }
+      if (!wanted) return p;  // no session wallet to match — use the first
+      for (var j = 0; j < accounts.length; j++) {
+        if (String(accounts[j]).toLowerCase() === wanted) {
+          TIP_SIGNER = _tipProviderLabel(p);
+          return p;
+        }
+      }
+    }
+    if (first && !wanted) return first;
+    if (candidates.length && wanted) {
+      // An extension exists but none holds the session wallet — name it so the
+      // user knows to switch accounts rather than seeing a WalletConnect error.
+      throw new Error('Wrong wallet connected. ' + _tipProviderLabel(first)
+        + ' has a different account selected — open it and switch to your GoodMarket wallet, then try again.');
+    }
+    return null;
+  }
+
+  // Resolve an EIP-1193 provider for THIS login method. Local logins must never
+  // fall through to an injected extension (a different account entirely).
+  async function _tipProvider() {
+    if (_isLocalLogin()) {
+      if (typeof GMLocalWallet === 'undefined') {
+        throw new Error('Your in-app wallet is still loading. Please try again.');
+      }
+      if (typeof ethers === 'undefined') {
+        var loaded = await _ensureEthers();
+        if (!loaded) throw new Error('Could not load the wallet library. Please check your connection and try again.');
+      }
+      if (!GMLocalWallet.isUnlocked() && typeof window._lwOpenUnlockModal === 'function') {
+        await window._lwOpenUnlockModal({
+          title: 'Sign this tip',
+          subtitle: 'Enter your PIN to send your tip',
+          submitLabel: 'Sign & Send',
+          busyLabel: 'Signing…'
+        });
+      }
+      if (!GMLocalWallet.isUnlocked()) {
+        throw new Error('Your wallet is still locked. Please enter your PIN to send the tip.');
+      }
+      TIP_SIGNER = 'In-app wallet';
+      return GMLocalWallet.getProvider();
+    }
+
+    // Privy wallets are exposed by wallet-main.js as GMPrivyWallets.
+    var privy = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
+    for (var i = 0; i < privy.length; i++) {
+      if (privy[i] && privy[i].provider && typeof privy[i].provider.request === 'function') {
+        TIP_SIGNER = 'Privy wallet';
+        return privy[i].provider;
+      }
+    }
+
+    // A WalletConnect LOGIN signs through the WC session (unchanged).
+    if (_isWcLogin() && typeof GMWalletConnect !== 'undefined') {
+      TIP_SIGNER = 'WalletConnect';
+      return await GMWalletConnect.getProvider();
+    }
+
+    // Injected (default). Prefer a provider holding the session wallet; a
+    // leftover WC session must NOT beat a matching extension.
+    var injected = await _tipResolveInjected();
+    if (injected) return injected;
+
+    // No injected provider at all — recover a legacy WC session so WalletConnect
+    // users mislabeled as "injected" can still sign.
+    if (_hasWcSession() && typeof GMWalletConnect !== 'undefined') {
+      TIP_SIGNER = 'WalletConnect';
+      return await GMWalletConnect.getProvider();
+    }
+    throw new Error('No wallet detected. Please open GoodMarket in MetaMask, Trust Wallet or another Celo wallet.');
+  }
+
   function _tokenMeta(key) {
     var list = TIP_BOOT.tokens || [];
     for (var i = 0; i < list.length; i++) {
@@ -336,47 +504,6 @@
     });
   }
 
-  // Resolve an EIP-1193 provider for THIS login method. Local logins must never
-  // fall through to an injected extension (a different account entirely).
-  async function _tipProvider() {
-    if (_isLocalLogin()) {
-      if (typeof GMLocalWallet === 'undefined') {
-        throw new Error('Your in-app wallet is still loading. Please try again.');
-      }
-      if (typeof ethers === 'undefined') {
-        var loaded = await _ensureEthers();
-        if (!loaded) throw new Error('Could not load the wallet library. Please check your connection and try again.');
-      }
-      if (!GMLocalWallet.isUnlocked() && typeof window._lwOpenUnlockModal === 'function') {
-        await window._lwOpenUnlockModal({
-          title: 'Sign this tip',
-          subtitle: 'Enter your PIN to send your tip',
-          submitLabel: 'Sign & Send',
-          busyLabel: 'Signing…'
-        });
-      }
-      if (!GMLocalWallet.isUnlocked()) {
-        throw new Error('Your wallet is still locked. Please enter your PIN to send the tip.');
-      }
-      return GMLocalWallet.getProvider();
-    }
-    if (_prefersWc() && typeof GMWalletConnect !== 'undefined') {
-      return await GMWalletConnect.getProvider();
-    }
-    // Privy wallets are exposed by wallet-main.js as GMPrivyWallets.
-    var privy = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
-    for (var i = 0; i < privy.length; i++) {
-      if (privy[i] && privy[i].provider && typeof privy[i].provider.request === 'function') {
-        return privy[i].provider;
-      }
-    }
-    if (typeof window.ethereum !== 'undefined') return window.ethereum;
-    if (typeof GMWalletConnect !== 'undefined' && GMWalletConnect.isPreferred()) {
-      return await GMWalletConnect.getProvider();
-    }
-    throw new Error('No wallet detected. Please open GoodMarket in MetaMask, Trust Wallet or another Celo wallet.');
-  }
-
   async function _tipEnsureChain(provider, netKey) {
     var chain = CHAIN_META[netKey] || CHAIN_META.celo;
     var current = null;
@@ -422,7 +549,9 @@
         'Your in-app wallet did not finish signing. Please try again.'
       );
     }
-    await _tipEnsureChain(provider, prep.network);
+    // Account first, chain second. A chain switch that is rejected/unsupported
+    // must not stop us before the wallet has been asked for an account (this
+    // also unlocks a locked extension).
     var accounts = [];
     try { accounts = await provider.request({ method: 'eth_requestAccounts' }) || []; } catch (_) {}
     if (!accounts.length) {
@@ -436,6 +565,7 @@
     if (!from) {
       throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet before tipping.');
     }
+    await _tipEnsureChain(provider, prep.network);
     // Send an explicit fee so the wallet never has to look one up through its
     // own (possibly lagging) RPC.
     var fee = await _tipGasParams(provider, from, prep);
@@ -447,14 +577,13 @@
                      gas: fee.gas, gasPrice: fee.gasPrice }]
         }),
         TIP_SIGN_TIMEOUT_MS,
-        'Your wallet did not respond to the tip request. Please try again.'
+        (TIP_SIGNER ? TIP_SIGNER + ' did not' : 'Your wallet did not') + ' respond to the tip request. Please try again.'
       );
     } catch (err) {
       // Shorten support loops: log what the wallet actually reported.
       try {
         console.info('[tip] send failed', JSON.stringify({
-          provider: (provider && (provider.isMetaMask ? 'MetaMask' : provider.isTrust ? 'Trust'
-            : provider.isCoinbaseWallet ? 'Coinbase' : 'injected')) || 'unknown',
+          provider: TIP_SIGNER || 'unknown',
           chain: prep.network, to: prep.to, gas: fee.gas, gasPrice: fee.gasPrice,
           code: _tipErrCode(err), message: _tipErrMessage(err)
         }));
@@ -484,7 +613,9 @@
       }
 
       say('Confirm in your wallet…');
+      TIP_SIGNER = '';
       var provider = await _tipProvider();
+      if (TIP_SIGNER) _tipSetSigner(TIP_SIGNER);
       var txHash = await _tipSendTransaction(provider, prep);
       if (!txHash) throw new Error('Your wallet did not return a transaction hash.');
 
@@ -521,6 +652,25 @@
     node.classList.toggle('is-error', !!isError);
   }
 
+  // Tell the user WHICH signer will be prompted, so a failure is never a
+  // mystery ("bakit walang lumalabas?"). A prediction on open, then the real
+  // label once the provider is resolved.
+  function _tipSetSigner(text) {
+    var node = document.querySelector('[data-gm-tip-signer]');
+    if (!node) return;
+    if (!text) { node.hidden = true; node.textContent = ''; return; }
+    node.hidden = false;
+    node.textContent = 'Signing with ' + text + '.';
+  }
+
+  function _tipPredictedSigner() {
+    if (_isLocalLogin()) return 'your in-app wallet (PIN)';
+    if (_isWcLogin()) return 'WalletConnect';
+    var privy = Array.isArray(window.GMPrivyWallets) ? window.GMPrivyWallets : [];
+    if (privy.length) return 'your Privy wallet';
+    return 'your browser wallet extension';
+  }
+
   function closeTipModal() {
     var modal = _tipModal();
     if (modal) modal.hidden = true;
@@ -536,6 +686,7 @@
     var amount = modal.querySelector('[data-gm-tip-amount]');
     if (amount) amount.value = '';
     _tipSetStatus('');
+    _tipSetSigner(_tipPredictedSigner());
     modal.hidden = false;
     var first = modal.querySelector('[data-gm-tip-amount]');
     if (first) setTimeout(function () { try { first.focus(); } catch (_) {} }, 0);
