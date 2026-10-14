@@ -161,11 +161,96 @@
   };
   var CHAIN_META = {
     celo: { hex: '0xa4ec', id: 42220, name: 'Celo Mainnet', symbol: 'CELO',
-            rpc: 'https://forno.celo.org', explorer: 'https://celoscan.io/tx/' },
+            rpc: 'https://forno.celo.org', explorer: 'https://celoscan.io/tx/',
+            fallbackGasPrice: 500000000000n },
     xdc: { hex: '0x32', id: 50, name: 'XDC Network', symbol: 'XDC',
-           rpc: 'https://earpc.xinfin.network', explorer: 'https://xdcscan.io/tx/' }
+           rpc: 'https://earpc.xinfin.network', explorer: 'https://xdcscan.io/tx/',
+           fallbackGasPrice: 25000000000n }
   };
+  // Explicit gas is load-bearing: without it the wallet has to estimate the
+  // fee through ITS OWN configured RPC. A slow/rate-limited node then renders a
+  // red "Network fee unavailable" and the confirm sheet never settles. Same
+  // lesson as claimXdcInjected / the Celo claim. `gasPrice` must be sent too —
+  // eth_estimateGas returns units only, so the wallet would still ask its RPC
+  // for the price.
+  var TIP_GAS_FALLBACK = { celo: 120000n, xdc: 500000n };
+  var TIP_GAS_CEILING = { celo: 600000n, xdc: 900000n };
+  var TIP_SIGN_TIMEOUT_MS = 120000;
   var tipBusy = false;
+
+  // EIP-1193 errors are not uniform: MetaMask and friends often nest the real
+  // code under `cause` / `data.originalError`, so a bare `err.code` check misses
+  // an "Unrecognized chain" (4902) and the auto-add never runs.
+  function _tipErrCode(err) {
+    if (!err) return null;
+    var candidates = [err.code, err.cause && err.cause.code, err.data && err.data.code,
+                      err.data && err.data.originalError && err.data.originalError.code];
+    for (var i = 0; i < candidates.length; i++) {
+      if (typeof candidates[i] === 'number') return candidates[i];
+    }
+    return null;
+  }
+
+  function _tipErrMessage(err) {
+    if (!err) return '';
+    return String(err.message || (err.cause && err.cause.message)
+      || (err.data && err.data.message) || '');
+  }
+
+  function _tipIsUserRejection(err) {
+    var code = _tipErrCode(err);
+    if (code === 4001) return true;
+    return /reject|denied|cancel|user refused/i.test(_tipErrMessage(err));
+  }
+
+  // A mobile dApp browser (and a desktop extension whose service worker is
+  // asleep) can leave a sign request pending forever. Surface an actionable
+  // error instead of an infinite spinner.
+  function _withSignTimeout(promise, ms, message) {
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error(message || 'Your wallet did not respond. Please try again.'));
+      }, ms || TIP_SIGN_TIMEOUT_MS);
+      Promise.resolve(promise).then(function (v) {
+        if (done) return;
+        done = true; clearTimeout(timer); resolve(v);
+      }, function (e) {
+        if (done) return;
+        done = true; clearTimeout(timer); reject(e);
+      });
+    });
+  }
+
+  function _tipHex(value) {
+    var v = typeof value === 'bigint' ? value : BigInt(value || 0);
+    return '0x' + v.toString(16);
+  }
+
+  // Build the fee fields the wallet must not have to look up itself.
+  async function _tipGasParams(provider, from, prep) {
+    var net = prep.network === 'xdc' ? 'xdc' : 'celo';
+    var tx = { from: from, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0' };
+    var gasHex = _tipHex(TIP_GAS_FALLBACK[net]);
+    try {
+      var est = await provider.request({ method: 'eth_estimateGas', params: [tx] });
+      var estBig = BigInt(est);
+      if (estBig > 0n) {
+        var padded = estBig * 140n / 100n;
+        var ceiling = TIP_GAS_CEILING[net];
+        gasHex = _tipHex(padded > ceiling ? ceiling : padded);
+      }
+    } catch (_) { /* fall back to the constant below */ }
+    var gasPriceHex = _tipHex((CHAIN_META[net] && CHAIN_META[net].fallbackGasPrice) || 500000000000n);
+    try {
+      var gp = await provider.request({ method: 'eth_gasPrice', params: [] });
+      var gpBig = BigInt(gp);
+      if (gpBig > 0n) gasPriceHex = _tipHex(gpBig);
+    } catch (_) { /* keep the fallback price */ }
+    return { gas: gasHex, gasPrice: gasPriceHex };
+  }
 
   function configureTip(opts) {
     opts = opts || {};
@@ -300,8 +385,14 @@
     try {
       await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chain.hex }] });
     } catch (err) {
-      var msg = (err && err.message) || '';
-      if (err && (err.code === 4902 || /Unrecognized chain|not added/i.test(msg))) {
+      // A declined switch is a normal user action, not a failure to report.
+      if (_tipIsUserRejection(err) && _tipErrCode(err) !== 4902) {
+        var cancel = new Error('You cancelled the network switch. Tap Send tip to try again.');
+        cancel.code = 4001;
+        throw cancel;
+      }
+      var msg = _tipErrMessage(err);
+      if (_tipErrCode(err) === 4902 || /unrecognized|not added|missing/i.test(msg)) {
         await provider.request({
           method: 'wallet_addEthereumChain',
           params: [{
@@ -322,10 +413,14 @@
     if (_isLocalLogin()) {
       // The in-app wallet signs locally and pays its own gas — no chain
       // switch prompt is needed (it routes by the tx's chainId).
-      return await provider.request({
-        method: 'eth_sendTransaction',
-        params: [{ from: TIP_BOOT.wallet, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0', chainId: prep.chain_id }]
-      });
+      return await _withSignTimeout(
+        provider.request({
+          method: 'eth_sendTransaction',
+          params: [{ from: TIP_BOOT.wallet, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0', chainId: prep.chain_id }]
+        }),
+        TIP_SIGN_TIMEOUT_MS,
+        'Your in-app wallet did not finish signing. Please try again.'
+      );
     }
     await _tipEnsureChain(provider, prep.network);
     var accounts = [];
@@ -341,15 +436,40 @@
     if (!from) {
       throw new Error('Wrong wallet connected. Please switch to your GoodMarket wallet before tipping.');
     }
-    return await provider.request({
-      method: 'eth_sendTransaction',
-      params: [{ from: from, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0' }]
-    });
+    // Send an explicit fee so the wallet never has to look one up through its
+    // own (possibly lagging) RPC.
+    var fee = await _tipGasParams(provider, from, prep);
+    try {
+      return await _withSignTimeout(
+        provider.request({
+          method: 'eth_sendTransaction',
+          params: [{ from: from, to: prep.to, data: prep.data || '0x', value: prep.value || '0x0',
+                     gas: fee.gas, gasPrice: fee.gasPrice }]
+        }),
+        TIP_SIGN_TIMEOUT_MS,
+        'Your wallet did not respond to the tip request. Please try again.'
+      );
+    } catch (err) {
+      // Shorten support loops: log what the wallet actually reported.
+      try {
+        console.info('[tip] send failed', JSON.stringify({
+          provider: (provider && (provider.isMetaMask ? 'MetaMask' : provider.isTrust ? 'Trust'
+            : provider.isCoinbaseWallet ? 'Coinbase' : 'injected')) || 'unknown',
+          chain: prep.network, to: prep.to, gas: fee.gas, gasPrice: fee.gasPrice,
+          code: _tipErrCode(err), message: _tipErrMessage(err)
+        }));
+      } catch (_) {}
+      throw err;
+    }
   }
 
   async function sendTip(username, token, amount, onStatus) {
     var say = typeof onStatus === 'function' ? onStatus : function () {};
-    if (tipBusy) return null;
+    // Never return a success-looking null: a duplicate submit must not be
+    // rendered as "Tip sent" by the caller.
+    if (tipBusy) {
+      throw new Error('A tip is already in progress. Please wait for it to finish.');
+    }
     tipBusy = true;
     try {
       say('Preparing tip…');
@@ -425,12 +545,14 @@
     var username = modal.getAttribute('data-gm-tip-user') || '';
     var amountEl = modal.querySelector('[data-gm-tip-amount]');
     var select = modal.querySelector('[data-gm-tip-token]');
+    var sendBtn = modal.querySelector('.gm-chat-tip-send');
     var amount = amountEl ? amountEl.value.trim() : '';
     var token = select ? select.value : 'GD';
     if (!amount || parseFloat(amount) <= 0) {
       _tipSetStatus('Enter a valid amount.', true);
       return;
     }
+    if (sendBtn) sendBtn.disabled = true;
     try {
       var result = await sendTip(username, token, amount, function (msg) { _tipSetStatus(msg); });
       _tipSetStatus('');
@@ -446,6 +568,8 @@
       }
     } catch (err) {
       _tipSetStatus((err && err.message) || 'Tip failed.', true);
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
     }
   }
 
