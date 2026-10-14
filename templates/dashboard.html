@@ -2687,10 +2687,12 @@
 
 
 
-        // Service Worker registration
+        // Service Worker registration. Root scope so the worker controls the
+        // whole origin (including "/" and "/dashboard") — required for PWA
+        // installability; the default scope would be /static/ only.
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/static/service-worker.js')
+                navigator.serviceWorker.register('/static/service-worker.js', { scope: '/' })
                     .then(registration => {
                         console.log('✅ Service Worker registered successfully');
                         setInterval(() => {
