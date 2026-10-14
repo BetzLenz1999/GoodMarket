@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Swap - GoodMarket</title>
+    <title>Swap &amp; Bridge - GoodMarket</title>
     <meta name="theme-color" content="#f97316">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -543,6 +543,46 @@
         }
         .info-link:hover { text-decoration: underline; }
 
+        /* ── Collapsed "How it works" (progressive disclosure) ──
+           Reference/marketing detail lives here so the primary flow stays
+           clean. One tap reveals it; the actionable warnings (gas minimums,
+           rate tips) stay visible above. */
+        .swap-more {
+            margin-top: 0.9rem;
+            border-top: 1px solid rgba(255,255,255,0.07);
+            padding-top: 0.65rem;
+        }
+        .swap-more > summary {
+            cursor: pointer;
+            list-style: none;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: rgba(255,255,255,0.55);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .swap-more > summary::-webkit-details-marker { display: none; }
+        .swap-more > summary::before {
+            content: "▸";
+            transition: transform 0.15s;
+            display: inline-block;
+        }
+        .swap-more[open] > summary::before { transform: rotate(90deg); }
+        .swap-more > summary:hover { color: rgba(255,255,255,0.8); }
+        .swap-more-body {
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.5);
+            line-height: 1.6;
+            margin-top: 0.5rem;
+        }
+        .swap-hint {
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.55);
+            line-height: 1.5;
+            margin-top: 0.7rem;
+        }
+
         /* ── Smart routing tip ── */
         .route-tip {
             background: linear-gradient(135deg, rgba(251,191,36,0.08), rgba(245,158,11,0.04));
@@ -949,6 +989,12 @@
         .info-card-title { color: var(--text-muted); }
         .info-link { color: #ea580c; }
 
+        .swap-more { border-top-color: var(--card-border); }
+        .swap-more > summary { color: var(--text-dim); }
+        .swap-more > summary:hover { color: var(--text); }
+        .swap-more-body { color: var(--text-dim); }
+        .swap-hint { color: var(--text-dim); }
+
         .route-tip {
             background: linear-gradient(135deg, rgba(var(--gold-rgb),0.14), rgba(var(--accent-rgb),0.08));
             border-color: rgba(var(--gold-rgb),0.35);
@@ -1192,31 +1238,33 @@
 
         <!-- Header -->
         <div class="page-header">
-            <h1 class="page-title">🔄 Swap</h1>
-            <p class="page-subtitle">Swap on Celo, bridge G$, or buy Base ETH from Celo tokens</p>
+            <h1 class="page-title">💱 Swap &amp; Bridge</h1>
+            <p class="page-subtitle">Swap G$ and other tokens, or bridge across chains</p>
         </div>
 
-        <!-- Top-level tabs: [ GoodSwap ] [ Bridge ]. GoodSwap groups
+        <!-- Top-level tabs: [ Swap ] [ Bridge ]. Swap groups
              Uniswap V3 + GoodReserve under one button (sub-tabs inside);
              Bridge groups Celo→XDC + XDC→Celo under one button (sub-tabs
              inside). Same pattern at both levels so users learn one
              interaction model across the page. Available to MiniPay
              users too — Uniswap V3 here uses CIP-64 fee abstraction. -->
         <div id="swapTabSwitcher" class="swap-tabs" role="tablist" aria-label="Swap mode"{% if swap_focused|default(false) %} style="display:none"{% endif %}>
-            <button type="button" id="tabBtnGoodSwap" class="swap-tab-btn{% if (swap_tab|default('goodswap')) != 'bridge' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_tab|default('goodswap')) != 'bridge' else 'false' }}" onclick="setSwapTab('goodswap')">GoodSwap</button>
+            <button type="button" id="tabBtnGoodSwap" class="swap-tab-btn{% if (swap_tab|default('goodswap')) != 'bridge' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_tab|default('goodswap')) != 'bridge' else 'false' }}" onclick="setSwapTab('goodswap')">Swap</button>
             <button type="button" id="tabBtnBridge" class="swap-tab-btn{% if (swap_tab|default('goodswap')) == 'bridge' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_tab|default('goodswap')) == 'bridge' else 'false' }}" onclick="setSwapTab('bridge')">Bridge</button>
         </div>
 
-        <!-- GoodSwap top pane: wraps the Uniswap V3 and GoodReserve
-             sub-panes. Designs of each sub-pane are preserved 1:1 from
-             before consolidation; this wrapper just adds the sub-tab
-             switcher and groups them under a single top tab. -->
+        <!-- Swap top pane (internal id `swapPaneGoodSwap`): wraps the
+             Uniswap V3 and GoodReserve sub-panes. Designs of each sub-pane
+             are preserved 1:1 from before consolidation; this wrapper just
+             adds the sub-tab switcher and groups them under a single top
+             tab. Display label is "Swap"; the `goodswap` id/param is kept
+             so deep links (?tab=goodswap) and tests stay stable. -->
         <div id="swapPaneGoodSwap" class="pane pane-goodswap{% if (swap_tab|default('goodswap')) == 'bridge' %} hidden-tab{% endif %}">
 
-            <div id="goodswapSubTabSwitcher" class="goodswap-sub-tabs" role="tablist" aria-label="GoodSwap mode">
-                <button type="button" id="goodswapSubBtnDex" class="goodswap-sub-tab-btn{% if (swap_goodswap_pane|default('dex')) != 'reserve' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_goodswap_pane|default('dex')) != 'reserve' else 'false' }}" onclick="setGoodSwapSubTab('dex')">Uniswap V3</button>
+            <div id="goodswapSubTabSwitcher" class="goodswap-sub-tabs" role="tablist" aria-label="Swap mode">
+                <button type="button" id="goodswapSubBtnDex" class="goodswap-sub-tab-btn{% if (swap_goodswap_pane|default('dex')) != 'reserve' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_goodswap_pane|default('dex')) != 'reserve' else 'false' }}" onclick="setGoodSwapSubTab('dex')">Swap any token</button>
                 {% if reserve_swap_visible %}
-                <button type="button" id="goodswapSubBtnReserve" class="goodswap-sub-tab-btn{% if (swap_goodswap_pane|default('dex')) == 'reserve' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_goodswap_pane|default('dex')) == 'reserve' else 'false' }}" onclick="setGoodSwapSubTab('reserve')">GoodReserve</button>
+                <button type="button" id="goodswapSubBtnReserve" class="goodswap-sub-tab-btn{% if (swap_goodswap_pane|default('dex')) == 'reserve' %} active{% endif %}" role="tab" aria-selected="{{ 'true' if (swap_goodswap_pane|default('dex')) == 'reserve' else 'false' }}" onclick="setGoodSwapSubTab('reserve')">Buy / Sell G$</button>
                 {% endif %}
             </div>
 
@@ -1350,14 +1398,21 @@
 
         <!-- Info -->
         <div class="info-card">
-            <div class="info-card-title">How it works</div>
-            Swaps are executed on-chain via <strong style="color:#2b241a;">Uniswap V3</strong> on the Celo network.
-            You need a Web3 wallet (MetaMask, MiniPay, or any Celo-compatible wallet) to confirm the transaction.
-            Make sure you have enough CELO for gas fees.
-            <br><br>
-            <a class="info-link" href="https://app.uniswap.org/#/swap?chain=celo" target="_blank" rel="noopener">
-                Also available on Uniswap ↗
-            </a>
+            <div class="swap-hint" style="margin-top:0;">
+                Swaps run on <strong>Uniswap V3</strong> (Celo). Keep a little <strong>CELO</strong> for gas.
+            </div>
+            <details class="swap-more">
+                <summary>How it works</summary>
+                <div class="swap-more-body">
+                    Your wallet confirms the swap on-chain. The rate you see is the best route
+                    we found across Uniswap V3 fee tiers, so you always get the deepest pool
+                    available for the pair.
+                    <br><br>
+                    <a class="info-link" href="https://app.uniswap.org/#/swap?chain=celo" target="_blank" rel="noopener">
+                        Also available on Uniswap ↗
+                    </a>
+                </div>
+            </details>
         </div>
 
         </div><!-- /.goodswap-sub-pane-dex -->
@@ -1481,14 +1536,21 @@
 
             <!-- Info -->
             <div class="info-card" style="margin-top:1rem;">
-                <div class="info-card-title">About GoodReserve</div>
-                Buy and sell G$ directly to/from the <strong style="color:#2b241a;">GoodDollar Reserve</strong> (Mento-based) on Celo.
-                Prices come from the protocol bonding curve — no DEX slippage from thin pools.
-                Sells include an automatic <strong style="color:#fbbf24;">exit contribution</strong> that goes back into the reserve and grows the GoodDollar economy.
-                <br><br>
-                <a class="info-link" href="https://docs.gooddollar.org/user-guides/buy-and-sell-gusd" target="_blank" rel="noopener">
-                    Learn more in the GoodDollar docs ↗
-                </a>
+                <div class="swap-hint" style="margin-top:0;">
+                    Buy or sell G$ at the <strong>GoodDollar Reserve</strong> price — no DEX slippage from thin pools.
+                </div>
+                <details class="swap-more">
+                    <summary>How it works</summary>
+                    <div class="swap-more-body">
+                        Prices come from the protocol bonding curve (Mento-based) on Celo.
+                        Sells include an automatic <strong style="color:#fbbf24;">exit contribution</strong>
+                        that goes back into the reserve and grows the GoodDollar economy.
+                        <br><br>
+                        <a class="info-link" href="https://docs.gooddollar.org/user-guides/buy-and-sell-gusd" target="_blank" rel="noopener">
+                            Learn more in the GoodDollar docs ↗
+                        </a>
+                    </div>
+                </details>
             </div>
         </div><!-- /.goodswap-sub-pane-reserve -->
         {% endif %}
@@ -1529,10 +1591,9 @@
                     🌉 Celo Mainnet → XDC Network · LayerZero Bridge
                 </div>
 
-                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
-                    Bridging <strong>Celo → XDC</strong>: keep at least <strong>0.20 CELO</strong> for gas/fees,
-                    click <strong>Estimate Fee</strong> before submit, and leave headroom when using <strong>MAX</strong>.
-                    (Max per bridge request: <strong>300M G$</strong>)
+                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.7rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
+                    Bridging <strong>Celo → XDC</strong>: minimum <strong>2,000 G$</strong>.
+                    Keep ≥ <strong>0.20 CELO</strong> for gas — leave headroom when using <strong>MAX</strong>.
                 </div>
 
                 <!-- From: Celo G$ -->
@@ -1613,13 +1674,20 @@
             </div>
 
             <div class="info-card" style="margin-top:1rem;">
-                <div class="info-card-title">About this bridge</div>
-                Powered by the official GoodDollar
-                <a class="info-link" href="https://docs.gooddollar.org/user-guides/bridge-gooddollars" target="_blank" rel="noopener">MessagePassingBridge ↗</a>
-                using LayerZero (the only supported service for Celo↔XDC, per the docs).
-                Once submitted on Celo, LayerZero relayers mint G$ on XDC at the same destination
-                address — typically within a few minutes. You can track the request on
-                <a class="info-link" href="https://layerzeroscan.com/" target="_blank" rel="noopener">layerzeroscan.com ↗</a>.
+                <details class="swap-more" style="border-top:none;margin-top:0;padding-top:0;">
+                    <summary>How the bridge works</summary>
+                    <div class="swap-more-body">
+                        Powered by the official GoodDollar
+                        <a class="info-link" href="https://docs.gooddollar.org/user-guides/bridge-gooddollars" target="_blank" rel="noopener">MessagePassingBridge ↗</a>
+                        using LayerZero (the only supported service for Celo↔XDC, per the docs).
+                        Once submitted, LayerZero relayers mint G$ at the same destination
+                        address — typically within a few minutes.
+                    </div>
+                </details>
+                <div class="swap-hint">
+                    Track a bridge on
+                    <a class="info-link" href="https://layerzeroscan.com/" target="_blank" rel="noopener">layerzeroscan.com ↗</a>.
+                </div>
             </div>
             </div><!-- /#bridgeSubPaneCeloToXdc -->
 
@@ -1645,9 +1713,9 @@
                     🌉 XDC Network → Celo Mainnet · LayerZero Bridge
                 </div>
 
-                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
-                    Bridging <strong>XDC → Celo</strong>: minimum <strong>2,000 G$</strong>, keep at least <strong>2.1 XDC</strong>
-                    for gas/fees, click <strong>Estimate Fee</strong>, and leave headroom when using <strong>MAX</strong>.
+                <div class="info-box-bridge" style="margin-bottom:0.9rem; padding:0.7rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
+                    Bridging <strong>XDC → Celo</strong>: minimum <strong>2,000 G$</strong>.
+                    Keep ≥ <strong>2.1 XDC</strong> for gas — leave headroom when using <strong>MAX</strong>.
                 </div>
 
                 <!-- From: XDC G$ -->
@@ -1726,13 +1794,20 @@
             </div>
 
             <div class="info-card" style="margin-top:1rem;">
-                <div class="info-card-title">About this bridge</div>
-                Powered by the official GoodDollar
-                <a class="info-link" href="https://docs.gooddollar.org/user-guides/bridge-gooddollars" target="_blank" rel="noopener">MessagePassingBridge ↗</a>
-                using LayerZero (the only supported service for Celo↔XDC, per the docs).
-                Once submitted on XDC, LayerZero relayers mint G$ on Celo at the same destination
-                address — typically within a few minutes. You can track the request on
-                <a class="info-link" href="https://layerzeroscan.com/" target="_blank" rel="noopener">layerzeroscan.com ↗</a>.
+                <details class="swap-more" style="border-top:none;margin-top:0;padding-top:0;">
+                    <summary>How the bridge works</summary>
+                    <div class="swap-more-body">
+                        Powered by the official GoodDollar
+                        <a class="info-link" href="https://docs.gooddollar.org/user-guides/bridge-gooddollars" target="_blank" rel="noopener">MessagePassingBridge ↗</a>
+                        using LayerZero (the only supported service for Celo↔XDC, per the docs).
+                        Once submitted, LayerZero relayers mint G$ at the same destination
+                        address — typically within a few minutes.
+                    </div>
+                </details>
+                <div class="swap-hint">
+                    Track a bridge on
+                    <a class="info-link" href="https://layerzeroscan.com/" target="_blank" rel="noopener">layerzeroscan.com ↗</a>.
+                </div>
             </div>
             </div><!-- /#bridgeSubPaneXdcToCelo -->
 
@@ -1759,12 +1834,10 @@
                     🌉 Celo Mainnet → Base · LI.FI (Jumper) Bridge
                 </div>
 
-                <div class="info-box-bridge" id="lifiIntroNote" style="margin-bottom:0.9rem; padding:0.75rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
-                    Bridging <strong>Celo → native ETH on Base</strong>. You can send
-                    <strong>CELO</strong> or a <strong>stablecoin (USDC / USDT / cUSD)</strong>.
-                    CELO takes <strong>2 steps</strong> (confirm once on Celo, once on Base);
-                    USDC / USDT usually take just <strong>1 step</strong>. Keep a little
-                    <strong>ETH on Base</strong> for the final step's gas.
+                <div class="info-box-bridge" id="lifiIntroNote" style="margin-bottom:0.9rem; padding:0.7rem 0.85rem; border-radius:10px; background:rgba(2,132,199,0.07); border:1px solid rgba(2,132,199,0.25); color:#0e7490; font-size:0.84rem; line-height:1.55;">
+                    Send <strong>CELO</strong> or a stablecoin to <strong>native ETH on Base</strong>.
+                    CELO takes <strong>2 confirmations</strong>; USDC / USDT usually take <strong>1</strong>.
+                    Keep a little <strong>ETH on Base</strong> for the final step's gas.
                 </div>
 
                 <!-- Step progress bar — the whole flow keys off this. Hidden for
@@ -1843,15 +1916,22 @@
             </div>
 
             <div class="info-card" style="margin-top:1rem;">
-                <div class="info-card-title">About this bridge</div>
-                Routed by
-                <a class="info-link" href="https://jumper.exchange/" target="_blank" rel="noopener">Jumper ↗</a>
-                (powered by
-                <a class="info-link" href="https://li.fi/" target="_blank" rel="noopener">LI.FI ↗</a>),
-                aggregating bridges and DEXs across chains. A CELO source bridges
-                with one provider, then swaps to native ETH on Base — hence the two
-                confirmations; a stablecoin source usually settles in one. Track it on
-                <a class="info-link" href="https://scan.li.fi/" target="_blank" rel="noopener">LI.FI Scan ↗</a>.
+                <details class="swap-more" style="border-top:none;margin-top:0;padding-top:0;">
+                    <summary>How the bridge works</summary>
+                    <div class="swap-more-body">
+                        Routed by
+                        <a class="info-link" href="https://jumper.exchange/" target="_blank" rel="noopener">Jumper ↗</a>
+                        (powered by
+                        <a class="info-link" href="https://li.fi/" target="_blank" rel="noopener">LI.FI ↗</a>),
+                        aggregating bridges and DEXs across chains. A CELO source bridges
+                        with one provider, then swaps to native ETH on Base — hence the two
+                        confirmations; a stablecoin source usually settles in one.
+                    </div>
+                </details>
+                <div class="swap-hint">
+                    Track a bridge on
+                    <a class="info-link" href="https://scan.li.fi/" target="_blank" rel="noopener">LI.FI Scan ↗</a>.
+                </div>
             </div>
             </div><!-- /#bridgeSubPaneCeloToBase -->
             {% endif %}
