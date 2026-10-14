@@ -26,6 +26,13 @@
 
 .gm-chat-toggle[hidden] { display: none; }
 
+.gm-chat-icon { font-size: 1.05rem; line-height: 1; }
+
+/* The one-word caption under the round launcher is the only thing that keeps
+   an icon-only button from reading as a mystery circle. Hidden on desktop,
+   where the full "Community Chat" label is shown instead. */
+.gm-chat-caption { display: none; }
+
 .gm-chat-badge {
   position: absolute;
   top: -6px;
@@ -397,6 +404,36 @@
        positionChatroomLauncher in chatroom-widget.js). */
     bottom: calc(var(--gm-chat-bottom, 92px) + env(safe-area-inset-bottom, 0px));
   }
+
+  /* Compact launcher: a round icon + one-word caption instead of a wide pill.
+     The pill was ~150px wide (~40% of a 360px phone) and covered the portfolio
+     balance card and token rows on the right edge. The circle is ~64px, so the
+     content stays readable, and the "Chat" caption + 💬 keep it recognisable
+     as the community chatroom rather than a mystery button. */
+  .gm-chat-toggle {
+    flex-direction: column;
+    gap: 3px;
+    width: 64px;
+    min-height: 64px;
+    padding: 9px 4px 7px;
+    border-radius: 20px;
+  }
+
+  .gm-chat-toggle .gm-chat-icon { font-size: 1.5rem; }
+  .gm-chat-toggle .gm-chat-label { display: none; }
+
+  .gm-chat-caption {
+    display: block;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    color: #f5f3ff;
+  }
+
+  /* The badge sits on the rounded corner — nudge it in so it is not clipped
+     by the tighter corner radius of the compact launcher. */
+  .gm-chat-badge { top: -4px; right: -4px; }
 
   .gm-chat-panel {
     width: calc(100vw - 20px);
