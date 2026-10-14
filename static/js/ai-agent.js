@@ -262,16 +262,19 @@
     });
   }
 
-  // A wallet side rail leaves the lower screen edge free, so its launcher
-  // uses the regular bottom offset. Keep measuring any legacy bottom bar so
-  // the launcher cannot cover it on pages that still use that layout.
+  // The wallet nav is a bottom bar on phones and a left rail on desktop.
+  // Decide by measured geometry, not by the `wallet-side-nav` class: the
+  // class is present in markup at every width, so a class check reserved
+  // only 24px on mobile and let the launcher cover the ~78px bar.
   function positionAgentLauncher() {
     const launcher = document.querySelector('.gm-ai-agent');
     if (!launcher) return;
     const nav = document.querySelector('.wallet-bottom-nav');
     if (!nav) return;
     const gap = 12;
-    const bottom = nav.classList.contains('wallet-side-nav') ? 24 : nav.getBoundingClientRect().height + gap;
+    const r = nav.getBoundingClientRect();
+    const isBottomBar = r.height > 0 && r.bottom >= window.innerHeight - 2;
+    const bottom = isBottomBar ? r.height + gap : 24;
     launcher.style.setProperty('--gm-ai-bottom', bottom + 'px');
   }
 
