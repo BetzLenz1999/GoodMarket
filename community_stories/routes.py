@@ -20,9 +20,19 @@ def community_stories_page():
     wallet = session.get('wallet')
     verified = session.get('verified')
 
-    # Allow both authenticated and guest users to view the page
-    return render_template('community_stories.html', 
-                         wallet=wallet if wallet and verified else None)
+    # Guests may view the page. Instead of the old bespoke wallet-address
+    # modal, a guest gets the shared homepage "Get Started" connect card
+    # (server-side gate, not a CSS hide) so the connect flow is identical
+    # across every guest-facing page.
+    is_guest = not (wallet and verified)
+    if is_guest:
+        wallet = None
+
+    return render_template('community_stories.html',
+                         wallet=wallet,
+                         is_guest=is_guest,
+                         login_method=session.get('login_method', ''),
+                         walletconnect_project_id=os.getenv('WALLETCONNECT_PROJECT_ID', ''))
 
 @community_stories_bp.route('/<story_date>')
 def community_stories_showcase_page(story_date):
