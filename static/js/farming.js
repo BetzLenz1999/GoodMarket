@@ -1096,6 +1096,11 @@
             setStatus("Wallet libraries are still loading. Please refresh the page.", "error");
             return;
         }
+        // Guest view: the page renders the shared "Get Started" connect card
+        // instead of the play panel, so there is no farm to read and no wallet
+        // to poll with. Skip all reads (an empty wallet would query the
+        // contract for address "").
+        if (!WALLET) return;
         if (typeof GMWalletConnect !== "undefined") {
             GMWalletConnect.configure({
                 walletAddress: WALLET,
