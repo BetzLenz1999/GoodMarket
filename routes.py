@@ -7548,6 +7548,35 @@ def ubi_entitlement():
         return jsonify({"success": False, "error": str(e), "entitlement": 0, "can_claim": False}), 500
 
 
+def _combined_claimable(claims):
+    """Sum the Celo + XDC claimable legs the backend is confident about.
+
+    Only legs that are actually claimable right now are summed. A leg whose
+    read failed (`success: false`) or that is explicitly unavailable is NOT
+    silently treated as 0 — it is excluded and `confident` is set False so the
+    frontend falls back to per-network display instead of showing a
+    smaller-than-real total.
+    """
+    parts = []
+    confident = True
+    total = 0.0
+    for network in ("celo", "xdc"):
+        leg = claims.get(network) or {}
+        if leg.get("success") is False or leg.get("is_available") is False:
+            confident = False
+            continue
+        if leg.get("can_claim"):
+            parts.append(network)
+            total += float(leg.get("claimable") or 0)
+    return {
+        "networks": parts,
+        "count": len(parts),
+        "total": total,
+        "total_formatted": f"{total:.2f}",
+        "confident": confident,
+    }
+
+
 @routes.route("/api/claim/availability", methods=["GET"])
 @auth_required
 def claim_availability():
@@ -7643,6 +7672,7 @@ def claim_availability():
             "wallet": wallet.lower() if wallet else None,
             "claims": claims,
             "recommended_network": recommended,
+            "combined": _combined_claimable(claims),
         })
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0, private"
         response.headers["Pragma"] = "no-cache"
