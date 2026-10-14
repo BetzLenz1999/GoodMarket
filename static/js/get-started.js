@@ -40,15 +40,7 @@ const GOODDOLLAR_TOKEN = Object.freeze({
         image: window.location.origin + '/static/icons/goodmarket-icon.png'
     }
 });
-async function openWalletModal() {
-    try {
-        const resp = await fetch('/api/session-status', {cache: 'no-store'});
-        const data = await resp.json();
-        if (resp.ok && data && data.authenticated && data.redirect_to) {
-            window.location.assign(data.redirect_to);
-            return;
-        }
-    } catch (_) { /* continue to login choices */ }
+function _showWalletModalNow() {
     showWalletOptions();
     hidePrivyRetry();
     window.restoreWalletModalAfterPrivy?.(false);
@@ -62,6 +54,29 @@ async function openWalletModal() {
     } else {
         showWalletStatus('walletConnectStatus', '👛 Connect with MiniPay, Trust Wallet, MetaMask, or use WalletConnect QR / URI.', 'info');
     }
+}
+
+async function openWalletModal() {
+    // The session probe used to gate the paint, so a slow /api/session-status
+    // response delayed the sheet. Run it in parallel and only wait ~400ms for
+    // it; an already-authenticated session still redirects, just without
+    // holding up the login choices.
+    const probe = fetch('/api/session-status', { cache: 'no-store' })
+        .then((resp) => resp.json().then((data) => ({ resp, data })))
+        .catch(() => null);
+    const gate = new Promise((resolve) => setTimeout(() => resolve(null), 400));
+    const first = await Promise.race([probe, gate]);
+    if (first && first.resp && first.resp.ok && first.data && first.data.authenticated && first.data.redirect_to) {
+        window.location.assign(first.data.redirect_to);
+        return;
+    }
+    _showWalletModalNow();
+    // If the probe resolves authenticated after the sheet painted, redirect then.
+    probe.then((result) => {
+        if (result && result.resp && result.resp.ok && result.data && result.data.authenticated && result.data.redirect_to) {
+            window.location.assign(result.data.redirect_to);
+        }
+    });
 }
 
 function closeWalletModal() {
@@ -960,7 +975,7 @@ async function awaitPreferredInjectedProvider(timeoutMs) {
     // a bigger budget so Trust builds with generic UA strings still pass.
     const budget = typeof timeoutMs === 'number'
         ? timeoutMs
-        : (isTrustWalletMobileContext() ? 3200 : (isLikelyMobileWalletContext() ? 2200 : 800));
+        : (isTrustWalletMobileContext() ? 3200 : (isLikelyMobileWalletContext() ? 2200 : 300));
     const stepMs = 120;
     const start = Date.now();
     let first = getPreferredInjectedProvider();
@@ -990,9 +1005,12 @@ if (isTrustWalletMobileContext()) {
 // Maximum retry depth for detectInjectedWallet's auto-retry loop.
 // Trust Wallet mobile gets a longer budget because its injection
 // timing is the most variable. Each retry waits (350 + depth*250)ms,
-// so depth=12 ≈ 8.6s total; depth=6 ≈ 2.5s.
+// so depth=12 ≈ 8.6s total; depth=6 ≈ 2.5s. Desktop extensions inject
+// synchronously, so the desktop depth is short — a user without an
+// extension should see the settled "Not detected" copy fast instead of
+// seconds of flicker.
 function _walletDetectionMaxDepth() {
-    return isTrustWalletMobileContext() ? 12 : (isLikelyMobileWalletContext() ? 9 : 6);
+    return isTrustWalletMobileContext() ? 12 : (isLikelyMobileWalletContext() ? 9 : 2);
 }
 
 // Pending retry timer for detectInjectedWallet. Stored at module
@@ -1283,11 +1301,18 @@ async function ensureCeloChain(provider) {
 }
 
 async function requestGoodDollarToken(provider) {
+    // `wallet_watchAsset` ALWAYS opens a wallet confirmation on desktop
+    // MetaMask. Doing it on every login put an "Add token?" dialog between the
+    // network switch and the login signature — the user thinks they are already
+    // signing in. Ask once per browser session instead; a user who declines can
+    // still add G$ from the wallet page.
+    const WATCH_FLAG = 'gmWatchAssetAsked_v1';
+    try {
+        if (sessionStorage.getItem(WATCH_FLAG) === '1') return false;
+    } catch (_) { /* storage blocked — fall through and ask once */ }
     try {
         // There is no EIP-1193 method to query a wallet's watched-token
-        // list. Re-requesting is intentional: wallets that already show
-        // G$ generally resolve without a duplicate prompt, while a user
-        // who declined it on an earlier login can opt in later.
+        // list, so a session flag is the only way to avoid re-prompting.
         const added = await provider.request({
             method: 'wallet_watchAsset',
             params: GOODDOLLAR_TOKEN
@@ -1300,7 +1325,26 @@ async function requestGoodDollarToken(provider) {
         // able to log in and use Celo.
         console.info('GoodDollar token setup was skipped or is unsupported:', err && err.message);
         return false;
+    } finally {
+        try { sessionStorage.setItem(WATCH_FLAG, '1'); } catch (_) {}
     }
+}
+
+// A hung wallet request (asleep extension service worker, stuck mobile dApp
+// browser) must not leave the connect flow spinning forever.
+function withInjectedSignTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+        let done = false;
+        const timer = setTimeout(() => {
+            if (done) return;
+            done = true;
+            reject(new Error(message || 'Your wallet did not respond. Please try again.'));
+        }, ms || 120000);
+        Promise.resolve(promise).then(
+            (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } },
+            (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } }
+        );
+    });
 }
 
 async function connectInjectedWallet() {
@@ -1345,7 +1389,11 @@ async function connectInjectedWallet() {
         const message = makeLoginMessage(wallet);
         const messageHex = utf8ToHex(message);
         showWalletStatus('walletConnectStatus', '✍️ Signature request sent. Approve the login message in your wallet.', 'info');
-        const signature = await provider.request({ method: 'personal_sign', params: [messageHex, wallet] });
+        const signature = await withInjectedSignTimeout(
+            provider.request({ method: 'personal_sign', params: [messageHex, wallet] }),
+            120000,
+            'Your wallet did not respond to the signature request. Open MetaMask, make sure it is unlocked, then try again.'
+        );
         const verifyData = await postVerifyIdentity(wallet, signature, message, '', 'injected');
         // Drop any WalletConnect session left over from an earlier sign-in
         // so feature pages don't misclassify this injected login as
@@ -1361,9 +1409,12 @@ async function connectInjectedWallet() {
         showWalletStatus('walletConnectStatus', okMsg, verifyData && verifyData.referral_warning ? 'warning' : 'success');
         _gmAfterLoginRedirect(verifyData && verifyData.referral_warning ? 2400 : 900);
     } catch (err) {
-        const msg = (err && err.message) ? err.message : 'Failed to connect injected wallet';
-        const rejected = /reject|denied|cancel/i.test(msg);
-        showWalletStatus('walletConnectStatus', (rejected ? '❌ Signature or connection was rejected. ' : '❌ ') + msg, rejected ? 'warning' : 'error');
+        const rawMsg = (err && err.message) ? err.message : 'Failed to connect injected wallet';
+        const code = err && (err.code
+            || (err.cause && err.cause.code)
+            || (err.data && err.data.originalError && err.data.originalError.code));
+        const rejected = code === 4001 || /reject|denied|cancel|user refused/i.test(rawMsg);
+        showWalletStatus('walletConnectStatus', (rejected ? '❌ Signature or connection was rejected. ' : '❌ ') + rawMsg, rejected ? 'warning' : 'error');
     }
 }
 
