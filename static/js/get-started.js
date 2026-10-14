@@ -1398,9 +1398,14 @@ async function connectInjectedWallet() {
         // Drop any WalletConnect session left over from an earlier sign-in
         // so feature pages don't misclassify this injected login as
         // WalletConnect (which would force a QR prompt instead of MetaMask).
+        // Per-wallet: a session belonging to a DIFFERENT wallet is untouched.
         try {
-            if (typeof GMWalletConnect !== 'undefined' && GMWalletConnect.clearStoredSession) {
-                GMWalletConnect.clearStoredSession();
+            if (typeof GMWalletConnect !== 'undefined') {
+                if (typeof GMWalletConnect.clearStoredSessionFor === 'function') {
+                    GMWalletConnect.clearStoredSessionFor(wallet);
+                } else if (typeof GMWalletConnect.clearStoredSession === 'function') {
+                    GMWalletConnect.clearStoredSession();
+                }
             }
         } catch (_) {}
         const okMsg = (verifyData && verifyData.referral_warning)
