@@ -5547,23 +5547,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         loadUbiPoolStats();
 
 
-        function openSavingsPopupAfterClaim() {
-            const modal = document.getElementById('savingsPopupModal');
-            const frame = document.getElementById('savingsPopupFrame');
-            if (!modal || !frame) return;
-            if (!frame.src) frame.src = '/savings?from=wallet_claim';
-            if (typeof closeModal === 'function') closeModal('claimModal');
-            modal.classList.add('open');
-            modal.setAttribute('aria-hidden', 'false');
-        }
-
-        window.closeSavingsPopup = function() {
-            const modal = document.getElementById('savingsPopupModal');
-            if (!modal) return;
-            modal.classList.remove('open');
-            modal.setAttribute('aria-hidden', 'true');
-        };
-
         function pollReceipt(txHash, attempts) {
             if (attempts <= 0) {
                 btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
@@ -5589,7 +5572,6 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                                 networks: ['celo'],
                                                           });
                         } catch (_) {}
-                        setTimeout(openSavingsPopupAfterClaim, 900);
                     } else {
                         btn.disabled = false; label.textContent = 'Claim G$'; icon.textContent = '🪙';
                         setStatus('Transaction failed. The UBI claim pool may be paused, or you may already have claimed today.', 'var(--red)');
