@@ -1,18 +1,32 @@
 {
+  "id": "/",
   "name": "GoodMarket",
   "short_name": "GoodMarket",
   "description": "GoodMarket — community wallet for the G$ token (GoodDollar protocol) on Celo",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#f7f1e8",
   "theme_color": "#e8720a",
   "icons": [
     {
-      "src": "/static/icons/goodmarket
-      -icon.png",
+      "src": "/static/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/goodmarket-icon.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/goodmarket-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
