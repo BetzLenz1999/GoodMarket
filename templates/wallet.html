@@ -1085,6 +1085,11 @@
         
         .claim-network-card.is-disabled { opacity: 0.62; }
         .claim-network-card.is-selected { border-color: rgba(124,58,237,0.45); }
+        /* Unified Celo + XDC summary card (local logins): one amount, one action. */
+        .claim-network-card.is-unified {
+            background: linear-gradient(135deg, rgba(124,58,237,0.10), rgba(251,191,36,0.08));
+            border-color: rgba(124,58,237,0.5);
+        }
         /* Cards may carry a full-width action button below the row, so allow wrap. */
         .claim-network-card { flex-wrap: wrap; }
         .claim-card-btn {
