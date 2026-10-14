@@ -1644,7 +1644,7 @@
             --gold: #f5a623;
             --gold-rgb: 245,166,35;
             --gold-deep: #d97e0a;
-            --primary-button-text: #ffffff;
+            --primary-button-text: #1f1300;
             --red: #dc2626;
             --text: #2b241a;
             --text-dim: #6b5d48;
@@ -1863,7 +1863,7 @@
 
         /* ── Buttons ── */
         .btn-primary { border-color: rgba(234,88,12,0.4); box-shadow: 0 4px 14px rgba(var(--accent-rgb),0.22); }
-        .btn-primary .spinner { border-color: rgba(255,255,255,0.35); border-top-color: #fff; }
+        .btn-primary .spinner { border-color: rgba(31,19,0,0.28); border-top-color: #1f1300; }
         .btn-secondary { background: #fff; border-color: var(--card-border); color: var(--text); }
         .btn-secondary:hover { background: #faf7f2; border-color: rgba(var(--accent-rgb),0.4); color: var(--text); }
         .btn-danger { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.25); color: #dc2626; }
@@ -1957,26 +1957,54 @@
         .bn-item:hover .bn-label { text-decoration: none; }
 
         .bn-item .bn-icon {
-            box-shadow: inset 0 0 0 1.5px rgba(67,56,43,0.18), 0 2px 6px rgba(67,56,43,0.10);
+            box-shadow: 0 2px 6px rgba(67,56,43,0.18);
         }
 
-        /* Per-destination color coding: chips + labels each get a distinct
-           accent so the bar reads evening at a glance. */
-        .bn-send      { --nav-c: #e8720a; --nav-bg: rgba(232,114,10,0.12); }
-        .bn-receive   { --nav-c: #0d9488; --nav-bg: rgba(13,148,136,0.12); }
-        .bn-earn      { --nav-c: #16a34a; --nav-bg: rgba(22,163,74,0.12); }
-        .bn-more      { --nav-c: #2563eb; --nav-bg: rgba(37,99,235,0.12); }
+        /* Per-destination color coding: a SOLID gradient chip + a bold label
+           in the destination's own hue. Every destination defines the full
+           quadruple so no chip can fall back to an uncolored grey:
+             --nav-g1 / --nav-g2  gradient stops for the icon circle
+             --nav-glyph          glyph color (dark on the gold/amber chips)
+             --nav-c              label color. A dark ink of the hue, never the
+                                  raw gradient stop: #10b981/#f59e0b/#f97316
+                                  are all below 4.5:1 on the light bar. */
+        .bn-wallet      { --nav-g1: #0f766e; --nav-g2: #115e59; --nav-glyph: #ffffff; --nav-c: #0f766e; }
+        .bn-claim       { --nav-g1: #fbbf24; --nav-g2: #f59e0b; --nav-glyph: #1f1300; --nav-c: #92400e; }
+        .bn-swap        { --nav-g1: #6366f1; --nav-g2: #4f46e5; --nav-glyph: #ffffff; --nav-c: #4338ca; }
+        .bn-earn        { --nav-g1: #fcd34d; --nav-g2: #fbbf24; --nav-glyph: #1f1300; --nav-c: #92400e; }
+        .bn-more        { --nav-g1: #64748b; --nav-g2: #334155; --nav-glyph: #ffffff; --nav-c: #334155; }
+        .bn-dappconnect { --nav-g1: #3b82f6; --nav-g2: #1d4ed8; --nav-glyph: #ffffff; --nav-c: #1d4ed8; }
+        .bn-profile     { --nav-g1: #ec4899; --nav-g2: #be185d; --nav-glyph: #ffffff; --nav-c: #be185d; }
+        .bn-bridge      { --nav-g1: #7c3aed; --nav-g2: #5b21b6; --nav-glyph: #ffffff; --nav-c: #6d28d9; }
+        .bn-xdc         { --nav-g1: #2563eb; --nav-g2: #1d4ed8; --nav-glyph: #ffffff; --nav-c: #1d4ed8; }
+        .bn-savings     { --nav-g1: #0e7490; --nav-g2: #155e75; --nav-glyph: #ffffff; --nav-c: #0f766e; }
+        .bn-services    { --nav-g1: #ea580c; --nav-g2: #b91c1c; --nav-glyph: #ffffff; --nav-c: #b91c1c; }
+        .bn-send        { --nav-g1: #e8720a; --nav-g2: #c2410c; --nav-glyph: #ffffff; --nav-c: #b45309; }
+        .bn-receive     { --nav-g1: #0d9488; --nav-g2: #0f766e; --nav-glyph: #ffffff; --nav-c: #0f766e; }
 
-        .bn-item .bn-icon { color: var(--nav-c); background: var(--nav-bg) ; }
-        .bn-item .bn-label { color: var(--nav-c); }
+        .bn-item .bn-icon {
+            color: var(--nav-glyph, #ffffff);
+            background: linear-gradient(135deg, var(--nav-g1), var(--nav-g2));
+            font-weight: 900;
+        }
+        .bn-item .bn-label { color: var(--nav-c); font-weight: 800; }
         .bn-sheet-overlay { background: rgba(41,37,36,0.4); }
         .bn-sheet { background: #fff; border-top-color: var(--card-border); box-shadow: 0 -12px 40px rgba(67,56,43,0.15); }
         .bn-sheet-handle { background: rgba(67,56,43,0.18); }
         .bn-sheet-title { color: var(--text); }
         .bn-sheet-item { background: #fff; border-color: var(--card-border); }
         .bn-sheet-item:hover { border-color: rgba(var(--accent-rgb),0.4); background: #fff7ed; }
-        .bn-sheet-item .bn-sheet-circle { background: #faf7f2; border-color: var(--card-border); }
-        .bn-sheet-item .bn-sheet-name { color: var(--text-dim); }
+        /* Default chip so rows that carry no inline gradient (Savings, Send,
+           GoodSwap, XSwap, Virtual Card, Mobile Top-Up) still read as bold
+           colourful actions instead of pale grey discs. Rows WITH an inline
+           gradient keep it — the inline style wins. */
+        .bn-sheet-item .bn-sheet-circle {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            border-color: rgba(255,255,255,0.55);
+            color: #fff;
+            box-shadow: 0 3px 8px rgba(67,56,43,0.18);
+        }
+        .bn-sheet-item .bn-sheet-name { color: var(--text-dim); font-weight: 800; }
 
 
         /* ── Reduced motion ──
@@ -2008,16 +2036,9 @@
            The same <nav> serves both layouts: a thumb-reachable bottom bar on
            phones and this rail on desktop. Every rail rule therefore lives
            inside the >=900px query — unscoped, they would override the
-           bottom bar's grid and steal a permanent left gutter on a phone. */
-        .bn-profile  { --nav-g1: #ec4899; --nav-g2: #be185d; }
-        .bn-wallet   { --nav-g1: #10b981; --nav-g2: #059669; }
-        .bn-claim    { --nav-g1: #d97706; --nav-g2: #b45309; }
-        .bn-swap     { --nav-g1: #6366f1; --nav-g2: #4f46e5; }
-        .bn-bridge   { --nav-g1: #7c3aed; --nav-g2: #5b21b6; }
-        .bn-xdc      { --nav-g1: #2563eb; --nav-g2: #1d4ed8; }
-        .bn-savings  { --nav-g1: #0e7490; --nav-g2: #155e75; }
-        .bn-services { --nav-g1: #f97316; --nav-g2: #dc2626; }
-        .bn-dappconnect { --nav-g1: #3b82f6; --nav-g2: #1d4ed8; }
+           bottom bar's grid and steal a permanent left gutter on a phone.
+           The per-destination chip colors are declared ONCE, above (see
+           "Per-destination color coding"), and apply to both layouts. */
 
         /* Below 900px the bottom bar is the navigation. Destinations that only
            the desktop rail carries are hidden here; each stays reachable from
