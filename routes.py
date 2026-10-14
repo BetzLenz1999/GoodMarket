@@ -100,6 +100,17 @@ def _lifi_bridge_enabled() -> bool:
         return _env_bool("LIFI_BRIDGE_ENABLED", False)
 
 
+def _is_pwa_install_enabled() -> bool:
+    """Feature flag for the "Install app" (PWA) entry points.
+
+    ON by default — a browser simply never fires `beforeinstallprompt` when the
+    app is not installable (or the OS doesn't support it), so the banner is a
+    no-op there and the client shows manual instructions instead. Set
+    `PWA_INSTALL_ENABLED=0` to hide the prompts entirely.
+    """
+    return _env_bool("PWA_INSTALL_ENABLED", True)
+
+
 def _env_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
     raw = os.getenv(name)
     try:
@@ -1655,6 +1666,7 @@ def index():
         privy_client_id=privy_client_id,
         homepage_stats=homepage_stats,
         google_client_id=google_client_id,
+        pwa_installable=_is_pwa_install_enabled(),
     )
 
 
@@ -7984,6 +7996,9 @@ def wallet_page():
         # chain registry. Public RPC list with failover — overridable per deploy.
         ethereum_rpc=os.environ.get("ETHEREUM_RPC_URL", ""),
         ethereum_rpc_fallbacks=os.environ.get("ETHEREUM_RPC_FALLBACKS", ""),
+        # "Install app" (PWA) one-time banner — shown to local (email + PIN)
+        # wallet users only; see the template gate.
+        pwa_installable=_is_pwa_install_enabled(),
     )
 
 
