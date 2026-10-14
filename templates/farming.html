@@ -6,7 +6,7 @@
     <title>GoodMarket Chicken Farming</title>
     <meta name="theme-color" content="#0b1020">
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
-    <link rel="icon" type="imaage/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
+    <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
@@ -183,11 +183,18 @@
             .modal-card { animation:none; }
         }
     </style>
+    <!-- Shared Get Started modal styles (guest connect flow). -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/get-started.css', v=ASSET_VERSION) }}">
 </head>
 <body>
     <div class="top">
         <a class="back" href="/wallet">← Wallet</a>
         <div class="kicker">GoodMarket Farming</div>
+        {% if is_guest %}
+        <!-- Persistent connect entry point so closing the modal doesn't
+             strand a guest — same flow as the homepage. -->
+        <button type="button" class="gs-nav-cta" onclick="openGoodMarketGetStarted()">Get Started</button>
+        {% endif %}
     </div>
 
     <section class="hero">
@@ -287,13 +294,25 @@
         </div>
     </section>
 
+    {% if not is_guest %}
     <section class="panel">
         <div class="phase-banner"><span class="emoji">🌾</span><span id="farmStatusBanner">Checking your farm…</span></div>
         <div class="progress-track"><div class="progress-fill" id="cycleProgressFill"></div></div>
         <div class="progress-label" id="cycleProgressLabel">Loading your farming cycle…</div>
     </section>
+    {% endif %}
 
-    <section class="game-card" id="playFarm" aria-labelledby="playTitle">
+    {% if is_guest %}
+    <section class="game-card" id="playFarm">
+        {# Guest: the play panel (start / sell / close) is not rendered at all
+           until connected — the connect card occupies the action slot. #}
+        {% with guest_card_icon='🐔',
+                guest_card_kicker='Connect to farm',
+                guest_card_title='Start your G$ farm',
+                guest_card_body='Connect or create a free GoodMarket wallet to buy chickens, collect eggs and earn G$. Email + PIN — no app to install.' %}
+        {% include "_guest_connect_card.html" %}
+        {% endwith %}
+        {% else %}
         <div class="kicker">Play Farming</div>
         <h2 id="playTitle">Start, sell eggs, or close your farm</h2>
         <p class="copy" style="color:var(--muted); line-height:1.55; font-size:0.9rem;">You are already signed in — your wallet opens only when a transaction needs your confirmation.</p>
@@ -334,8 +353,10 @@
         </div>
 
         <div class="status" id="farmStatus">Loading your farm from the Celo network…</div>
+        {% endif %}
     </section>
 
+    {% if not is_guest %}
     <section class="panel">
         <div class="history-head">
             <div>
@@ -347,6 +368,7 @@
         <div class="history-list" id="farmHistoryList"></div>
         <div class="empty-note" id="farmHistoryEmpty">No farm transactions yet. Your history appears here after your first farm action.</div>
     </section>
+    {% endif %}
 
     <section class="panel">
         <h2>How it works</h2>
@@ -398,5 +420,14 @@
         };
     </script>
     <script src="{{ url_for('static', filename='js/farming.js', v=ASSET_VERSION) }}"></script>
+
+    {% if is_guest %}
+    <!-- Guest: reuse the homepage "Get Started" connect flow. The guest
+         connect card in the play-panel slot is the entry point (it calls
+         openGoodMarketGetStarted()). After a successful connect the user is
+         returned to this exact page, where the server renders the real farm. -->
+    {% set get_started_boot = {'return_to': request.full_path if request else ''} %}
+    {% include "_get_started_modal.html" %}
+    {% endif %}
 </body>
 </html>
