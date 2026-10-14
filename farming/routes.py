@@ -1,6 +1,6 @@
 import logging
 import os
-from flask import Blueprint, jsonify, redirect, render_template, request, session
+from flask import Blueprint, jsonify, render_template, request, session
 
 from env_utils import get_env_int
 
@@ -46,12 +46,18 @@ def _require_auth():
 @farming_bp.route("/")
 def farming_home():
     wallet, verified = _require_auth()
-    if not wallet or not verified:
-        return redirect("/login")
+    # Guests (no session wallet) may view the page: the shared "Get Started"
+    # connect card renders in place of the play panel so a shared /farming link
+    # still converts. Signing stays impossible without a connect (a guest has
+    # an empty wallet, so no farm action can be built), so nothing is exposed.
+    is_guest = not (wallet and verified)
+    if is_guest:
+        wallet = ""
 
     return render_template(
         "farming.html",
         wallet=wallet,
+        is_guest=is_guest,
         login_method=session.get("login_method", ""),
         walletconnect_project_id=os.getenv("WALLETCONNECT_PROJECT_ID", ""),
         farming_contract=FARMING_CONTRACT_ADDRESS,
