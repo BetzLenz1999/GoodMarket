@@ -976,8 +976,11 @@
         }
         .btn-share:hover { box-shadow: 0 6px 20px rgba(var(--accent-rgb),0.4); }
     </style>
+    <!-- Shared Get Started modal styles (guest connect flow). -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/get-started.css', v=ASSET_VERSION) }}">
 </head>
 <body>
+<script>window.GM_LEARN_GUEST = {% if is_guest %}true{% else %}false{% endif %};</script>
 
 <!-- ═════════════════════════════════════════��════════════
      PDF GUIDE OVERLAY
@@ -1312,6 +1315,9 @@
 
 <script>
     (function() {
+        // A guest only sees the connect card — auto-opening the "how the quiz
+        // works" guide would cover it, so the guide is a member-only overlay.
+        if (window.GM_LEARN_GUEST) return;
         var GUIDE_KEY = 'gm_guide_seen_v2';
         var seen = localStorage.getItem(GUIDE_KEY);
         var overlay = document.getElementById('pdf-guide-overlay');
@@ -1367,6 +1373,22 @@
         } catch (_) { /* keep default */ }
     })();
 </script>
+
+        {% if is_guest %}
+        <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+            <!-- Persistent connect entry point so closing the modal doesn't
+                 strand a guest — same flow as the homepage. -->
+            <button type="button" class="gs-nav-cta" onclick="openGoodMarketGetStarted()">Get Started</button>
+        </div>
+        {# Guest: the quiz panel is not rendered at all until connected — the
+           connect card occupies the primary action slot. #}
+        {% with guest_card_icon='🎓',
+                guest_card_kicker='Connect to learn',
+                guest_card_title='Learn about G$ and earn',
+                guest_card_body='Connect or create a free GoodMarket wallet to take quizzes, earn G$ rewards and mint Achievement NFTs. Email + PIN — no app to install.' %}
+        {% include "_guest_connect_card.html" %}
+        {% endwith %}
+        {% else %}
 
         <div class="header">
             <h1><i class="fas fa-graduation-cap"></i> Learn & Earn</h1>
@@ -1596,6 +1618,7 @@
             </div>
         </div>
     </div>
+        {% endif %}
 
     <!-- List for Sale Modal — placed outside backdrop-filter parent to preserve position:fixed viewport behaviour -->
     <div id="nft-list-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 10001; align-items: center; justify-content: center;">
@@ -3520,6 +3543,11 @@
         function closeSponsorWizard() { closeCollaborationWizard(); }
 document.addEventListener('DOMContentLoaded', function() {
             console.log('🎓 Learn & Earn page loaded - initializing...');
+
+            // A guest sees only the connect card — the quiz/NFT panel is not
+            // rendered, so skip every fetch/interval that expects those
+            // elements to exist.
+            if (window.GM_LEARN_GUEST) return;
 
             // Auto-recover any interrupted purchase first
             _recoverPendingBuy();
@@ -5592,6 +5620,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // Warm-up relay in background
     setTimeout(function() { window._wcGetClient().catch(function() {}); }, 2000);
     </script>
+    {% endif %}
+
+    {% if is_guest %}
+    <!-- Guest: reuse the homepage "Get Started" connect flow. The guest connect
+         card is the entry point (it calls openGoodMarketGetStarted()). After a
+         successful connect the user is returned to this exact page, where the
+         server renders the real quiz / NFT experience. -->
+    {% set get_started_boot = {'return_to': request.full_path if request else ''} %}
+    {% include "_get_started_modal.html" %}
     {% endif %}
 </body>
 </html>
