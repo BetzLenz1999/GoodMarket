@@ -3,9 +3,11 @@
    `chatroom_feature` ON (chatroom_visible). #}
 {% if chatroom_visible %}
 <div class="gm-chat-widget" data-gm-chatroom-root>
-  <button class="gm-chat-toggle" type="button" data-gm-chat-toggle aria-expanded="true" aria-controls="gm-chat-panel">
-    <span>💬</span>
-    <strong>Community Chat</strong>
+  <button class="gm-chat-toggle" type="button" data-gm-chat-toggle aria-expanded="true" aria-controls="gm-chat-panel"
+          title="Community Chat" aria-label="Open community chatroom">
+    <span class="gm-chat-icon" aria-hidden="true">💬</span>
+    <strong class="gm-chat-label">Community Chat</strong>
+    <span class="gm-chat-caption" aria-hidden="true">Chat</span>
     <span class="gm-chat-badge" data-gm-chat-badge hidden>0</span>
   </button>
 
