@@ -5120,6 +5120,43 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
+        // For the in-app GoodMarket wallet ONLY: when BOTH Celo and XDC are
+        // claimable and every claimable leg was read confidently, present ONE
+        // unified amount and ONE claim action (doUbiClaim already submits Celo
+        // then XDC from the same PIN-unlocked provider). Injected / WalletConnect
+        // / Privy / MiniPay keep their explicit per-network choice — for them a
+        // second network means a second wallet prompt, so a single button would
+        // mislead. Returns the backend `combined` block, or null to fall back to
+        // the per-network display.
+        function _unifiedLocalClaimTotal() {
+            if (!_isUnifiedLocalUbiClaim()) return null;
+            const combined = claimAvailability && claimAvailability.combined;
+            if (!combined || !combined.confident || combined.count < 2) return null;
+            return combined;
+        }
+
+        // Single summary card for the unified (local) case. The per-network
+        // split is shown in the hint so the user still sees how the total is
+        // made up, but there is deliberately NO per-network claim button — the
+        // primary button is the one action.
+        function claimUnifiedCardHtml(combined, claims) {
+            const label = n => (n === 'xdc' ? 'XDC' : 'Celo');
+            const split = combined.networks
+                .map(n => `${label(n)} ${(claims[n] && claims[n].claimable_formatted) || '0.00'}`)
+                .join(' + ');
+            return `
+                <div class="claim-network-card is-selected is-unified">
+                    <div class="claim-network-main">
+                        <div class="claim-network-icon">🟢💠</div>
+                        <div>
+                            <div class="claim-network-name">Celo + XDC</div>
+                            <div class="claim-network-hint">${_claimEsc(split + ' G$ — claimed together in one PIN-authorized action.')}</div>
+                        </div>
+                    </div>
+                    <div class="claim-network-status available">${_claimEsc(combined.total_formatted + ' G$')}</div>
+                </div>`;
+        }
+
         function claimNetworkStatusHtml(network, info, caps) {
             const meta = {
                 celo: { icon: '🟢', name: 'Celo', hint: 'Works for MiniPay, MetaMask, WalletConnect and most injected wallets.' },
@@ -5203,15 +5240,20 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             if (!list || !claimAvailability) return;
             const caps = getClaimWalletCapabilities();
             const claims = claimAvailability.claims || {};
-            list.innerHTML = ['celo', 'xdc'].map(n => claimNetworkStatusHtml(n, claims[n] || {}, caps)).join('');
+            const unified = _unifiedLocalClaimTotal();
+            if (unified) {
+                // Local login with both networks claimable: one summary card,
+                // one action. No per-network claim buttons.
+                list.innerHTML = claimUnifiedCardHtml(unified, claims);
+            } else {
+                list.innerHTML = ['celo', 'xdc'].map(n => claimNetworkStatusHtml(n, claims[n] || {}, caps)).join('');
+            }
             if (note) {
                 if (caps.isMiniPay) {
                     note.textContent = 'MiniPay is Celo-only. XDC claims require MetaMask or a compatible WalletConnect wallet.';
                 } else if (caps.isTrustWallet) {
                     note.textContent = 'Trust Wallet network prompts can be unreliable for XDC. Use MetaMask or compatible WalletConnect for XDC.';
-                } else if (_isUnifiedLocalUbiClaim() &&
-                    claims.celo && claims.celo.can_claim && claims.celo.is_available !== false &&
-                    claims.xdc && claims.xdc.can_claim && claims.xdc.is_available !== false) {
+                } else if (unified) {
                     note.textContent = 'Your in-app GoodMarket wallet will claim both available Celo and XDC UBI in one PIN-authorized action.';
                 } else if (selectedClaimNetwork) {
                     note.textContent = `You chose ${selectedClaimNetwork.toUpperCase()}. Tap its button again to claim, or pick another network.`;
@@ -5316,7 +5358,15 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
             if (needsVerification) return;
             const caps = getClaimWalletCapabilities();
-            if (recommendedClaimNetwork === 'fuse') {
+            const unified = _unifiedLocalClaimTotal();
+            if (unified) {
+                // Local login, both networks claimable: one unified amount and
+                // one action (doUbiClaim submits Celo then XDC in one PIN).
+                label.textContent = `Claim ${unified.total_formatted} G$ (Celo + XDC)`;
+                icon.textContent = '🪙';
+                btn.disabled = false;
+                setStatus('Ready to claim on Celo and XDC — one PIN-authorized action.', 'var(--green)');
+            } else if (recommendedClaimNetwork === 'fuse') {
                 const amt = claims.fuse && claims.fuse.claimable_formatted ? claims.fuse.claimable_formatted : 'G$';
                 label.textContent = `Claim ${amt} G$ on Fuse`;
                 icon.textContent = '🔥';
