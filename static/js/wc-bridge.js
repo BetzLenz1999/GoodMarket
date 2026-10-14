@@ -215,6 +215,22 @@
         reset();
     }
 
+    // Per-wallet variant: clear a stored WC session ONLY when it belongs to
+    // `wallet` (or has no address recorded). Used after an INJECTED login so a
+    // leftover session for the SAME wallet can't later mis-route the user to
+    // WalletConnect, while a WalletConnect session belonging to a DIFFERENT
+    // wallet is left alone.
+    function _clearStoredSessionFor(wallet) {
+        if (!wallet) return false;
+        try {
+            var have = String(localStorage.getItem("wc_session_address") || "").toLowerCase();
+            var want = String(wallet).toLowerCase();
+            if (have && have !== want) return false;
+        } catch (_) { return false; }
+        _clearStoredSession();
+        return true;
+    }
+
     function configure(opts) {
         if (!opts) return;
         for (var k in opts) {
@@ -1512,6 +1528,7 @@
         prefersWcSigning: _prefersWcSigning,
         hasStoredSession: _hasStoredWcSessionFor,
         clearStoredSession: _clearStoredSession,
+        clearStoredSessionFor: _clearStoredSessionFor,
         connect: connect,
         bridgeRequest: bridgeRequest,
         getProvider: getProvider,
