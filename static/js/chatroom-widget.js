@@ -1007,14 +1007,21 @@
     tipTokens: function () { return (TIP_BOOT.tokens || []).slice(); }
   };
 
-  // The wallet side rail leaves the bottom edge free. Legacy bottom bars still
-  // require a measured offset so the chat launcher does not cover them.
+  // The wallet nav is a bottom bar on phones and a left rail on desktop.
+  // Decide by measured geometry, not by the `wallet-side-nav` class: the
+  // class is present in markup at every width, so a class check left the
+  // chat launcher sitting over the bottom bar on mobile.
   function positionChatroomLauncher() {
     var launcher = document.querySelector('.gm-chat-widget');
     if (!launcher) return;
     var nav = document.querySelector('.wallet-bottom-nav');
     var gap = 12;
-    var bottom = nav && !nav.classList.contains('wallet-side-nav') ? nav.getBoundingClientRect().height + gap : 24;
+    var isBottomBar = false;
+    if (nav) {
+      var nr = nav.getBoundingClientRect();
+      isBottomBar = nr.height > 0 && nr.bottom >= window.innerHeight - 2;
+    }
+    var bottom = isBottomBar ? nav.getBoundingClientRect().height + gap : 24;
     // If the GoodMarket Agent launcher is also on screen, stack above it so
     // the two floating buttons never overlap.
     var agent = document.querySelector('.gm-ai-agent');
