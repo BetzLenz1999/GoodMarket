@@ -807,6 +807,23 @@
         @media (max-width: 640px) {
             .modal-sheet { max-height: calc(100dvh - 76px); }
         }
+        /* Short viewports (small phones, landscape keyboards): the claim modal is
+           the tallest sheet, so trim its optional detail lines to keep the whole
+           content visible without scrolling. Only decorative copy is hidden —
+           every figure and the claim action stay. */
+        @media (max-height: 700px) {
+            #claimModal .ubi-pool-note { display: none; }
+            #claimModal .claim-wallet-note { margin: 0.1rem 0 0.4rem; font-size: 0.66rem; }
+            #claimModal .claim-status { margin-top: 0.4rem; font-size: 0.78rem; }
+            #claimModal .btn-primary { padding: 0.75rem; font-size: 0.95rem; }
+            /* Collapse the countdown to one compact line: the big timer is nice
+               but it duplicates #ubiClaimStatus and is what pushes the sheet
+               past the fold on a 640px-tall phone. */
+            #claimModal .countdown-box { padding: 0.35rem; margin-top: 0.4rem; }
+            #claimModal .countdown-label { display: none; }
+            #claimModal .countdown-note { display: none; }
+            #claimModal .countdown-display { font-size: 1.15rem; }
+        }
         /* The floating GoodMarket Agent launcher (z-index 9999) and the
            Community Chatroom widget (z-index 9998) outrank the modal overlay
            (200) and land right on top of the submit button. Hide both while
@@ -825,13 +842,13 @@
             width: 40px; height: 4px;
             
             border-radius: 2px;
-            margin: 0 auto 1.25rem;
+            margin: 0 auto 0.75rem;
         }
         .modal-title {
             font-size: 1.1rem;
             font-weight: 700;
             
-            margin-bottom: 1.25rem;
+            margin-bottom: 0.75rem;
             text-align: center;
         }
 
@@ -1145,14 +1162,14 @@
         .ubi-pool-panel {
             border: 1px solid rgba(var(--accent-rgb),0.24);
             border-radius: 12px;
-            padding: 0.7rem 0.85rem;
-            margin-bottom: 1rem;
+            padding: 0.55rem 0.7rem;
+            margin-bottom: 0.7rem;
         }
         .ubi-pool-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 0.6rem;
+            margin-bottom: 0.4rem;
         }
         .ubi-pool-title { font-size: 0.76rem; font-weight: 800; }
         .ubi-pool-live {
@@ -1166,30 +1183,30 @@
         .ubi-pool-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.5rem;
+            gap: 0.35rem;
         }
         .ubi-pool-cell {
             display: flex;
             flex-direction: column;
             gap: 0.12rem;
             border-radius: 8px;
-            padding: 0.45rem 0.55rem;
+            padding: 0.3rem 0.45rem;
             min-width: 0;
         }
         .ubi-pool-cell-label { font-size: 0.62rem; line-height: 1.25; }
-        .ubi-pool-cell-value { font-size: 0.82rem; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
-        .ubi-pool-note { font-size: 0.62rem; line-height: 1.35; margin-top: 0.5rem; text-align: center; }
+        .ubi-pool-cell-value { font-size: 0.78rem; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+        .ubi-pool-note { font-size: 0.6rem; line-height: 1.3; margin-top: 0.35rem; text-align: center; }
         .countdown-box {
             display: none;
             text-align: center;
             
             border-radius: 12px;
-            padding: 0.75rem;
-            margin-top: 0.75rem;
+            padding: 0.5rem;
+            margin-top: 0.6rem;
         }
         .countdown-label { font-size: 0.68rem; color: var(--text-muted); margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
         .countdown-display {
-            font-size: 1.6rem;
+            font-size: 1.3rem;
             font-weight: 800;
             letter-spacing: 0.05em;
             
@@ -2698,7 +2715,7 @@
                         <span class="ubi-pool-cell-value" id="ubiPoolBalance">—</span>
                     </div>
                 </div>
-                <div class="ubi-pool-note" id="ubiPoolNote">Live figures from the GoodDollar UBI pool — the same ones shown on GoodDapp.</div>
+                <div class="ubi-pool-note" id="ubiPoolNote">Live figures from the GoodDollar UBI pool.</div>
             </div>
 
             <div class="claim-network-list" id="claimNetworkList" aria-live="polite">
@@ -2737,20 +2754,6 @@
                 <div class="countdown-label">Next Claim Opens In</div>
                 <div class="countdown-display" id="ubiCountdownDisplay">--:--:--</div>
                 <div class="countdown-note">Resets at <strong>12:00 UTC</strong> · 8:00 PM Philippine Time</div>
-            </div>
-
-            <div style="display:flex;align-items:center;justify-content:center;gap:1rem;margin-top:1rem;flex-wrap:wrap;">
-                <div style="font-size:0.68rem;color:var(--text-muted);">⛽ Gas-free on Celo</div>
-                <div style="font-size:0.68rem;color:var(--text-muted);">🔒 Secured by GoodDollar</div>
-                <div style="font-size:0.68rem;color:var(--text-muted);">⏰ Claimable daily</div>
-            </div>
-
-            <div style="border-top:1px solid var(--card-border);margin-top:1.1rem;padding-top:0.9rem;text-align:center;color:var(--text-muted);font-size:0.72rem;line-height:1.45;">
-                XDC remains available as an advanced route for wallets that support XDC prompts.
-                <a href="/xdc-wallet" style="display:inline-flex;align-items:center;gap:0.4rem;color:#a78bfa;font-size:0.82rem;font-weight:600;text-decoration:none;margin-top:0.35rem;">
-                    <svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="rgba(124,58,237,0.25)"/><text x="7" y="10.5" text-anchor="middle" font-size="6.5" fill="#7c3aed" font-weight="900" font-family="Inter,sans-serif">XDC</text></svg>
-                    Open XDC claim page →
-                </a>
             </div>
 
             <button class="btn-secondary" onclick="closeModal('claimModal')">Close</button>
