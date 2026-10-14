@@ -13,6 +13,8 @@
     <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
     <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
     <link rel="apple-touch-icon" href="/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}">
+    <!-- Shared "Install app" (PWA) banner styles. -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pwa-install.css', v=ASSET_VERSION) }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400&family=Nunito+Sans:opsz,wght@6..12,300;6..12,400;6..12,600;6..12,700;6..12,800&display=swap" rel="stylesheet">
@@ -2265,6 +2267,31 @@
         <button type="button" id="joinCommunityJoinBtn" class="jcb-btn" onclick="joinGoodMarketCommunity()">✈️ Join GoodMarket Community</button>
     </div>
 
+    {% if pwa_installable and (login_method or '')|lower == 'local' %}
+    <!-- ── Install GoodMarket app (one-time invite, in-app wallet users) ──
+         Shown ONCE per browser to local (email + PIN) wallet users, then never
+         again — the same one-shot pattern as the join-community banner. Only
+         rendered for local logins because the in-app wallet is the flow that
+         benefits most from an installed, always-signed-in app. Revealed by
+         static/js/pwa-install.js (data-gm-pwa-* contract); starts display:none
+         so it cannot flash before the seen-flag is checked. Hidden entirely
+         when the app is already installed (standalone). -->
+    <div id="pwaInstallBanner" class="gm-pwa-banner" data-gm-pwa-banner
+         data-gm-pwa-mode="once" data-gm-pwa-key="wallet"
+         role="region" aria-label="Install the GoodMarket app">
+        <div class="gm-pwa-icon" aria-hidden="true">📲</div>
+        <div class="gm-pwa-body">
+            <div class="gm-pwa-title">Install the GoodMarket app</div>
+            <div class="gm-pwa-copy">Add GoodMarket to your home screen for one-tap access — faster than reopening the browser every time.</div>
+        </div>
+        <div class="gm-pwa-actions">
+            <button type="button" class="gm-pwa-install-btn" data-gm-pwa-install>⬇️ Install app</button>
+            <button type="button" class="gm-pwa-dismiss-btn" data-gm-pwa-dismiss aria-label="Dismiss install prompt">×</button>
+        </div>
+        <div class="gm-pwa-status" id="pwaInstallStatus" data-gm-pwa-status role="status" aria-live="polite"></div>
+    </div>
+    {% endif %}
+
     {% if dapp_connect_visible %}
     <!-- ── Connected-dApp status strip ──
          A live WalletConnect session from an external dApp is security-relevant,
@@ -3876,6 +3903,11 @@
 
         <!-- Bottom navigation sheets (extracted). -->
     <script src="{{ url_for('static', filename='js/wallet-bottomnav.js', v=ASSET_VERSION) }}"></script>
+
+    <!-- Shared PWA install + service-worker module. Registers the SW at root
+         scope (so it controls "/", the manifest start_url) and drives the
+         one-time "Install app" banner via data-gm-pwa-* attributes. -->
+    <script src="{{ url_for('static', filename='js/pwa-install.js', v=ASSET_VERSION) }}"></script>
 
     {# The GoodMarket Agent is HIDDEN by default (goodmarket_agent_visible) so
        the community room is what users land on. Flip it ON from the admin
