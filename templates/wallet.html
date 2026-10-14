@@ -3761,10 +3761,6 @@
                 <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#f59e0b,#e11d48);color:#fff;">💰</span>
                 <span class="bn-sheet-name">More Ways To Earn</span>
             </button>
-            <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ openBottomSheet('bnSheetWallet'); })">
-                <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;">👛</span>
-                <span class="bn-sheet-name">GoodMarket Wallet</span>
-            </button>
             <button type="button" class="bn-sheet-item" onclick="bnGo(function(){ navigateWithFeedback('/profile', 'Opening Profile…'); })">
                 <span class="bn-sheet-circle" style="background:linear-gradient(135deg,#ec4899,#be185d);color:#fff;">👤</span>
                 <span class="bn-sheet-name">Profile</span>
@@ -3793,18 +3789,19 @@
     </div>
 
     <!-- ── Wallet Side Navigation ──
-         Primary destinations stay one tap away. Profile deliberately comes
-         first, followed by the wallet and cross-chain tools requested for the
-         wallet hub. Secondary actions remain in their existing sheets. -->
+         Primary destinations stay one tap away. The Wallet chip is the money
+         hub (Send / GoodSwap / Bridge / Stream / XSwap) and deliberately opens
+         a sheet rather than linking to /wallet — we are already here, so a
+         self-link was a dead tap. Secondary actions remain in their sheets. -->
     <nav class="wallet-bottom-nav wallet-side-nav" aria-label="Wallet navigation">
         <a class="bn-item bn-desktop-only bn-profile" href="/profile" aria-label="Profile" title="Profile">
             <span class="bn-icon" aria-hidden="true">👤</span>
             <span class="bn-label">Profile</span>
         </a>
-        <a class="bn-item bn-wallet active" href="/wallet" aria-current="page" aria-label="Wallet" title="Wallet">
+        <button type="button" class="bn-item bn-wallet" onclick="openBottomSheet('bnSheetWallet')" aria-haspopup="dialog" aria-controls="bnSheetWallet" aria-label="Wallet" title="Wallet">
             <span class="bn-icon" aria-hidden="true">👛</span>
             <span class="bn-label">Wallet</span>
-        </a>
+        </button>
         <button type="button" class="bn-item bn-claim" onclick="openClaimOrVerify()" aria-haspopup="dialog" aria-controls="claimModal" aria-label="Claim G$" title="Claim G$">
             <span class="bn-icon" aria-hidden="true">🪙</span>
             <span class="bn-label">Claim G$</span>
