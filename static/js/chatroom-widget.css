@@ -436,12 +436,18 @@
   .gm-chat-badge { top: -4px; right: -4px; }
 
   .gm-chat-panel {
-    width: calc(100vw - 20px);
-    max-height: calc(100dvh - 112px - env(safe-area-inset-bottom, 0px));
+    /* A phone panel is anchored to the RIGHT edge, so the reclaimed space is
+       the strip on the left: the balance card, token rows and banners stay
+       visible and tappable while the room is open. The previous full-bleed
+       width left only a 10px gutter and covered ~95% of the screen. */
+    width: min(320px, calc(100vw - 88px));
+    max-height: min(440px, calc(100dvh - 216px - env(safe-area-inset-bottom, 0px)));
   }
 
   .gm-chat-messages {
-    height: min(300px, calc(100dvh - 318px - env(safe-area-inset-bottom, 0px)));
+    /* Real rendered rows are 69-88px, so this is ~3 messages. Going lower
+       makes the room awkward to use — the point of the change is width. */
+    height: min(220px, calc(100dvh - 432px - env(safe-area-inset-bottom, 0px)));
   }
 }
 
