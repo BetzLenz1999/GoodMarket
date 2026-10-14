@@ -1,9 +1,10 @@
 {# Public Community Chatroom — its OWN floating widget, SEPARATE from the
-   GoodMarket Agent. Auto-opens on load. Hidden entirely until an admin turns
-   `chatroom_feature` ON (chatroom_visible). #}
+   GoodMarket Agent. Starts COLLAPSED: it is a large overlay on a phone, so it
+   opens only when the user taps the launcher. Hidden entirely until an admin
+   turns `chatroom_feature` ON (chatroom_visible). #}
 {% if chatroom_visible %}
 <div class="gm-chat-widget" data-gm-chatroom-root>
-  <button class="gm-chat-toggle" type="button" data-gm-chat-toggle aria-expanded="true" aria-controls="gm-chat-panel"
+  <button class="gm-chat-toggle" type="button" data-gm-chat-toggle aria-expanded="false" aria-controls="gm-chat-panel"
           title="Community Chat" aria-label="Open community chatroom">
     <span class="gm-chat-icon" aria-hidden="true">💬</span>
     <strong class="gm-chat-label">Community Chat</strong>
@@ -11,7 +12,7 @@
     <span class="gm-chat-badge" data-gm-chat-badge hidden>0</span>
   </button>
 
-  <section id="gm-chat-panel" class="gm-chat-panel" aria-label="GoodMarket Community Chatroom" data-gm-chat-panel>
+  <section id="gm-chat-panel" class="gm-chat-panel" aria-label="GoodMarket Community Chatroom" data-gm-chat-panel hidden>
     <header class="gm-chat-header">
       <div>
         <strong>💬 Community Chatroom</strong>
