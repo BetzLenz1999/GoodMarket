@@ -6608,30 +6608,37 @@ def admin_dashboard():
 
 @routes.route("/learn-earn")
 def learn_earn_page():
-    if not session.get("verified") or not session.get("wallet"):
-        return redirect(url_for("routes.index"))
-
     wallet = session.get("wallet")
-
-    # Human (face) verification gate — all login_methods must be
-    # face-verified on the GoodDollar Identity contract to enter.
-    from human_verification import human_verification_redirect
-    fv_gate = human_verification_redirect(wallet)
-    if fv_gate:
-        return fv_gate
+    verified = session.get("verified")
+    # Guests (no session wallet) may view the page: the shared "Get Started"
+    # connect card renders in place of the quiz panel so a shared link still
+    # converts. Signing / claiming stays impossible without a connect (every
+    # quiz + NFT path is session based), so allowing the view exposes nothing.
+    is_guest = not (wallet and verified)
+    if is_guest:
+        wallet = ""
+    else:
+        # Human (face) verification gate — all login_methods must be
+        # face-verified on the GoodDollar Identity contract to enter.
+        from human_verification import human_verification_redirect
+        fv_gate = human_verification_redirect(wallet)
+        if fv_gate:
+            return fv_gate
 
     is_admin_user = False
-    try:
-        from supabase_client import is_admin
-        is_admin_user = bool(is_admin(wallet))
-    except Exception as admin_err:
-        logger.warning(f"⚠️ Could not resolve admin status for /learn-earn route: {admin_err}")
+    if not is_guest:
+        try:
+            from supabase_client import is_admin
+            is_admin_user = bool(is_admin(wallet))
+        except Exception as admin_err:
+            logger.warning(f"⚠️ Could not resolve admin status for /learn-earn route: {admin_err}")
 
-    # Track Learn & Earn page visit
-    analytics.track_page_view(wallet, "learn_earn")
+        # Track Learn & Earn page visit
+        analytics.track_page_view(wallet, "learn_earn")
 
     return render_template("learn_and_earn.html",
                          wallet=wallet,
+                         is_guest=is_guest,
                          login_method=session.get("login_method", ""),
                          walletconnect_project_id=os.environ.get("WALLETCONNECT_PROJECT_ID", ""),
                          walletconnect_sidecar_enabled=_is_walletconnect_sidecar_enabled(),
