@@ -509,8 +509,15 @@ class ReferralService:
         logger.info(f"ℹ️ Referral id={row_id} already claimed by another process for {referee_wallet[:8]}...")
         return {"claimed": False}
 
-    def update_referral_status(self, referee_wallet: str, status: str, error_message: str = None, referral_id: int = None) -> None:
-        """Update the status of a referral record."""
+    def update_referral_status(self, referee_wallet: str, status: str, error_message: str = None,
+                               referral_id: int = None, clear_error: bool = False) -> None:
+        """Update the status of a referral record.
+
+        ``clear_error=True`` wipes a previously written ``error_message`` (e.g.
+        the stale "Referee not verified yet" text) once the referral is
+        progressing again, so the admin dashboard stops showing a failure that
+        no longer applies.
+        """
         supabase = _get_supabase()
         if not supabase:
             return
@@ -520,6 +527,8 @@ class ReferralService:
             update_data['completed_at'] = datetime.now(timezone.utc).isoformat()
         if error_message:
             update_data['error_message'] = error_message
+        elif clear_error:
+            update_data['error_message'] = None
 
         def _update_referral():
             query = supabase.table('referrals').update(update_data)
@@ -603,7 +612,7 @@ class ReferralService:
             # referee, so it can still be checked directly; a referrer leg
             # cannot be attributed safely.
             if reward.get('reward_type') == 'referee' and reward.get('wallet_address'):
-                gate = self.is_referee_onchain_verified(reward.get('wallet_address'))
+                gate = self.is_referee_onchain_verified(reward.get('wallet_address'), force=True)
                 return {"verified": gate.get('verified', False),
                         "reason": gate.get('reason', 'unresolved_referral'),
                         "referee": reward.get('wallet_address')}
@@ -616,7 +625,7 @@ class ReferralService:
         if referral.get('onchain_verified'):
             return {"verified": True, "reason": "admin_onchain_verified", "referee": referee}
 
-        gate = self.is_referee_onchain_verified(referee)
+        gate = self.is_referee_onchain_verified(referee, force=True)
         return {"verified": gate.get('verified', False),
                 "reason": gate.get('reason', 'onchain_check_error'),
                 "referee": referee}
@@ -1219,15 +1228,20 @@ class ReferralService:
                     # balance/gas shortfall keeps saying "Queued (low G$/gas)"
                     # and an admin tops up a wallet that was never the blocker —
                     # the real blocker is the referee's missing verification.
+                    # An infra error is NOT "the referee is unverified" — label
+                    # it distinctly so nobody chases the wrong cause.
+                    if gate.get('reason') == 'onchain_check_error':
+                        note = "Referee verification check unavailable (RPC error) — will retry"
+                    else:
+                        note = f"Referee not on-chain verified ({gate.get('reason')})"
                     if referral_id is not None:
                         self.update_referral_status_by_id(
-                            referral_id, 'pending_face_verification',
-                            f"Referee not on-chain verified ({gate.get('reason')})"
+                            referral_id, 'pending_face_verification', note
                         )
                     elif gate.get('referee'):
                         self.update_referral_status(
                             gate.get('referee'), 'pending_face_verification',
-                            f"Referee not on-chain verified ({gate.get('reason')})",
+                            note,
                             referral_id=None,
                         )
                     continue
@@ -1379,8 +1393,13 @@ class ReferralService:
             "still_waiting_face_verification": reconcile_summary.get("still_waiting_face_verification", 0)
         }
 
-    def update_referral_status_by_id(self, referral_id: int, status: str, error_message: str = None) -> None:
-        """Update one exact referral status by primary key."""
+    def update_referral_status_by_id(self, referral_id: int, status: str, error_message: str = None,
+                                     clear_error: bool = False) -> None:
+        """Update one exact referral status by primary key.
+
+        ``clear_error=True`` wipes a stale ``error_message`` (see
+        ``update_referral_status``).
+        """
         supabase = _get_supabase()
         if not supabase:
             return
@@ -1389,6 +1408,8 @@ class ReferralService:
             update_data['completed_at'] = datetime.now(timezone.utc).isoformat()
         if error_message:
             update_data['error_message'] = error_message
+        elif clear_error:
+            update_data['error_message'] = None
         _safe(
             lambda: supabase.table('referrals').update(update_data).eq('id', referral_id).execute(),
             op="update referral status by id"
@@ -1474,31 +1495,66 @@ class ReferralService:
     # PHASE 2: Auto-trigger referral after verification/UBI claim
     # =========================================================================
 
-    def is_referee_onchain_verified(self, referee_wallet: str) -> dict:
+    def is_referee_onchain_verified(self, referee_wallet: str, force: bool = False) -> dict:
         """Authoritative face-verification gate for referral payouts.
 
-        Referral rewards may only be paid once the REFEREE is whitelisted on
-        the GoodDollar Identity contract. `user_data.face_verified` /
-        `verified_after_goodmarket` are display/attribution flags that can be
-        written optimistically (e.g. the /wallet?fv_pending=1&src=goodmarket
-        redirect, which is just a URL), so they must never be the sole reason a
-        payout happens. This checks the chain directly and FAILS CLOSED — an RPC
-        error means "not verified" so a flaky node can never release a reward.
+        Referral rewards may only be paid once the REFEREE is face-verified.
+        `user_data.face_verified` / `verified_after_goodmarket` are
+        display/attribution flags that can be written optimistically (e.g. the
+        /wallet?fv_pending=1&src=goodmarket redirect, which is just a URL), so
+        they are never accepted as proof.
 
-        Returns ``{"verified": bool, "reason": str}``.
+        Two independent pieces of on-chain evidence are accepted:
+
+          1. ``Identity.isWhitelisted`` — the canonical read. ``force=True``
+             bypasses its cache so a verification that just landed is seen
+             immediately.
+          2. A **confirmed Celo UBI claim** — ``UBIScheme.claim()`` reverts for a
+             non-whitelisted caller, so a successful claim proves the wallet was
+             verified. This is what rescues users whose ``isWhitelisted`` read is
+             stale/lagging (the reported "Referee not verified yet" on a
+             verified, already-claimed user).
+
+        A transport error on *both* is reported as ``onchain_check_error`` — an
+        INFRA failure, not a verdict — so callers leave the referral retryable
+        instead of stamping a misleading "not verified".
+
+        Returns ``{"verified": bool, "reason": str, "source": str}``.
         """
+        identity_error = False
         try:
             from blockchain import is_identity_verified
-            result = is_identity_verified(referee_wallet) or {}
+            result = is_identity_verified(referee_wallet, force=force) or {}
+            if result.get("verified", False):
+                return {"verified": True, "reason": "onchain_verified", "source": "identity"}
+            if result.get("error"):
+                identity_error = True
         except Exception as exc:  # noqa: BLE001
+            identity_error = True
             logger.warning(f"Referral on-chain verification check failed for {referee_wallet[:8]}...: {exc}")
-            return {"verified": False, "reason": "onchain_check_error"}
 
-        if result.get("error"):
-            return {"verified": False, "reason": "onchain_check_error"}
-        if result.get("verified", False):
-            return {"verified": True, "reason": "onchain_verified"}
-        return {"verified": False, "reason": "not_onchain_verified"}
+        # Fallback evidence: a confirmed UBI claim proves whitelisting even when
+        # the Identity read is unavailable or stale.
+        try:
+            from blockchain import has_confirmed_ubi_claim
+            try:
+                evidence_days = int(os.getenv("REFERRAL_UBI_CLAIM_EVIDENCE_DAYS", "30"))
+            except (TypeError, ValueError):
+                evidence_days = 30
+            claim = has_confirmed_ubi_claim(referee_wallet, days=evidence_days) or {}
+            if claim.get("verified"):
+                logger.info(
+                    f"🪪 Referral gate: {referee_wallet[:8]}... verified via confirmed UBI claim "
+                    f"({claim.get('tx_hash')})"
+                )
+                return {"verified": True, "reason": "ubi_claim_confirmed", "source": "ubi_claim"}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Referral UBI-claim evidence check failed for {referee_wallet[:8]}...: {exc}")
+
+        if identity_error:
+            # Could not read the chain — do NOT claim the user is unverified.
+            return {"verified": False, "reason": "onchain_check_error", "source": "none"}
+        return {"verified": False, "reason": "not_onchain_verified", "source": "identity"}
 
     def auto_disburse_pending_referral(self, referee_wallet: str, source: str = "auto",
                                        onchain_confirmed: bool = False) -> dict:
@@ -1522,15 +1578,23 @@ class ReferralService:
             return {"success": False, "reason": "no_wallet"}
 
         # Authoritative gate BEFORE claiming: a DB-only flag must never pay out.
+        # force=True: this path runs the instant a verification/claim lands, so
+        # it must not be poisoned by a cached pre-verification `false` read.
         if not onchain_confirmed:
-            gate = self.is_referee_onchain_verified(referee_wallet)
+            gate = self.is_referee_onchain_verified(referee_wallet, force=True)
             if not gate.get("verified"):
                 logger.info(
                     f"⛔ [{source}] Referral not disbursed for {referee_wallet[:8]}...: "
                     f"{gate.get('reason')}"
                 )
-                return {"success": False, "reason": "referee_not_onchain_verified",
-                        "verification_reason": gate.get("reason")}
+                # An infra failure is NOT a verdict — report it distinctly so the
+                # caller/admin does not read it as "the referee is unverified".
+                reason = ("referee_verification_unavailable"
+                          if gate.get("reason") == "onchain_check_error"
+                          else "referee_not_onchain_verified")
+                return {"success": False, "reason": reason,
+                        "verification_reason": gate.get("reason"),
+                        "verification_source": gate.get("source")}
 
         try:
             claimed = self.claim_pending_referral_for_disbursement(referee_wallet)
@@ -1672,11 +1736,18 @@ class ReferralService:
         # are recorded below but never authorize a payout on their own. This is
         # the rule the program promises: the NEW user must actually be verified
         # before any reward is released.
-        gate = self.is_referee_onchain_verified(wallet_address)
+        gate = self.is_referee_onchain_verified(wallet_address, force=True)
         is_verified = gate.get('verified', False)
         verification_reason = gate.get('reason', 'onchain_check_error')
         if is_verified:
-            logger.info(f"User {wallet_address[:8]} verified on-chain (authoritative)")
+            logger.info(f"User {wallet_address[:8]} verified on-chain (authoritative) via {gate.get('source')}")
+            # Clear any stale "Referee not verified yet" text left by an earlier
+            # attempt that raced the on-chain whitelist write. Keep the row in
+            # the claimed 'disbursing' state — the disbursement below finalizes it.
+            if referral.get('id') is not None:
+                self.update_referral_status_by_id(
+                    referral.get('id'), 'disbursing', clear_error=True
+                )
         else:
             logger.info(f"User {wallet_address[:8]} NOT verified on-chain: {verification_reason}")
 
@@ -1801,6 +1872,79 @@ class ReferralService:
             "still_stuck": still_stuck,
             "errors": errors,
             "total_checked": len(stuck_referrals.data)
+        }
+
+    def recheck_verification_blocked_referrals(self, limit: int = 500) -> dict:
+        """Admin one-shot: re-check referees blocked as "not verified".
+
+        Forces a FRESH on-chain read (bypassing the cache) for every referral
+        whose current status or ``error_message`` suggests it was blocked by a
+        verification check, disburses the ones that now pass, and clears the
+        stale error text. This repairs the backlog left by the negative-cache
+        bug without waiting for the reconciler or a user re-login.
+        """
+        supabase = _get_supabase()
+        if not supabase:
+            return {"success": False, "error": "Database not available"}
+
+        # Rows that look verification-blocked: still awaiting verification, or
+        # carrying the stale error text written by an earlier failed attempt.
+        blocked = _safe(
+            lambda: supabase.table('referrals')
+                .select('*')
+                .or_('status.eq.pending_face_verification,'
+                     'error_message.ilike.%not_onchain_verified%,'
+                     'error_message.ilike.%verification check unavailable%')
+                .limit(max(1, int(limit)))
+                .execute(),
+            op="get verification-blocked referrals"
+        )
+
+        rows = getattr(blocked, 'data', None) or []
+        checked = 0
+        now_verified = 0
+        cleared = 0
+        still_blocked = 0
+        errors = 0
+
+        for referral in rows:
+            wallet = referral.get('referee_wallet')
+            code = referral.get('referral_code')
+            referral_id = referral.get('id')
+            if not wallet:
+                errors += 1
+                continue
+            checked += 1
+
+            gate = self.is_referee_onchain_verified(wallet, force=True)
+            if not gate.get('verified'):
+                still_blocked += 1
+                continue
+
+            now_verified += 1
+            logger.info(
+                f"🔁 Re-check: {wallet[:8]}... is now verified ({gate.get('source')}) — "
+                f"clearing stale error and disbursing {code}"
+            )
+            # Clear the stale text first so the row is never left saying
+            # "not verified" after we proved otherwise.
+            if referral_id is not None:
+                self.update_referral_status_by_id(referral_id, referral.get('status') or
+                                                  'pending_face_verification', clear_error=True)
+                cleared += 1
+
+            result = self.verify_and_disburse_referral(wallet, code) if code else {}
+            if not (result.get('success') or result.get('already_disbursed')):
+                still_blocked += 1
+
+        return {
+            "success": True,
+            "checked": checked,
+            "now_verified": now_verified,
+            "errors_cleared": cleared,
+            "still_blocked": still_blocked,
+            "errors": errors,
+            "total_candidates": len(rows),
         }
 
 
