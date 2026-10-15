@@ -25,6 +25,20 @@ def _clean_env_value(name: str) -> str | None:
     return value or None
 
 
+def get_env_str(name: str, default: str = "", *, lower: bool = False) -> str:
+    """Return a cleaned string env var, falling back on missing/empty values.
+
+    A variable that is *set but empty* (``VAR=``) or wrapped in quotes used to
+    defeat ``os.getenv(name, default)`` because the default only applies when
+    the variable is entirely unset. Cleaning here means an empty or quoted value
+    resolves to the default instead of silently becoming an empty string.
+    """
+    value = _clean_env_value(name)
+    if value is None:
+        return default
+    return value.lower() if lower else value
+
+
 def get_env_int(name: str, default: int) -> int:
     value = _clean_env_value(name)
     if value is None:
