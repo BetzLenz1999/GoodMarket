@@ -8222,16 +8222,43 @@ async function loadMinigamesMaintenance() {
             }
         }
 
-        function statusBadge(status) {
+        // A 'disbursing' row is only STUCK once it has been claimed longer than
+        // the reaper threshold (REFERRAL_STALE_CLAIM_SEC, default 300s). Before
+        // that it is simply in flight — labelling it "(stuck? retry)" made a
+        // healthy payout look like a funds problem.
+        const REFERRAL_STALE_CLAIM_MS = 300 * 1000;
+
+        function disbursingAgeLabel(row) {
+            const started = row && row.disbursing_at ? Date.parse(row.disbursing_at) : NaN;
+            if (isNaN(started)) return null;
+            const mins = Math.max(0, Math.floor((Date.now() - started) / 60000));
+            return mins < 1 ? 'just now' : `${mins}m ago`;
+        }
+
+        function statusBadge(status, row) {
             const map = {
                 'completed': { label: '✅ Completed', color: '#10b981', bg: 'rgba(16,185,129,0.15)' },
                 'pending_face_verification': { label: '⏳ Awaiting FV / UBI claim', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
                 'pending_disbursed': { label: '💸 Queued (funds or referee FV)', color: '#6366f1', bg: 'rgba(99,102,241,0.15)' },
-                'disbursing': { label: '⏳ Disbursing (stuck? retry)', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+                'disbursing': { label: '⏳ Disbursing', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
                 'failed': { label: '❌ Failed (retry)', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' }
             };
             const s = map[status] || { label: status, color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };
-            return `<span style="padding:0.25rem 0.6rem;border-radius:6px;font-size:0.8rem;font-weight:600;color:${s.color};background:${s.bg}">${s.label}</span>`;
+
+            let label = s.label;
+            if (status === 'disbursing') {
+                const started = row && row.disbursing_at ? Date.parse(row.disbursing_at) : NaN;
+                const age = disbursingAgeLabel(row);
+                if (age && !isNaN(started) && (Date.now() - started) > REFERRAL_STALE_CLAIM_MS) {
+                    // Genuinely stranded — the reconciler will reclaim it, or the
+                    // admin can retry. Auto-reset needs no funds.
+                    label = `⏳ Disbursing — stuck (${age})`;
+                } else if (age) {
+                    label = `⏳ Disbursing — in progress (${age})`;
+                }
+            }
+
+            return `<span style="padding:0.25rem 0.6rem;border-radius:6px;font-size:0.8rem;font-weight:600;color:${s.color};background:${s.bg}">${label}</span>`;
         }
 
         function shortWallet(w) {
@@ -8518,7 +8545,7 @@ async function loadMinigamesMaintenance() {
                         <td style="padding:0.75rem 0.5rem"><code style="background:rgba(251,191,36,0.15);padding:0.25rem 0.5rem;border-radius:4px;font-size:0.85rem;color:#fbbf24">${r.referral_code || '—'}</code></td>
                         <td style="padding:0.75rem 0.5rem;font-family:monospace;font-size:0.82rem">${shortWallet(r.referee_wallet)}</td>
                         <td style="padding:0.75rem 0.5rem;font-family:monospace;font-size:0.82rem">${shortWallet(r.referrer_wallet)}</td>
-                        <td style="padding:0.75rem 0.5rem">${statusBadge(r.status)}${r.error_message ? `<div style="font-size:0.72rem;color:#fca5a5;margin-top:0.3rem;max-width:220px;word-break:break-word">${String(r.error_message).replace(/</g, '&lt;')}</div>` : ''}</td>
+                        <td style="padding:0.75rem 0.5rem">${statusBadge(r.status, r)}${r.error_message ? `<div style="font-size:0.72rem;color:#fca5a5;margin-top:0.3rem;max-width:220px;word-break:break-word">${String(r.error_message).replace(/</g, '&lt;')}</div>` : ''}</td>
                         <td style="padding:0.75rem 0.5rem;color:rgba(241,245,249,0.6);font-size:0.8rem">${r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}</td>
                         <td style="padding:0.75rem 0.5rem">
                             <button class="admin-btn" style="padding:0.4rem 0.75rem;font-size:0.82rem;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.5);color:#a5b4fc;" onclick="viewReferralDetail('${(r.referral_code || '').replace(/'/g, '')}', '${r.id || ''}')">
