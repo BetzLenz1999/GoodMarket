@@ -1935,19 +1935,20 @@ def verify_identity():
                 "(email + PIN wallet). Connecting an existing wallet — Privy, WalletConnect, "
                 "MiniPay, or MetaMask — is not eligible."
             )
-        if is_face_verified:
-            # User is face-verified (proven on-chain above) — check for a
-            # previously recorded pending referral and disburse the reward now.
-            # The helper CAS-claims the row, so concurrent triggers (fv-callback
-            # etc.) never double-pay. onchain_confirmed=True skips the helper's
-            # duplicate RPC read since fv_status already proved it.
-            try:
-                from referral_program.referral_service import referral_service as ref_svc
-                ref_svc.auto_disburse_pending_referral(
-                    wallet_address, source="verify_identity", onchain_confirmed=True
-                )
-            except Exception as ref_err:
-                logger.warning(f"⚠️ Pending referral check error in verify-identity: {ref_err}")
+        # Always invoke the disburser (it returns fast when there is no pending
+        # referral). Previously this was gated on `is_face_verified` from the
+        # same cached read that the payout gate uses — so a stale/lagging
+        # `false` meant the referral was never even retried on this login. The
+        # helper's own forced gate is the authority; `onchain_confirmed` only
+        # skips its duplicate RPC read when we already have a positive result.
+        try:
+            from referral_program.referral_service import referral_service as ref_svc
+            ref_svc.auto_disburse_pending_referral(
+                wallet_address, source="verify_identity",
+                onchain_confirmed=bool(is_face_verified),
+            )
+        except Exception as ref_err:
+            logger.warning(f"⚠️ Pending referral check error in verify-identity: {ref_err}")
 
         logger.info(f"✅ Identity verification successful for {wallet_address}")
 
@@ -2063,7 +2064,9 @@ def fv_callback():
 
         # Do a quick on-chain check; if it already propagated, mark fully
         # verified; otherwise flag as pending (claim button will re-check).
-        identity_result = is_identity_verified(wallet_address)
+        # force=True: this runs seconds after GoodDollar's callback, so a
+        # cached pre-verification `false` must not decide the outcome.
+        identity_result = is_identity_verified(wallet_address, force=True)
         if identity_result.get('verified'):
             session['ubi_verified'] = True
             # Mirror the confirmed on-chain FV onto the local-wallet account
