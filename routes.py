@@ -3041,6 +3041,7 @@ def get_pending_referrals():
                 "status": r.get("status"),
                 "onchain_verified": r.get("onchain_verified"),
                 "created_at": r.get("created_at"),
+                "disbursing_at": r.get("disbursing_at"),
                 "error_message": r.get("error_message"),
                 "celoscan_url": f"https://celoscan.io/address/{r.get('referee_wallet')}" if r.get("referee_wallet") else None
             })
@@ -3295,6 +3296,46 @@ def admin_approve_referral():
 
         logger.info(f"✅ Admin {admin_wallet[:8]}... approved referral {referral_code} | referee={referee_wallet[:8]}...")
 
+        # Step 0: Is a leg ALREADY PAID on-chain? Ask the contract with the same
+        # reward_id a send would use. This is the authoritative duplicate check —
+        # it cannot be defeated by a reward-log row that was written without a
+        # referral_id (the bug that paid the referrer twice). If both legs are
+        # already paid we finalize the row and send nothing.
+        already = {"referrer": False, "referee": False}
+        if row.get("id") is not None:
+            for _leg, _wallet in (("referee", referee_wallet), ("referrer", referrer_wallet)):
+                try:
+                    from referral_program.blockchain import referral_blockchain_service
+                    _paid = referral_blockchain_service.reward_already_paid(
+                        row.get("id"), _leg, _wallet
+                    )
+                    already[_leg] = bool(_paid.get("paid"))
+                except Exception as _exc:  # noqa: BLE001
+                    logger.warning(f"Contract duplicate pre-check failed for {_leg}: {_exc}")
+
+        if already.get("referrer") and already.get("referee"):
+            logger.info(
+                f"ℹ️ Referral {referral_code} already paid on-chain for BOTH legs — "
+                f"finalizing without sending."
+            )
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                supabase.table("referrals").update({
+                    "status": "completed",
+                    "error_message": None,
+                    "completed_at": _dt.now(_tz.utc).isoformat(),
+                }).eq("id", row.get("id")).execute()
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning(f"Could not finalize already-paid referral {referral_code}: {_exc}")
+            return jsonify({
+                "success": True,
+                "already_disbursed": True,
+                "referral_code": referral_code,
+                "referrer_wallet": referrer_wallet,
+                "referee_wallet": referee_wallet,
+                "message": "Both rewards are already paid on-chain. Nothing was sent.",
+            }), 200
+
         # Step 1: Claim the exact referral row for disbursement. Use referral_id
         # when supplied so duplicate referral codes cannot move the wrong row.
         # Allow claiming recoverable states too (stuck 'disbursing' / 'failed' /
@@ -3319,9 +3360,12 @@ def admin_approve_referral():
         )
         logger.info(f"Disbursement result for {referral_code}: {disbursement}")
 
-        # Step 3: Mark admin verification only after the exact referral row was
-        # claimed and either completed or safely queued for later disbursement.
-        if disbursement.get("success") or disbursement.get("already_disbursed") or disbursement.get("pending"):
+        # Step 3: Record the admin override ONLY when a payout actually happened
+        # (or was already on-chain). `pending` means a funds/gas shortfall —
+        # NOTHING was sent — and `onchain_verified=TRUE` is the flag that later
+        # bypasses the referee's verification gate, so writing it here would let
+        # one click during a shortfall authorize every future retry unchecked.
+        if disbursement.get("success") or disbursement.get("already_disbursed"):
             now = datetime.now(timezone.utc).isoformat()
             supabase.table("referrals").update({
                 "onchain_verified": True,
@@ -3329,6 +3373,11 @@ def admin_approve_referral():
                 "approved_by_wallet": admin_wallet,
                 "approved_by_ip": admin_ip
             }).eq("id", row.get("id")).execute()
+        elif disbursement.get("pending"):
+            logger.warning(
+                f"⚠️ Referral {referral_code} queued (no payout sent) — NOT marking "
+                f"onchain_verified so the referee verification gate still applies."
+            )
 
         # Step 4: Log admin action
         from supabase_client import log_admin_action
