@@ -128,7 +128,18 @@ UBI_SCHEME_ABI = [
 
 _identity_cache: dict = {}
 _identity_cache_lock = threading.Lock()
-IDENTITY_CACHE_TTL = 1800  # 30 minutes — identity whitelist rarely changes
+IDENTITY_CACHE_TTL = 1800  # 30 minutes — a VERIFIED answer rarely changes
+# A `verified: False` answer is the one that gates money (referral payouts, the
+# FV feature gate). It is read the instant the FV callback lands, which is often
+# BEFORE GoodDollar's addWhitelisted tx is mined — so caching it for the full
+# 30 minutes pinned "not verified" on genuinely verified users for half an hour.
+# Negative answers therefore get a short TTL and are re-checked almost at once.
+try:
+    IDENTITY_NEGATIVE_CACHE_TTL = int(os.getenv("IDENTITY_NEGATIVE_CACHE_TTL", "60"))
+except (TypeError, ValueError):
+    IDENTITY_NEGATIVE_CACHE_TTL = 60
+if IDENTITY_NEGATIVE_CACHE_TTL < 0:
+    IDENTITY_NEGATIVE_CACHE_TTL = 60
 
 # G$ USD price is intentionally operator-controlled. Do not fetch G$ market
 # data here; wallet USD values should use GD_USD_PRICE only for G$.
@@ -935,40 +946,193 @@ def enrich_gd_balance_with_price(gd_result: dict, gd_usd_price: float) -> dict:
     return enriched
 
 
-def is_identity_verified(wallet_address: str) -> dict:
-    """Check if a wallet is face-verified on the GoodDollar Identity contract."""
+def is_identity_verified(wallet_address: str, force: bool = False) -> dict:
+    """Check if a wallet is face-verified on the GoodDollar Identity contract.
+
+    ``force=True`` bypasses the read cache — money-gating callers (referral
+    payouts) use it so a face verification that just landed is seen
+    immediately instead of waiting out the cache.
+
+    Reliability:
+      * A ``verified: True`` answer is cached for ``IDENTITY_CACHE_TTL`` (30m).
+      * A ``verified: False`` answer is cached only for
+        ``IDENTITY_NEGATIVE_CACHE_TTL`` (default 60s), because the first read
+        usually races the on-chain whitelist write.
+      * Reads fail over across the configured Celo RPC list, so one throttled
+        node cannot make a verified wallet look unverified.
+      * A transport/contract error is NEVER cached and is returned with an
+        ``error`` key, so callers can tell "the chain said no" apart from
+        "we could not ask".
+    """
     try:
         from web3 import Web3 as _Web3
         checksum = _Web3.to_checksum_address(wallet_address)
-        key = checksum.lower()
+    except Exception as e:  # bad address / web3 missing
+        return {"verified": False, "error": str(e)}
 
+    key = checksum.lower()
+
+    if not force:
         with _identity_cache_lock:
             entry = _identity_cache.get(key)
             if entry and entry["expires_at"] > datetime.now().timestamp():
                 logger.debug(f"🪪 Identity cache HIT for {wallet_address[:8]}...")
                 return entry["result"]
 
-        w3 = _get_w3()
-        contract = w3.eth.contract(
-            address=_Web3.to_checksum_address(GOODDOLLAR_CONTRACTS["IDENTITY"]),
-            abi=IDENTITY_ABI
-        )
-        verified = contract.functions.isWhitelisted(checksum).call()
-        result = {"verified": verified}
+    last_error = None
+    for rpc_url in _celo_rpc_urls():
+        try:
+            from web3 import Web3 as _W3
+            w3 = _W3(_W3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
+            contract = w3.eth.contract(
+                address=_Web3.to_checksum_address(GOODDOLLAR_CONTRACTS["IDENTITY"]),
+                abi=IDENTITY_ABI
+            )
+            verified = bool(contract.functions.isWhitelisted(checksum).call())
+            result = {"verified": verified}
 
-        with _identity_cache_lock:
-            _identity_cache[key] = {
-                "result": result,
-                "expires_at": datetime.now().timestamp() + IDENTITY_CACHE_TTL
-            }
+            ttl = IDENTITY_CACHE_TTL if verified else IDENTITY_NEGATIVE_CACHE_TTL
+            with _identity_cache_lock:
+                _identity_cache[key] = {
+                    "result": result,
+                    "expires_at": datetime.now().timestamp() + ttl
+                }
 
-        status = "✅ verified" if verified else "❌ not verified"
-        logger.info(f"🪪 Identity check for {wallet_address[:8]}...: {status}")
-        return result
+            status = "✅ verified" if verified else "❌ not verified"
+            logger.info(f"🪪 Identity check for {wallet_address[:8]}...: {status} (via {rpc_url})")
+            return result
+        except Exception as e:
+            last_error = e
+            logger.warning(f"Identity check failed on {rpc_url} for {wallet_address[:8]}...: {e}")
+            continue
 
-    except Exception as e:
-        logger.error(f"Identity check error for {wallet_address}: {e}")
-        return {"verified": False, "error": str(e)}
+    # Every node failed — this is an INFRA failure, not a verdict. Do not cache
+    # it: caching would pin "not verified" on a wallet we simply could not read.
+    logger.error(f"Identity check error for {wallet_address}: {last_error}")
+    return {"verified": False, "error": str(last_error)}
+
+
+def get_ubi_claim_tx_hashes(wallet_address: str, days: int = 30) -> dict:
+    """Return the wallet's recently *recorded* UBI claim tx hashes.
+
+    Reads ``goodmarket_claim_events`` (written by ``/api/claims/v2/confirm`` and
+    by the claim reconciler). This is only a candidate list — the caller must
+    still confirm each hash on-chain, because the confirm endpoint accepts a
+    client-supplied status and a DB row alone is not proof of a claim.
+
+    Returns ``{"success": bool, "tx_hashes": [...], "error": str | None}``.
+    """
+    if not wallet_address:
+        return {"success": False, "tx_hashes": [], "error": "no_wallet"}
+    try:
+        from supabase_client import get_supabase_admin_client, get_supabase_client
+        sb = get_supabase_admin_client() or get_supabase_client()
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "tx_hashes": [], "error": str(e)}
+    if sb is None:
+        return {"success": False, "tx_hashes": [], "error": "no_db"}
+
+    try:
+        days = max(1, int(days))
+    except (TypeError, ValueError):
+        days = 30
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    def _query():
+        return sb.table("goodmarket_claim_events") \
+            .select("tx_hash,created_at") \
+            .eq("event_type", "claim_tx_confirmed") \
+            .eq("network", "celo") \
+            .ilike("wallet_address", wallet_address) \
+            .gte("created_at", cutoff) \
+            .order("created_at", desc=True) \
+            .limit(10) \
+            .execute()
+
+    try:
+        resp = _query()
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "tx_hashes": [], "error": str(e)}
+
+    rows = getattr(resp, "data", None) or []
+    seen = []
+    for row in rows:
+        tx = (row.get("tx_hash") or "").strip().lower()
+        if tx.startswith("0x") and len(tx) >= 10 and tx not in seen:
+            seen.append(tx)
+    return {"success": True, "tx_hashes": seen, "error": None}
+
+
+def has_confirmed_ubi_claim(wallet_address: str, days: int = 30) -> dict:
+    """Prove a wallet was whitelisted by finding a successful Celo UBI claim.
+
+    ``UBIScheme.claim()`` reverts for a caller that is not whitelisted on the
+    Identity contract, so a *confirmed successful* claim is definitive proof the
+    wallet was face-verified — and it survives the flaky ``isWhitelisted`` reads
+    that otherwise block referral payouts.
+
+    The recorded tx hashes are treated as candidates only: each is re-verified
+    on-chain (receipt status 1 **and** a G$ Transfer from the UBI proxy) before
+    it is accepted, so a forged ``claim_tx_confirmed`` DB row cannot unlock a
+    reward.
+
+    Returns ``{"verified": bool, "reason": str, "tx_hash": str | None}``.
+    """
+    candidates = get_ubi_claim_tx_hashes(wallet_address, days=days)
+    if not candidates.get("success"):
+        return {"verified": False, "reason": "claim_lookup_unavailable", "tx_hash": None}
+    tx_hashes = candidates.get("tx_hashes") or []
+    if not tx_hashes:
+        return {"verified": False, "reason": "no_ubi_claim_evidence", "tx_hash": None}
+
+    from web3 import Web3 as _Web3
+    try:
+        checksum = _Web3.to_checksum_address(wallet_address)
+    except Exception:  # noqa: BLE001
+        return {"verified": False, "reason": "bad_wallet", "tx_hash": None}
+
+    ubi_proxy = GOODDOLLAR_CONTRACTS["UBI_PROXY"].lower()
+    wallet_topic = _topic_for_address(checksum)
+    transfer_topic = UBI_EVENT_SIGNATURES["TRANSFER"]
+
+    saw_error = False
+    for rpc_url in _celo_rpc_urls():
+        try:
+            w3 = _Web3(_Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
+            for tx_hash in tx_hashes:
+                try:
+                    receipt = w3.eth.get_transaction_receipt(tx_hash)
+                except Exception:
+                    continue
+                if not receipt or receipt.get("status") != 1:
+                    continue
+                # Require a G$ Transfer from the UBI proxy to this wallet in the
+                # same tx — a successful tx to some other contract is not a claim.
+                for log_entry in (receipt.get("logs") or []):
+                    topics = [str(t).lower() for t in (log_entry.get("topics") or [])]
+                    if len(topics) < 3:
+                        continue
+                    if topics[0] != transfer_topic:
+                        continue
+                    if not topics[1].endswith(ubi_proxy.replace("0x", "")):
+                        continue
+                    if not topics[2].endswith(wallet_topic.replace("0x", "")):
+                        continue
+                    logger.info(
+                        f"🪪 UBI claim evidence for {wallet_address[:8]}...: {tx_hash}"
+                    )
+                    return {"verified": True, "reason": "ubi_claim_confirmed", "tx_hash": tx_hash}
+            # Node answered (even if no matching tx) — no need to try others.
+            return {"verified": False, "reason": "no_ubi_claim_evidence", "tx_hash": None}
+        except Exception as e:  # noqa: BLE001
+            saw_error = True
+            logger.warning(f"UBI claim evidence check failed on {rpc_url}: {e}")
+            continue
+
+    return {"verified": False,
+            "reason": "claim_check_error" if saw_error else "no_ubi_claim_evidence",
+            "tx_hash": None}
+
 
 
 _fv_expiry_cache: dict = {}
