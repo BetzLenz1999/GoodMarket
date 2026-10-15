@@ -776,31 +776,6 @@ def _require_admin():
     return wallet, None
 
 
-@reloadly_bp.route("/api/admin/diagnostics", methods=["GET"])
-def api_admin_diagnostics():
-    """Admin: report whether the Reloadly credential/environment pair works.
-
-    The UI shows a generic "Service temporarily unavailable" for every Reloadly
-    HTTP error, so a wrong environment or a revoked secret is indistinguishable
-    from an outage. This returns the resolved config plus a live auth probe.
-    """
-    _, err = _require_admin()
-    if err:
-        return err
-
-    try:
-        info = reloadly_client.check_credentials()
-    except Exception as e:  # noqa: BLE001 - diagnostics must never 500
-        logger.error(f"❌ Reloadly diagnostics failed: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-    return jsonify({
-        "success": True,
-        "reloadly": info,
-        "ok": bool(info.get("auth_ok")),
-    })
-
-
 @reloadly_bp.route("/api/admin/refunds/status", methods=["GET"])
 def api_admin_refund_status():
     """Admin: REFUND_KEY wallet health + orders awaiting / completed refunds.
