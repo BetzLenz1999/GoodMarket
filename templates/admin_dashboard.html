@@ -2732,6 +2732,24 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     </div>
                     <div id="processPendingResult" style="margin-top:1rem;display:none;padding:0.85rem 1rem;border-radius:8px;font-size:0.88rem;"></div>
                 </div>
+
+                <!-- Re-check verification-blocked referrals -->
+                <div class="content-box" style="margin-top: 2rem; border: 1px solid rgba(245,158,11,0.3); background: rgba(245,158,11,0.05);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+                        <div>
+                            <h2 style="margin:0 0 0.25rem;color:#fbbf24;">🔍 Re-check Blocked Referrals</h2>
+                            <p style="margin:0;font-size:0.85rem;color:rgba(241,245,249,0.6);">
+                                Forces a fresh on-chain face-verification read for referrals showing
+                                "Referee not verified yet". A confirmed UBI claim also counts as proof.
+                                Clears the stale message and disburses anything that now passes.
+                            </p>
+                        </div>
+                        <button onclick="recheckReferralVerification()" id="recheckVerificationBtn" class="admin-btn" style="background:rgba(245,158,11,0.2);border:1px solid rgba(245,158,11,0.5);color:#fbbf24;white-space:nowrap;min-width:200px;">
+                            🔍 Re-check Verification
+                        </button>
+                    </div>
+                    <div id="recheckVerificationResult" style="margin-top:1rem;display:none;padding:0.85rem 1rem;border-radius:8px;font-size:0.88rem;"></div>
+                </div>
             </section>
 
               <!-- Daily Voucher Section -->
@@ -8274,6 +8292,49 @@ async function loadMinigamesMaintenance() {
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '🔄 Process Pending Rewards';
+            }
+        }
+
+        async function recheckReferralVerification() {
+            const btn = document.getElementById('recheckVerificationBtn');
+            const resultEl = document.getElementById('recheckVerificationResult');
+            btn.disabled = true;
+            btn.textContent = '⏳ Re-checking on-chain...';
+            resultEl.style.display = 'none';
+            try {
+                const res = await fetch('/api/admin/referral/recheck-verification', { method: 'POST' });
+                const data = await res.json();
+                resultEl.style.display = 'block';
+                if (data.success) {
+                    const checked = data.checked || 0;
+                    const nowVerified = data.now_verified || 0;
+                    const cleared = data.errors_cleared || 0;
+                    const stillBlocked = data.still_blocked || 0;
+                    resultEl.style.background = 'rgba(16,185,129,0.1)';
+                    resultEl.style.border = '1px solid rgba(16,185,129,0.3)';
+                    resultEl.style.color = '#6ee7b7';
+                    resultEl.innerHTML = `✅ Checked <strong>${checked}</strong> blocked referral(s). `
+                        + `Now verified: <strong>${nowVerified}</strong> `
+                        + `(stale messages cleared: <strong>${cleared}</strong>). `
+                        + (stillBlocked > 0
+                            ? `<span style="color:#fcd34d">Still blocked: ${stillBlocked}.</span>`
+                            : '');
+                    loadReferralStats();
+                } else {
+                    resultEl.style.background = 'rgba(239,68,68,0.1)';
+                    resultEl.style.border = '1px solid rgba(239,68,68,0.3)';
+                    resultEl.style.color = '#fca5a5';
+                    resultEl.innerHTML = `❌ Error: ${data.error || 'Unknown error'}`;
+                }
+            } catch (e) {
+                resultEl.style.display = 'block';
+                resultEl.style.background = 'rgba(239,68,68,0.1)';
+                resultEl.style.border = '1px solid rgba(239,68,68,0.3)';
+                resultEl.style.color = '#fca5a5';
+                resultEl.innerHTML = `❌ Error: ${e.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔍 Re-check Verification';
             }
         }
 
