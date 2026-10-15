@@ -1,17 +1,9 @@
+import os
 import logging
 import requests
 from datetime import datetime, timedelta
 
-from env_utils import get_env_str
-
 logger = logging.getLogger(__name__)
-
-# Errors that mean the credential/environment pair is unusable. Reloadly
-# answers these from the token endpoint (401 INVALID_CREDENTIALS) or from a
-# product endpoint when a token was minted for the wrong environment
-# (401 INVALID_TOKEN — "are you in production & using a sandbox token or
-# vice-versa?").
-_AUTH_ERROR_CODES = ("INVALID_CREDENTIALS", "INVALID_TOKEN")
 
 
 class ReloadlyClient:
@@ -30,14 +22,9 @@ class ReloadlyClient:
     PRODUCTION_UTILITY_URL = "https://utilities.reloadly.com"
 
     def __init__(self):
-        # Cleaned via env_utils so a value that is set-but-empty (``VAR=``), a
-        # quoted value (``"sandbox"``) or one with stray whitespace still
-        # resolves correctly. Without this, an empty/quoted environment silently
-        # fell through to PRODUCTION endpoints while the credentials were test
-        # ones — the 401 INVALID_CREDENTIALS cascade reported from production.
-        self.client_id = get_env_str("RELOADLY_CLIENT_ID")
-        self.client_secret = get_env_str("RELOADLY_CLIENT_SECRET")
-        self.environment = get_env_str("RELOADLY_ENVIRONMENT", "sandbox", lower=True)
+        self.client_id = os.getenv("RELOADLY_CLIENT_ID")
+        self.client_secret = os.getenv("RELOADLY_CLIENT_SECRET")
+        self.environment = os.getenv("RELOADLY_ENVIRONMENT", "sandbox").lower()
 
         self.is_sandbox = self.environment == "sandbox"
 
@@ -128,57 +115,14 @@ class ReloadlyClient:
             "Accept": "application/com.reloadly.utilities-v1+json"
         }
 
-    def _invalidate_token(self, kind: str) -> None:
-        """Drop a cached token so the next call re-mints it.
-
-        Used when Reloadly answers 401: the credential may have been rotated, or
-        the cached token may belong to the other environment. Re-minting turns a
-        revoked-then-reissued secret into a self-healing retry instead of an hour
-        of failures until the in-memory cache lapses.
-        """
-        if kind == "topup":
-            self._topup_token = None
-            self._topup_token_expiry = None
-        elif kind == "giftcard":
-            self._giftcard_token = None
-            self._giftcard_token_expiry = None
-        elif kind == "utility":
-            self._utility_token = None
-            self._utility_token_expiry = None
-
-    def _request(self, kind: str, method: str, url: str, **kwargs):
-        """Send an authenticated request, re-minting the token once on a 401.
-
-        A 401 here means the token (or the credential/environment pair) was
-        rejected. Re-minting and retrying once recovers automatically from a
-        rotated secret or a cached token minted for the wrong environment; a
-        second 401 is a genuine credential problem and propagates to the caller.
-        """
-        headers_fn = {
-            "topup": self._topup_headers,
-            "giftcard": self._giftcard_headers,
-            "utility": self._utility_headers,
-        }[kind]
-        send = requests.get if method.upper() == "GET" else requests.post
-
-        resp = send(url, headers=headers_fn(), **kwargs)
-        if resp.status_code == 401:
-            logger.warning(
-                "⚠️ Reloadly 401 for %s — re-minting token (%s) and retrying once",
-                url, self.environment,
-            )
-            self._invalidate_token(kind)
-            resp = send(url, headers=headers_fn(), **kwargs)
-        resp.raise_for_status()
-        return resp
-
     # ─── TOP-UP ────────────────────────────────────────────────────────────────
 
     def get_topup_operators(self, country_code: str) -> list:
         """Get mobile operators for a country"""
         try:
             url = f"{self.topup_url}/operators/countries/{country_code}"
-            resp = self._request("topup", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._topup_headers(), timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_topup_operators error: {e}")
@@ -188,7 +132,8 @@ class ReloadlyClient:
         """Get products/denominations for a specific operator"""
         try:
             url = f"{self.topup_url}/operators/{operator_id}"
-            resp = self._request("topup", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._topup_headers(), timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_operator_products error: {e}")
@@ -199,7 +144,8 @@ class ReloadlyClient:
         try:
             url = f"{self.topup_url}/operators/auto-detect/phone/{phone_number}/countries/{country_code}"
             params = {"suggestedAmountsMap": "true", "suggestedAmounts": "true"}
-            resp = self._request("topup", "GET", url, params=params, timeout=15)
+            resp = requests.get(url, headers=self._topup_headers(), params=params, timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ auto_detect_operator error: {e}")
@@ -218,10 +164,13 @@ class ReloadlyClient:
                     "number": phone_number
                 }
             }
-            resp = self._request(
-                "topup", "POST", f"{self.topup_url}/topups",
-                json=payload, timeout=30,
+            resp = requests.post(
+                f"{self.topup_url}/topups",
+                json=payload,
+                headers=self._topup_headers(),
+                timeout=30
             )
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ send_topup error: {e}")
@@ -231,7 +180,8 @@ class ReloadlyClient:
         """Get top-up transaction status"""
         try:
             url = f"{self.topup_url}/topups/reports/transactions/{transaction_id}"
-            resp = self._request("topup", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._topup_headers(), timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_topup_transaction error: {e}")
@@ -244,7 +194,8 @@ class ReloadlyClient:
         try:
             url = f"{self.topup_url}/operators/countries/{country_code}"
             params = {"bundlesOnly": "true"}
-            resp = self._request("topup", "GET", url, params=params, timeout=15)
+            resp = requests.get(url, headers=self._topup_headers(), params=params, timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_data_operators error: {e}")
@@ -259,7 +210,8 @@ class ReloadlyClient:
             params = {"size": size, "page": page}
             if country_code:
                 params["countryCode"] = country_code
-            resp = self._request("giftcard", "GET", url, params=params, timeout=15)
+            resp = requests.get(url, headers=self._giftcard_headers(), params=params, timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_giftcard_products error: {e}")
@@ -269,7 +221,8 @@ class ReloadlyClient:
         """Get a specific gift card product"""
         try:
             url = f"{self.giftcard_url}/products/{product_id}"
-            resp = self._request("giftcard", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._giftcard_headers(), timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_giftcard_product error: {e}")
@@ -284,10 +237,13 @@ class ReloadlyClient:
                 "unitPrice": unit_price,
                 "customIdentifier": custom_identifier or f"gc_{datetime.utcnow().timestamp()}"
             }
-            resp = self._request(
-                "giftcard", "POST", f"{self.giftcard_url}/orders",
-                json=payload, timeout=30,
+            resp = requests.post(
+                f"{self.giftcard_url}/orders",
+                json=payload,
+                headers=self._giftcard_headers(),
+                timeout=30
             )
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ order_giftcard error: {e}")
@@ -297,7 +253,8 @@ class ReloadlyClient:
         """Get gift card order status"""
         try:
             url = f"{self.giftcard_url}/orders/transactions/{order_id}"
-            resp = self._request("giftcard", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._giftcard_headers(), timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_giftcard_order error: {e}")
@@ -312,7 +269,8 @@ class ReloadlyClient:
         """
         try:
             url = f"{self.giftcard_url}/orders/transactions/{transaction_id}/cards"
-            resp = self._request("giftcard", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._giftcard_headers(), timeout=15)
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ get_giftcard_redeem_code error: {e}")
@@ -322,7 +280,8 @@ class ReloadlyClient:
         """Get gift card product categories (e.g. 'Prepaid Visa', 'Money Cards')."""
         try:
             url = f"{self.giftcard_url}/categories"
-            resp = self._request("giftcard", "GET", url, timeout=15)
+            resp = requests.get(url, headers=self._giftcard_headers(), timeout=15)
+            resp.raise_for_status()
             data = resp.json()
             return data.get("content", data) if isinstance(data, dict) else data
         except Exception as e:
@@ -338,7 +297,8 @@ class ReloadlyClient:
             params = {}
             if country_code:
                 params["countryISOCode"] = country_code
-            resp = self._request("utility", "GET", url, params=params, timeout=15)
+            resp = requests.get(url, headers=self._utility_headers(), params=params, timeout=15)
+            resp.raise_for_status()
             return resp.json().get("content", [])
         except Exception as e:
             logger.error(f"❌ get_utility_billers error: {e}")
@@ -353,10 +313,13 @@ class ReloadlyClient:
                 "subscriberId": subscriber_id,
                 "customIdentifier": custom_identifier or f"util_{datetime.utcnow().timestamp()}"
             }
-            resp = self._request(
-                "utility", "POST", f"{self.utility_url}/billers/{biller_id}/pay",
-                json=payload, timeout=30,
+            resp = requests.post(
+                f"{self.utility_url}/billers/{biller_id}/pay",
+                json=payload,
+                headers=self._utility_headers(),
+                timeout=30
             )
+            resp.raise_for_status()
             return resp.json()
         except Exception as e:
             logger.error(f"❌ pay_utility error: {e}")
@@ -381,7 +344,8 @@ class ReloadlyClient:
         url = f"{self.topup_url}/countries"
         if self.is_initialized:
             try:
-                resp = self._request("topup", "GET", url, timeout=15)
+                resp = requests.get(url, headers=self._topup_headers(), timeout=15)
+                resp.raise_for_status()
                 data = resp.json()
                 if isinstance(data, list):
                     return data
@@ -398,53 +362,6 @@ class ReloadlyClient:
         except Exception as e:
             logger.error(f"❌ get_countries error: {e}")
             raise
-
-    # ─── DIAGNOSTICS ───────────────────────────────────────────────────────────
-
-    def check_credentials(self) -> dict:
-        """Report the resolved config and whether Reloadly accepts the credential.
-
-        Never raises: a failed probe is reported as ``auth_ok: False`` with the
-        real error, so an admin can tell a wrong environment / revoked secret
-        apart from a genuine Reloadly outage instead of guessing from the
-        generic "Service temporarily unavailable" the UI shows.
-        """
-        info = {
-            "credentials_configured": self.is_initialized,
-            "environment": self.environment,
-            "is_sandbox": self.is_sandbox,
-            "auth_url": self.auth_url,
-            "topup_url": self.topup_url,
-            "client_id_suffix": (self.client_id or "")[-4:] if self.client_id else None,
-            "auth_ok": False,
-            "error": None,
-        }
-        if not self.is_initialized:
-            info["error"] = (
-                "RELOADLY_CLIENT_ID / RELOADLY_CLIENT_SECRET are not set. "
-                "Set them in the environment and redeploy."
-            )
-            return info
-
-        audience = "https://topups-sandbox.reloadly.com" if self.is_sandbox else "https://topups.reloadly.com"
-        try:
-            # Always mint fresh so the probe reflects the current credential, not
-            # a cached token from before a rotation.
-            self._invalidate_token("topup")
-            token = self._get_token(audience)
-            info["auth_ok"] = bool(token)
-            if not token:
-                info["error"] = "Reloadly returned no access token."
-        except Exception as e:  # noqa: BLE001 - diagnostics must never raise
-            info["error"] = str(e)
-            info["hint"] = (
-                "401 INVALID_CREDENTIALS means the client_id/secret is wrong, "
-                "revoked, or belongs to the other environment. Verify "
-                "RELOADLY_ENVIRONMENT matches the credentials' mode (Sandbox vs "
-                "Live) in the Reloadly dashboard, and that the values have no "
-                "surrounding quotes or trailing spaces."
-            )
-        return info
 
 
 reloadly_client = ReloadlyClient()
