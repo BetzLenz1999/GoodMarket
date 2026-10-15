@@ -203,6 +203,21 @@
             .tab-btn { padding: 12px 14px; font-size: 13px; }
         }
 
+        /* ── Mobile sizing ─────────────────────────────────────────────────
+           iOS Safari auto-zooms the viewport when a focused input has
+           font-size < 16px, which is the main reason this page read as
+           "too small" on a phone. 16px inputs stop the zoom; the tap-target
+           floor stops mis-taps on the amount chips. */
+        .tab-btn { min-height: var(--tap-min); display: inline-flex; align-items: center; }
+        @media (max-width: 640px) {
+            .form-group input,
+            .form-group select,
+            .phone-input-wrap input,
+            .country-picker-search input { font-size: 16px; }
+            .chip { min-height: var(--tap-min); }
+            .op-amounts, .op-country { font-size: 12px; }
+        }
+
         /* ── Country Picker ── */
         .country-picker-btn {
             width: 100%; padding: 10px 14px; border-radius: 8px;
@@ -332,6 +347,19 @@
             --text-muted: #8a8378;
             --card-border: #e9e2d6;
             --serif: 'Fraunces', 'Georgia', serif;
+
+            /* Semantic status colours. The page previously hardcoded these in
+               JS-generated markup, which is how pale dark-theme tints
+               (#6ee7b7 at 1.5:1, #c4b5fd at 1.9:1) ended up on a white
+               canvas. All three below clear 4.5:1 on white. */
+            --success: #15803d;
+            --warning: #b45309;
+            --danger: #b91c1c;
+            --danger-soft: #b91c1c;
+            /* On-accent text for orange/gold surfaces. Dark ink beats white:
+               #1f1300 on #f97316 = 6.5:1 vs white on the same = 2.8:1. */
+            --on-accent: #1f1300;
+            --tap-min: 44px;
         }
 
         body {
@@ -394,6 +422,7 @@
         .bundle-chip {
             background: #ffffff;
             border-color: var(--card-border);
+            min-height: 48px;
         }
         .bundle-chip:hover, .bundle-chip.selected { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.5); }
         .bundle-name { color: var(--text); }
@@ -402,8 +431,25 @@
             border-color: var(--card-border);
             background: #ffffff;
             color: var(--text-dim);
+            /* Amount chips are the most-tapped control in the flow; at the old
+               6px padding they measured ~27.6px tall, well under the 44px
+               mobile minimum, so adjacent amounts were easy to mis-tap. */
+            padding: 12px 16px;
+            min-height: var(--tap-min);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
         }
-        .chip:hover, .chip.selected { background: linear-gradient(135deg, #f97316, #ea580c); border-color: #ea580c; color: #fff; }
+        /* White on the orange gradient was only 2.8:1. Dark ink on the same
+           gradient is 5.1-6.5:1, and matches the app-wide "dark text on
+           gold/orange" rule for primary actions. */
+        .chip:hover, .chip.selected {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            border-color: #ea580c;
+            color: var(--on-accent);
+            font-weight: 700;
+        }
 
         .summary-box {
             background: #fff7ed;
@@ -500,6 +546,32 @@
         .phone-input-wrap input::placeholder { color: var(--text-muted); }
 
         .phone-hint { color: var(--text-muted); }
+
+        /* ── Top-up step 2: chosen operator + confirmed number ─────────────
+           The operator grid hides once a selection is made, so the chosen
+           operator and the number being loaded must be stated here — the
+           user no longer has the phone field in front of them. */
+        .tu-op-header {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 10px; margin-bottom: 10px;
+        }
+        .tu-op-header h3 { margin-bottom: 0; flex: 1; }
+        .tu-link-btn {
+            background: transparent; border: 1px solid var(--card-border);
+            color: #c2410c; font-size: 12.5px; font-weight: 600;
+            padding: 8px 14px; border-radius: 8px; cursor: pointer;
+            min-height: 36px; white-space: nowrap;
+        }
+        .tu-link-btn:hover { background: #fff7ed; border-color: rgba(var(--accent-rgb),0.5); }
+        .tu-link-btn:focus-visible { outline: 2px solid #c2410c; outline-offset: 2px; }
+        .tu-recipient-line {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            font-size: 13px; color: var(--text-dim);
+            background: #fff7ed; border: 1px solid rgba(var(--accent-rgb),0.25);
+            border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;
+        }
+        .tu-recipient-line strong { color: var(--text); font-size: 14px; }
+        .tu-recipient-line .tu-warn { color: var(--warning); font-weight: 600; }
         .country-required-msg {
             color: var(--text-dim);
             border-color: var(--card-border);
@@ -583,7 +655,7 @@
     <a href="/wallet"><i class="fas fa-arrow-left"></i> Back to Wallet</a>
     <h1>GoodMarket Store</h1>
     {% if is_sandbox %}<span class="sandbox-badge">SANDBOX</span>{% endif %}
-    <div class="gd-rate">1 G$ ≈ <span id="liveGdRate">${{ "%.6f"|format(gd_price) }}</span> <span style="font-size:9px;color:#15803d;opacity:0.8" id="rateSource">CoinGecko</span></div>
+    <div class="gd-rate">1 G$ ≈ <span id="liveGdRate">${{ "%.6f"|format(gd_price) }}</span> <span style="font-size:11px;color:var(--success);opacity:0.8" id="rateSource">CoinGecko</span></div>
     {% if is_guest %}
     <!-- Persistent connect entry point so closing the modal doesn't strand a
          guest — same flow as the homepage. -->
@@ -612,7 +684,7 @@
 <!-- TOP-UP TAB -->
 <div id="tab-topup" class="tab-content active">
     <div class="card">
-        <h3><i class="fas fa-search"></i> Find Operator</h3>
+        <h3><i class="fas fa-mobile-alt"></i> Who are you loading?</h3>
         <div class="form-group">
             <label>Country</label>
             <button type="button" class="country-picker-btn" id="tuCountryBtn" onclick="openCountryPicker('topup')">
@@ -623,35 +695,31 @@
             <input type="hidden" id="tuCountry" value=""/>
         </div>
         <div class="form-group" id="tuPhoneGroup" style="display:none">
-            <label>Phone Number <span style="color:#6b7280;font-weight:normal;font-size:11px">(optional — auto-detect operator)</span></label>
+            <label>Recipient Phone Number</label>
             <div class="phone-input-wrap">
                 <span class="phone-prefix" id="tuPhonePrefix">+--</span>
-                <input id="tuPhone" type="tel" inputmode="numeric" autocomplete="off" placeholder="9171234567" oninput="formatPhoneInput(this)"/>
+                <input id="tuPhone" type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="9171234567" oninput="formatPhoneInput(this)"/>
             </div>
             <div class="phone-hint">
-                <i class="fas fa-info-circle"></i> Skip the leading 0 — your country code is already added.
+                <i class="fas fa-info-circle"></i> Skip the leading 0 — your country code is already added. This is the number we will load.
             </div>
         </div>
         <div id="tuCountryHint" class="country-required-msg">
             <i class="fas fa-globe"></i> Please pick a country to continue.
         </div>
-        <button class="btn btn-primary" id="tuFindBtn" onclick="loadOperators()" disabled style="margin-top:4px"><i class="fas fa-search"></i> Find Operators</button>
+        <button class="btn btn-primary" id="tuFindBtn" onclick="loadOperators()" disabled style="margin-top:4px"><i class="fas fa-search"></i> Continue</button>
     </div>
     <div id="operatorList"></div>
     <div id="topupForm" style="display:none">
         <div class="card">
-            <h3 id="tuOperatorName"></h3>
-            <div id="tuAmountSection"></div>
-            <div class="form-group" style="margin-top:12px">
-                <label>Recipient Phone Number</label>
-                <div class="phone-input-wrap">
-                    <span class="phone-prefix" id="tuRecipientPrefix">+--</span>
-                    <input id="tuRecipient" type="tel" inputmode="numeric" autocomplete="off" placeholder="Phone number to top-up" oninput="formatPhoneInput(this)"/>
-                </div>
-                <div class="phone-hint">
-                    <i class="fas fa-info-circle"></i> Skip the leading 0 — your country code is already added.
-                </div>
+            <div class="tu-op-header">
+                <h3 id="tuOperatorName"></h3>
+                <button type="button" class="tu-link-btn" id="tuChangeOperatorBtn" onclick="changeOperator()">
+                    <i class="fas fa-exchange-alt"></i> Change
+                </button>
             </div>
+            <div class="tu-recipient-line" id="tuRecipientLine"></div>
+            <div id="tuAmountSection"></div>
             <div class="summary-box" id="tuSummary" style="display:none"></div>
             <button class="btn btn-primary btn-full" onclick="initiateTopup()" style="margin-top:12px"><i class="fas fa-bolt"></i> Pay with G$</button>
         </div>
@@ -661,23 +729,23 @@
 <!-- VIRTUAL CARD TAB -->
 <div id="tab-virtualcard" class="tab-content">
     <div class="card" style="background:linear-gradient(135deg,#fff7ed,#ffedd5);border-color:rgba(var(--accent-rgb),0.4);">
-        <h3 style="display:flex;align-items:center;gap:8px"><i class="fas fa-credit-card" style="color:#ea580c"></i> Virtual Prepaid Card</h3>
-        <div style="font-size:13px;color:#6b5d48;line-height:1.55;margin-bottom:12px">
-            Turn your GoodDollar portfolio into a <strong>Visa / Mastercard virtual prepaid card</strong>.
-            Pay with G$, receive a card number + CVV + expiry instantly — usable at online stores that accept the underlying network.
+        <h3 style="display:flex;align-items:center;gap:8px"><i class="fas fa-credit-card" style="color:#c2410c"></i> Virtual Prepaid Card</h3>
+        <div style="font-size:13px;color:var(--text-dim);line-height:1.55;margin-bottom:12px">
+            Turn your <strong>GoodMarket balance</strong> into a <strong>Visa / Mastercard virtual prepaid card</strong>.
+            Pay with G$, receive a card number + CVV + expiry — usable at online stores that accept prepaid cards.
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;font-size:11.5px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;font-size:12px">
             <div style="background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.25);border-radius:10px;padding:10px 12px">
-                <div style="color:#c4b5fd;font-weight:600;margin-bottom:3px">⚡ Instant</div>
-                <div style="color:#9ca3af">Card details issued seconds after G$ payment confirms on-chain.</div>
+                <div style="color:var(--success);font-weight:600;margin-bottom:3px">⚡ Usually quick</div>
+                <div style="color:var(--text-dim)">Card details are issued after your G$ payment confirms on-chain.</div>
             </div>
             <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);border-radius:10px;padding:10px 12px">
-                <div style="color:#6ee7b7;font-weight:600;margin-bottom:3px">🌍 Global</div>
-                <div style="color:#9ca3af">Works on Amazon, Netflix, Shopee, and other online merchants.</div>
+                <div style="color:var(--success);font-weight:600;margin-bottom:3px">🌍 Use it online</div>
+                <div style="color:var(--text-dim)">Accepted at many online stores. Some merchants don't take prepaid cards.</div>
             </div>
             <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:10px 12px">
-                <div style="color:#b45309;font-weight:600;margin-bottom:3px">🔒 Minimal KYC</div>
-                <div style="color:#9ca3af">Issued via Reloadly — no bank-grade KYC, no physical card.</div>
+                <div style="color:var(--warning);font-weight:600;margin-bottom:3px">🔒 No documents needed</div>
+                <div style="color:var(--text-dim)">Issued through Reloadly. It is a digital card only — nothing is posted to you.</div>
             </div>
         </div>
     </div>
@@ -746,15 +814,15 @@
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
             <div class="card" style="text-align:center;padding:14px">
                 <div style="font-size:22px;font-weight:700;color:#c2410c" id="statTotal">0</div>
-                <div style="font-size:11px;color:#8a8378;margin-top:2px">Total Orders</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Total Orders</div>
             </div>
             <div class="card" style="text-align:center;padding:14px">
                 <div style="font-size:22px;font-weight:700;color:#15803d" id="statCompleted">0</div>
-                <div style="font-size:11px;color:#8a8378;margin-top:2px">Completed</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Completed</div>
             </div>
             <div class="card" style="text-align:center;padding:14px">
                 <div style="font-size:22px;font-weight:700;color:#2b241a" id="statGd">0</div>
-                <div style="font-size:11px;color:#8a8378;margin-top:2px">G$ Spent</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">G$ Spent</div>
             </div>
         </div>
     </div>
@@ -812,18 +880,18 @@
 
                 <!-- Step 2: Address card + confirm button (hidden until button clicked) -->
                 <div id="merchantAddrBox" style="display:none;margin-top:10px">
-                    <div style="background:#0f0f1a;border:1px solid #3a3a5c;border-radius:10px;padding:12px 14px">
-                        <div style="font-size:10px;color:#777;margin-bottom:6px;letter-spacing:0.6px;text-transform:uppercase">Merchant Wallet · Celo Network</div>
+                    <div style="background:#fff7ed;border:1px solid var(--card-border);border-radius:10px;padding:12px 14px">
+                        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;letter-spacing:0.6px;text-transform:uppercase">Payment address</div>
                         <div style="display:flex;align-items:center;gap:8px">
-                            <span id="merchantAddrText" style="font-family:monospace;font-size:11px;color:#0e7490;word-break:break-all;flex:1;line-height:1.5"></span>
+                            <span id="merchantAddrText" style="font-family:monospace;font-size:12px;color:#0e7490;word-break:break-all;flex:1;line-height:1.5"></span>
                             <button onclick="copyMerchantAddr()" title="Copy address"
-                                style="flex-shrink:0;background:linear-gradient(135deg,#f97316,#ea580c);border:none;border-radius:6px;padding:8px 12px;color:#fff;cursor:pointer;font-size:14px">
+                                style="flex-shrink:0;background:linear-gradient(135deg,#f97316,#ea580c);border:none;border-radius:6px;padding:10px 12px;color:var(--on-accent);cursor:pointer;font-size:14px">
                                 <i class="fas fa-copy" id="merchantCopyIcon"></i>
                             </button>
                         </div>
                     </div>
-                    <div style="font-size:11px;color:#f59e0b;margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.07);border-radius:6px;border:1px solid rgba(245,158,11,0.18)">
-                        ⚠️ <strong>Celo network only.</strong> Token: <strong>G$ (GoodDollar)</strong>. Amount must match exactly.
+                    <div style="font-size:12px;color:var(--warning);margin-top:8px;padding:8px 10px;background:rgba(245,158,11,0.07);border-radius:6px;border:1px solid rgba(245,158,11,0.18)">
+                        ⚠️ <strong>Send on Celo only.</strong> Token: <strong>G$ (GoodDollar)</strong>. Amount must match exactly.
                     </div>
                     <button class="btn btn-primary btn-full" onclick="startMerchantScan()" style="margin-top:10px">
                         <i class="fas fa-satellite-dish"></i> I've Sent the Payment — Check Now
@@ -838,12 +906,12 @@
         <div class="pay-step" id="stepProcessing">
             <div class="pay-status-box pay-status-info" style="text-align:center">
                 <div style="font-size:28px;margin-bottom:10px"><i class="fas fa-satellite-dish spin"></i></div>
-                <strong id="processingMsg">Watching the blockchain for your payment...</strong>
-                <div style="font-size:12px;color:#818cf8;margin-top:8px" id="processingDetail">Scanning Celo network • Auto-detecting G$ transfer</div>
+                <strong id="processingMsg">Watching for your payment…</strong>
+                <div style="font-size:12px;color:var(--text-dim);margin-top:8px" id="processingDetail">Checking the network for your G$ transfer</div>
                 <div style="margin-top:14px;background:rgba(67,56,43,0.10);border-radius:8px;height:6px;overflow:hidden">
                     <div id="detectProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#f97316,#f5a623);transition:width 0.5s ease;border-radius:8px"></div>
                 </div>
-                <div style="font-size:11px;color:#555;margin-top:6px" id="detectPollCount">Poll 0 / 360 • expires in 30:00</div>
+                <div style="font-size:12px;color:var(--text-dim);margin-top:6px" id="detectPollCount">Still checking…</div>
             </div>
         </div>
 
@@ -917,6 +985,9 @@ setInterval(refreshGdPrice, 5 * 60 * 1000);  // refresh every 5 minutes
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let selectedOperator = null, selectedAmount = null;
+// Minimum national-number digits before we will search. Kept in one place so
+// the Continue button, the live filter and the submit guard agree.
+const MIN_PHONE_DIGITS = 4;
 let selectedGcProduct = null, selectedBiller = null;
 let currentOrderId = null;
 let _pendingOrderData = null;
@@ -1059,7 +1130,7 @@ async function renderCountryList(query) {
         return `
             <div class="country-picker-item" onclick="selectCountryFromPicker('${c.isoName}')">
                 ${flagHtml}
-                <div class="cp-name">${safeName} <span style="color:#6b7280;font-size:12px">(${c.isoName})</span></div>
+                <div class="cp-name">${safeName} <span style="color:var(--text-muted);font-size:12px">(${c.isoName})</span></div>
                 <div class="cp-code">${dial || ''}</div>
             </div>`;
     }).join('');
@@ -1091,19 +1162,16 @@ function applyTopupCountry(country) {
     // Reveal phone input + dial-code prefix
     const prefix = dial || '+--';
     document.getElementById('tuPhonePrefix').textContent = prefix;
-    const recPrefix = document.getElementById('tuRecipientPrefix');
-    if (recPrefix) recPrefix.textContent = prefix;
     document.getElementById('tuPhoneGroup').style.display = 'block';
     const hint = document.getElementById('tuCountryHint');
     if (hint) hint.style.display = 'none';
 
-    // Enable Find Operators
+    // Enable Continue
     const btn = document.getElementById('tuFindBtn');
     btn.disabled = false;
 
-    // Clear stale phone values when switching country
+    // Clear stale phone value when switching country
     const tuPhone = document.getElementById('tuPhone'); if (tuPhone) tuPhone.value = '';
-    const tuRecipient = document.getElementById('tuRecipient'); if (tuRecipient) tuRecipient.value = '';
 
     // Drop cached operator list — it belongs to the previous country.
     window._allOperators = null;
@@ -1112,7 +1180,7 @@ function applyTopupCountry(country) {
     selectedOperator = null;
     selectedAmount = null;
     const opList = document.getElementById('operatorList');
-    if (opList) opList.innerHTML = '';
+    if (opList) { opList.innerHTML = ''; opList.style.display = ''; }
     const tf = document.getElementById('topupForm');
     if (tf) tf.style.display = 'none';
 }
@@ -1251,13 +1319,24 @@ function filterOperatorsByFamily(operators, detectedId, country) {
 
 // Debounced live filter — re-runs loadOperators a moment after the user
 // stops typing the phone number, so the operator list narrows itself
-// without the user having to click "Find Operators" again.
+// without the user having to tap Continue again.
 let _phoneFilterTimer = null;
 function schedulePhoneFilter() {
     clearTimeout(_phoneFilterTimer);
     const phone = (document.getElementById('tuPhone')?.value || '').trim();
     if (!_selectedCountry) return;
-    if (phone.length < 4) {
+    // Editing the number invalidates the chosen operator — the operator
+    // belongs to the number. Re-open the grid so the next selection is
+    // explicit rather than silently keeping a mismatched operator.
+    if (selectedOperator) {
+        selectedOperator = null;
+        selectedAmount = null;
+        const form = document.getElementById('topupForm');
+        if (form) form.style.display = 'none';
+        const list = document.getElementById('operatorList');
+        if (list) list.style.display = '';
+    }
+    if (phone.length < MIN_PHONE_DIGITS) {
         // Not enough digits — if a list is already shown, just unfilter it.
         if (window._allOperators && window._currentlyFiltered) {
             renderOperators(window._allOperators, null);
@@ -1865,9 +1944,9 @@ async function dappSendPayment() {
 
         setDappStatus('info',
             '<i class="fas fa-spinner spin"></i> Confirm in wallet:<br>' +
-            '<small style="color:#8a8378">Sending <strong>' + gdNeededDisplay + ' G$</strong> to merchant via G$ token contract.<br>' +
+            '<small style="color:var(--text-muted)">Sending <strong>' + gdNeededDisplay + ' G$</strong> to merchant via G$ token contract.<br>' +
             'The recipient shown in advanced details is:<br>' +
-            '<code style="font-size:10px">' + MERCHANT_ADDRESS.slice(0,10) + '...' + MERCHANT_ADDRESS.slice(-6) + '</code></small>'
+            '<code style="font-size:11.5px">' + MERCHANT_ADDRESS.slice(0,10) + '...' + MERCHANT_ADDRESS.slice(-6) + '</code></small>'
         );
 
         let txHash;
@@ -2142,9 +2221,9 @@ async function startAutoDetect() {
     _scanningActive = true;
     showStep('stepProcessing');
     document.getElementById('processingMsg').textContent = 'Watching the blockchain for your payment...';
-    document.getElementById('processingDetail').textContent = 'Scanning Celo network • Auto-detecting G$ transfer';
+    document.getElementById('processingDetail').textContent = 'Checking the network for your G$ transfer';
     document.getElementById('detectProgressBar').style.width = '0%';
-    document.getElementById('detectPollCount').textContent = 'Poll 0 / ' + POLL_MAX + ' • expires in 30:00';
+    document.getElementById('detectPollCount').textContent = `Checking… (${Math.round(POLL_MAX * POLL_INTERVAL_MS / 60000)} min max)`;
 
     let poll = 0;
     while (poll < POLL_MAX) {
@@ -2154,8 +2233,8 @@ async function startAutoDetect() {
         const mm = String(Math.floor(secsLeft / 60)).padStart(1, '0');
         const ss = String(secsLeft % 60).padStart(2, '0');
         document.getElementById('detectProgressBar').style.width = pct + '%';
-        document.getElementById('detectPollCount').textContent = `Poll ${poll} / ${POLL_MAX} • expires in ${mm}:${ss}`;
-        document.getElementById('processingDetail').textContent = `Scanning Celo blocks… attempt ${poll} of ${POLL_MAX}`;
+        document.getElementById('detectPollCount').textContent = `Still checking… ${mm}:${ss} left`;
+        document.getElementById('processingDetail').textContent = `Looking for your payment (check ${poll} of ${POLL_MAX})`;
 
         try {
             const body = { order_id: currentOrderId };
@@ -2287,12 +2366,23 @@ async function loadOperators(opts = {}) {
         return;
     }
     const localPhone = document.getElementById('tuPhone').value.trim();
+    // The number is mandatory: it is the number Reloadly loads, and it drives
+    // operator auto-detection. There is no second field to fall back on.
+    if (!localPhone) {
+        if (!silent) showToast('Enter the recipient phone number', 'error');
+        return;
+    }
+    if (localPhone.length < MIN_PHONE_DIGITS) {
+        if (!silent) showToast(`Enter at least ${MIN_PHONE_DIGITS} digits of the phone number`, 'error');
+        return;
+    }
     const dialDigits = getDialCode(_selectedCountry).replace(/\D/g, '');
     const fullPhone = localPhone ? (dialDigits + localPhone) : '';
 
     const list = document.getElementById('operatorList');
     if (!silent) {
-        list.innerHTML = '<div class="loading"><i class="fas fa-spinner"></i></div>';
+        list.style.display = '';
+        list.innerHTML = '<div class="loading"><i class="fas fa-spinner"></i> Loading operators…</div>';
         selectedOperator = null;
         selectedAmount = null;
         document.getElementById('topupForm').style.display = 'none';
@@ -2312,7 +2402,7 @@ async function loadOperators(opts = {}) {
         let allOps = window._allOperators;
         if (!allOps || window._allOperatorsCountry !== country) {
             const data = await apiFetch(`/reloadly/api/topup/operators?country=${country}`);
-            if (!data.success) { list.innerHTML = `<div class="empty-msg">❌ ${data.error}</div>`; return; }
+            if (!data.success) { list.innerHTML = _operatorErrorHtml(data.error); return; }
             allOps = data.operators || [];
             window._allOperators = allOps;
             window._allOperatorsCountry = country;
@@ -2333,15 +2423,44 @@ async function loadOperators(opts = {}) {
             const idx = opsToShow.findIndex(op => op.id === detectedId);
             if (idx !== -1) selectOperator(idx);
         }
-
-        // Pre-fill the recipient field with what the user already typed
-        if (localPhone) {
-            const rec = document.getElementById('tuRecipient');
-            if (rec && !rec.value) rec.value = localPhone;
-        }
     } catch(e) {
-        if (!silent) list.innerHTML = '<div class="empty-msg">❌ Failed to load operators</div>';
+        if (!silent) list.innerHTML = _operatorErrorHtml('Failed to load operators');
     }
+}
+
+// Operator-load failure with a way forward (the country picker already had
+// this pattern; the operator list used to be a dead end).
+function _operatorErrorHtml(reason) {
+    return `<div class="card">
+        <div class="empty-msg">❌ ${reason || 'Could not load operators'}</div>
+        <button type="button" class="btn btn-primary" style="margin-top:12px" onclick="loadOperators()">
+            <i class="fas fa-redo"></i> Try again
+        </button>
+    </div>`;
+}
+
+// Bring the operator grid back after a selection (or show all operators).
+function changeOperator() {
+    selectedOperator = null;
+    selectedAmount = null;
+    const form = document.getElementById('topupForm');
+    if (form) form.style.display = 'none';
+    const list = document.getElementById('operatorList');
+    if (list) {
+        list.style.display = '';
+        if (window._allOperators) {
+            renderOperators(window._allOperators, null, {
+                filtered: false,
+                totalCount: window._allOperators.length,
+                phoneTyped: !!document.getElementById('tuPhone').value.trim(),
+            });
+        }
+    }
+    _scrollToEl(list);
+}
+
+function _scrollToEl(el) {
+    try { el?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
 }
 
 function showAllOperatorsForCountry() {
@@ -2349,6 +2468,8 @@ function showAllOperatorsForCountry() {
     window._currentlyFiltered = false;
     selectedOperator = null;
     document.getElementById('topupForm').style.display = 'none';
+    const list = document.getElementById('operatorList');
+    if (list) list.style.display = '';
     renderOperators(window._allOperators, null, {
         filtered: false,
         totalCount: window._allOperators.length,
@@ -2366,33 +2487,33 @@ function renderOperators(operators, detectedId = null, meta = {}) {
     if (filtered) {
         const hidden = Math.max(0, totalCount - operators.length);
         banner = `
-            <div style="background:rgba(105,240,174,0.08);border:1px solid rgba(105,240,174,0.25);
+            <div style="background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.25);
                         border-radius:10px;padding:10px 14px;margin-bottom:14px;
                         display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                <i class="fas fa-bullseye" style="color:#15803d"></i>
-                <div style="flex:1;font-size:12.5px;color:#3a5c47;line-height:1.45">
-                    Showing <strong style="color:#15803d">${operators.length}</strong>
+                <i class="fas fa-bullseye" style="color:var(--success)"></i>
+                <div style="flex:1;font-size:12.5px;color:var(--text-dim);line-height:1.45">
+                    Showing <strong style="color:var(--success)">${operators.length}</strong>
                     operator${operators.length === 1 ? '' : 's'} matching your number's prefix.
-                    ${hidden > 0 ? `<span style="color:#9ca3af">${hidden} other${hidden === 1 ? '' : 's'} hidden.</span>` : ''}
+                    ${hidden > 0 ? `<span style="color:var(--text-dim)">${hidden} other${hidden === 1 ? '' : 's'} hidden.</span>` : ''}
                 </div>
                 <button type="button" onclick="showAllOperatorsForCountry()"
-                    style="background:transparent;border:1px solid #2e3150;color:#7986cb;
-                           padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">
+                    style="background:transparent;border:1px solid var(--card-border);color:#c2410c;
+                           padding:9px 14px;border-radius:6px;font-size:12.5px;cursor:pointer;min-height:36px">
                     Show all
                 </button>
             </div>`;
     } else if (phoneTyped) {
         banner = `
-            <div style="background:rgba(121,134,203,0.08);border:1px solid rgba(121,134,203,0.25);
+            <div style="background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.25);
                         border-radius:10px;padding:10px 14px;margin-bottom:14px;
-                        display:flex;align-items:center;gap:10px;font-size:12.5px;color:#3a3226">
+                        display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--text-dim)">
                 <i class="fas fa-info-circle" style="color:#c2410c"></i>
                 <span>Couldn't auto-match your number. Showing all operators for this country.</span>
             </div>`;
     }
 
     const headerExtra = detectedId
-        ? '<span style="font-size:11px;color:#15803d;font-weight:400;margin-left:6px">✓ Auto-detected from phone number</span>'
+        ? '<span style="font-size:12px;color:#15803d;font-weight:400;margin-left:6px">✓ Auto-detected from phone number</span>'
         : '';
 
     list.innerHTML = `<div class="card">
@@ -2407,7 +2528,7 @@ function renderOperators(operators, detectedId = null, meta = {}) {
                 <div class="op-name">${op.name}</div>
                 <div class="op-country">${op.country?.name || ''}</div>
                 <div class="op-amounts">${op.gd_amounts ? op.gd_amounts.slice(0,3).map(a=>`${a} G$`).join(' · ') : (op.minAmount ? `$${op.minAmount}–$${op.maxAmount}` : '')}</div>
-                ${isDetected ? '<div style="font-size:9px;color:#15803d;margin-top:4px">● Detected</div>' : ''}
+                ${isDetected ? '<div style="font-size:11px;color:#15803d;margin-top:4px">● Detected</div>' : ''}
             </div>`;
         }).join('')
     }</div></div>`;
@@ -2431,8 +2552,8 @@ function selectOperator(idx) {
         const hasDescs = Object.keys(localDescs).length > 0 || Object.keys(usdDescs).length > 0;
         const isBundle = selectedOperator.bundle || selectedOperator.data || hasDescs;
 
-        sec.innerHTML = `<label style="font-size:12px;color:#6b5d48;display:block;margin-bottom:8px">
-            ${isBundle ? 'Select Promo / Bundle' : 'Select Amount'}
+        sec.innerHTML = `<label style="font-size:12.5px;color:var(--text-dim);display:block;margin-bottom:8px">
+            ${isBundle ? 'Choose a data package' : 'Choose an amount'}
             </label>
             <div class="${isBundle ? 'bundle-list' : 'amount-chips'}">${selectedOperator.fixedAmounts.map((a, i) => {
                 const localAmt = localAmounts[i];
@@ -2450,7 +2571,7 @@ function selectOperator(idx) {
                         <div class="bundle-name">${desc}</div>
                         <div class="bundle-price">
                             <div style="color:#15803d;font-weight:700;font-size:13px">${Math.round(gd[i]).toLocaleString()} G$</div>
-                            <div style="color:#888;font-size:10px">${localDisplay}</div>
+                            <div style="color:var(--text-dim);font-size:11.5px">${localDisplay}</div>
                         </div>
                     </div>`;
                 }
@@ -2472,7 +2593,37 @@ function selectOperator(idx) {
         </div>`;
     }
     document.getElementById('topupForm').style.display = 'block';
+    // The grid has served its purpose — hide it so the amount options sit in
+    // the first viewport instead of below 20+ operator cards. "Change" on the
+    // form header brings it back.
+    const opList = document.getElementById('operatorList');
+    if (opList) opList.style.display = 'none';
+    _renderRecipientLine();
+    _scrollToEl(document.getElementById('topupForm'));
     updateTuSummary();
+}
+
+// The phone field is no longer inside the form, so state the number being
+// loaded explicitly — otherwise the user has no confirmation of the target.
+function _renderRecipientLine() {
+    const line = document.getElementById('tuRecipientLine');
+    if (!line) return;
+    const localPhone = (document.getElementById('tuPhone')?.value || '').trim();
+    const dial = _selectedCountry ? getDialCode(_selectedCountry) : '';
+    const display = localPhone ? `${dial} ${localPhone}`.trim() : '';
+    if (!display) {
+        line.innerHTML = `<i class="fas fa-exclamation-triangle" style="color:var(--warning)"></i>
+            <span class="tu-warn">No phone number entered — go back and add one.</span>`;
+        return;
+    }
+    line.innerHTML = `<i class="fas fa-mobile-alt" style="color:#c2410c"></i>
+        <span>Loading</span> <strong>${_escHtml(display)}</strong>`;
+}
+
+function _escHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
 }
 
 function selectFixedAmt(usd, gd, el) {
@@ -2504,7 +2655,7 @@ function updateTuSummary() {
 }
 
 function initiateTopup() {
-    const localPhone = document.getElementById('tuRecipient').value.trim();
+    const localPhone = (document.getElementById('tuPhone').value || '').trim();
     if (!localPhone) { showToast('Enter recipient phone number', 'error'); return; }
     if (!_selectedCountry) { showToast('Select a country first', 'error'); return; }
     if (!selectedOperator) { showToast('Select an operator', 'error'); return; }
@@ -2556,7 +2707,7 @@ function selectGc(idx) {
     let amtHtml = '';
     if (selectedGcProduct.fixedRecipientDenominations?.length) {
         const gd = selectedGcProduct.gd_fixed || selectedGcProduct.fixedRecipientDenominations.map(a => Math.ceil(a / GD_PRICE));
-        amtHtml = `<div class="form-group"><label>Select Denomination</label><div class="amount-chips">${
+        amtHtml = `<div class="form-group"><label>Choose an amount</label><div class="amount-chips">${
             selectedGcProduct.fixedRecipientDenominations.map((a,i) => `<div class="chip" onclick="selectGcAmt(${a},${gd[i]},this)">$${a} <span style="color:#c2410c">(${gd[i]} G$)</span></div>`).join('')}</div></div>`;
     } else {
         amtHtml = `<div class="form-group"><label>Amount (USD) — $${selectedGcProduct.minRecipientDenomination}–$${selectedGcProduct.maxRecipientDenomination}</label>
@@ -2631,7 +2782,7 @@ function selectVc(idx) {
     let amtHtml = '';
     if (selectedVcProduct.fixedRecipientDenominations?.length) {
         const gd = selectedVcProduct.gd_fixed || selectedVcProduct.fixedRecipientDenominations.map(a => Math.ceil(a / GD_PRICE));
-        amtHtml = `<div class="form-group"><label>Select Denomination</label><div class="amount-chips">${
+        amtHtml = `<div class="form-group"><label>Choose an amount</label><div class="amount-chips">${
             selectedVcProduct.fixedRecipientDenominations.map((a,i) => `<div class="chip" onclick="selectVcAmt(${a},${gd[i]},this)">$${a} <span style="color:#c2410c">(${gd[i].toLocaleString()} G$)</span></div>`).join('')}</div></div>`;
     } else {
         amtHtml = `<div class="form-group"><label>Amount (USD) — $${selectedVcProduct.minRecipientDenomination}–$${selectedVcProduct.maxRecipientDenomination}</label>
@@ -2639,7 +2790,7 @@ function selectVc(idx) {
     }
     div.innerHTML = `<h3>${selectedVcProduct.productName}</h3>${amtHtml}
         <div class="summary-box" id="vcSummary" style="display:none"></div>
-        <div style="font-size:11.5px;color:#9ca3af;line-height:1.5;margin-top:10px;padding:9px 12px;background:#fbfaf8;border-radius:8px;border:1px solid #e9e2d6">
+        <div style="font-size:12.5px;color:var(--text-dim);line-height:1.5;margin-top:10px;padding:9px 12px;background:#fbfaf8;border-radius:8px;border:1px solid #e9e2d6">
             ℹ️ After payment confirms, card number + CVV + expiry will appear below. <strong>Save them immediately</strong> — most virtual cards are one-time use.
         </div>
         <button class="btn btn-primary btn-full" onclick="initiateVirtualCard()" style="margin-top:12px"><i class="fas fa-bolt"></i> Pay with G$</button>`;
@@ -2759,13 +2910,13 @@ function renderVirtualCard(card) {
 
     if (instructions) {
         const note = document.createElement('div');
-        note.style.cssText = 'font-size:11px;color:#8a8378;margin-top:8px;padding:8px;background:#fbfaf8;border-radius:6px;line-height:1.5';
+        note.style.cssText = 'font-size:12px;color:var(--text-muted);margin-top:8px;padding:8px;background:#fbfaf8;border-radius:6px;line-height:1.5';
         note.textContent = String(instructions);
         wrap.appendChild(note);
     }
 
     const warn = document.createElement('div');
-    warn.style.cssText = 'font-size:11px;color:#b45309;margin-top:8px';
+    warn.style.cssText = 'font-size:12px;color:#b45309;margin-top:8px';
     warn.textContent = '⚠️ Save these details now — for security, you may not be able to retrieve them again.';
     wrap.appendChild(warn);
     return wrap;
@@ -2776,7 +2927,7 @@ function _vcMakeRow(label, value, isSecret) {
     row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px dashed #e9e2d6';
 
     const lbl = document.createElement('span');
-    lbl.style.cssText = 'font-size:11px;text-transform:uppercase;letter-spacing:0.8px;color:#8a8378';
+    lbl.style.cssText = 'font-size:12px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-muted)';
     lbl.textContent = label;
 
     const right = document.createElement('div');
@@ -2793,7 +2944,7 @@ function _vcMakeRow(label, value, isSecret) {
     if (isSecret) {
         const eyeBtn = document.createElement('button');
         eyeBtn.type = 'button';
-        eyeBtn.style.cssText = 'background:linear-gradient(135deg,#f97316,#ea580c);border:none;color:#fff;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer';
+        eyeBtn.style.cssText = 'background:linear-gradient(135deg,#f97316,#ea580c);border:none;color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;cursor:pointer';
         const eyeIcon = document.createElement('i');
         eyeIcon.className = 'fas fa-eye';
         eyeBtn.appendChild(eyeIcon);
@@ -2804,7 +2955,7 @@ function _vcMakeRow(label, value, isSecret) {
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.title = 'Copy';
-    copyBtn.style.cssText = 'background:#fff7ed;border:1px solid rgba(var(--accent-rgb),0.5);color:#b45309;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer';
+    copyBtn.style.cssText = 'background:#fff7ed;border:1px solid rgba(var(--accent-rgb),0.5);color:#b45309;padding:5px 10px;border-radius:6px;font-size:12px;cursor:pointer';
     const copyIcon = document.createElement('i');
     copyIcon.className = 'fas fa-copy';
     copyBtn.appendChild(copyIcon);
@@ -2918,7 +3069,7 @@ async function loadOrders() {
 
         if (!orders.length) {
             list.innerHTML = `
-            <div style="text-align:center;padding:40px 20px;color:#888">
+            <div style="text-align:center;padding:40px 20px;color:var(--text-dim)">
                 <div style="font-size:40px;margin-bottom:12px">🛒</div>
                 <div>No transactions yet.</div>
                 <div style="font-size:12px;margin-top:6px">Your purchases will appear here.</div>
@@ -2949,25 +3100,25 @@ async function loadOrders() {
 
             const txLink = o.tx_hash
                 ? `<a href="${CELOSCAN}${o.tx_hash}" target="_blank" rel="noopener"
-                      style="color:#0369a1;font-size:11px;text-decoration:none">
-                      <i class="fas fa-external-link-alt" style="font-size:9px"></i>
+                      style="color:#0369a1;font-size:12px;text-decoration:none">
+                      <i class="fas fa-external-link-alt" style="font-size:11px"></i>
                       ${o.tx_hash.slice(0,10)}…${o.tx_hash.slice(-6)}
                    </a>` : '';
 
             const refundLink = o.refund_tx_hash
                 ? `<a href="${CELOSCAN}${o.refund_tx_hash}" target="_blank" rel="noopener"
-                      style="color:#ea80fc;font-size:11px;text-decoration:none">
-                      <i class="fas fa-undo" style="font-size:9px"></i>
+                      style="color:#c2410c;font-size:12px;text-decoration:none">
+                      <i class="fas fa-undo" style="font-size:11px"></i>
                       Refund: ${o.refund_tx_hash.slice(0,10)}…${o.refund_tx_hash.slice(-6)}
                    </a>` : '';
 
             const failReason = o.failure_reason
-                ? `<div style="font-size:11px;color:#ef9a9a;margin-top:2px">
+                ? `<div style="font-size:12px;color:var(--danger);margin-top:2px">
                        <i class="fas fa-exclamation-circle"></i> ${o.failure_reason}
                    </div>` : '';
 
             const rlId = o.reloadly_transaction_id
-                ? `<span style="font-size:10px;color:#888;background:#1e1e1e;padding:2px 6px;border-radius:4px">
+                ? `<span style="font-size:12px;color:var(--text-dim);background:#fff7ed;border:1px solid var(--card-border);padding:2px 6px;border-radius:4px">
                        Ref# ${o.reloadly_transaction_id}
                    </span>` : '';
 
@@ -2980,18 +3131,18 @@ async function loadOrders() {
                             <span style="font-weight:600;font-size:14px">${typeLabel[o.order_type]||o.order_type}</span>
                             <span class="status-pill status-${o.status}">${o.status.replace(/_/g,' ')}</span>
                         </div>
-                        ${detail ? `<div style="font-size:12px;color:#bbb;margin-top:2px">${detail}</div>` : ''}
+                        ${detail ? `<div style="font-size:12px;color:var(--text-dim);margin-top:2px">${detail}</div>` : ''}
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
                     <div>
                         <span style="font-weight:700;color:#15803d">${parseFloat(o.gd_amount).toFixed(2)} G$</span>
-                        <span style="color:#8a8378;font-size:12px;margin-left:4px">≈ $${parseFloat(o.usd_amount).toFixed(2)}</span>
+                        <span style="color:var(--text-muted);font-size:12px;margin-left:4px">≈ $${parseFloat(o.usd_amount).toFixed(2)}</span>
                     </div>
-                    <div style="font-size:11px;color:#888">${date}</div>
+                    <div style="font-size:12px;color:var(--text-dim)">${date}</div>
                 </div>
                 ${(txLink || refundLink || rlId) ? `
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #2a2a2a">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px;border-top:1px solid var(--card-border)">
                     ${txLink}
                     ${refundLink}
                     ${rlId}
@@ -3097,8 +3248,6 @@ async function applyAiMobileLoad(action) {
     const findPhone = document.getElementById('tuPhone');
     if (findPhone) findPhone.value = phone;
     await loadOperators();
-    const recipient = document.getElementById('tuRecipient');
-    if (recipient) recipient.value = phone;
 
     if (selectedOperator && fiatAmount) {
         const wanted = Number(fiatAmount);
