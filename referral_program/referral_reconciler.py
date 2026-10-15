@@ -41,6 +41,14 @@ _scheduler_lock = threading.Lock()
 def _reconcile_once():
     from referral_program.referral_service import referral_service
 
+    # FIRST: free any row stranded in the intermediate 'disbursing' state by a
+    # worker that died mid-flight (or a terminal write that failed silently).
+    # Without this, reconcile_stuck_referrals below never sees those rows — it
+    # only reads 'pending_face_verification' — and the row stays stuck forever.
+    reclaimed = referral_service.reclaim_stale_disbursing()
+    if reclaimed.get("reclaimed"):
+        logger.info(f"🤝 Referral reconciler: reclaimed_stale={reclaimed.get('reclaimed', 0)}")
+
     stuck = referral_service.reconcile_stuck_referrals(older_than_hours=_STUCK_HOURS)
     if stuck.get("fixed") or stuck.get("still_stuck"):
         logger.info(
