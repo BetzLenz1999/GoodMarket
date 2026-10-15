@@ -121,6 +121,33 @@ class ReferralBlockchain:
             time.sleep(poll_sec)
         return None
 
+    def reward_already_paid(self, referral_id, reward_type: str, wallet_address: str):
+        """Ask the CONTRACT whether this exact referral leg was already paid.
+
+        This is the authoritative duplicate check. It is independent of the
+        reward log, so a payment recorded without a ``referral_id``, a log row
+        whose write silently failed, or a duplicate ``referrals`` row cannot
+        hide an existing payout.
+
+        Returns ``{"paid": bool, "known": bool, "error": str|None}``.
+        ``known=False`` means the contract could not be read (the caller must
+        then fall back to the DB evidence and never treat it as "not paid").
+        """
+        if referral_id is None:
+            return {"paid": False, "known": False, "error": "missing_referral_id"}
+        try:
+            contract = self._contract()
+            recipient = Web3.to_checksum_address(wallet_address)
+            reward_id = self.reward_id(referral_id, reward_type, recipient)
+            paid = bool(contract.functions.rewardPaid(reward_id).call())
+            return {"paid": paid, "known": True, "error": None, "reward_id": reward_id.hex()}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not read contract rewardPaid for referral %s (%s): %s",
+                referral_id, reward_type, exc
+            )
+            return {"paid": False, "known": False, "error": str(exc)}
+
     def disburse_referral_reward(self, wallet_address: str, amount: float, reward_type: str, referral_id=None) -> dict:
         with _disburse_lock:
             return self._disburse_referral_reward_locked(wallet_address, amount, reward_type, referral_id)
