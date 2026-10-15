@@ -292,9 +292,12 @@ class ReferralService:
         except Exception as ext_err:
             logger.warning(f"Could not check external verification for {referee_wallet[:8]}...: {ext_err}")
 
-        # Guard: prevent duplicate referral records
+        # Guard: prevent duplicate referral records. Case-insensitive because a
+        # checksummed session wallet and a lowercase writer would otherwise miss
+        # each other and create a SECOND referrals row for one referee — and each
+        # row is a distinct on-chain reward_id, so both would pay.
         existing = _safe(
-            lambda: supabase.table('referrals').select('id,status').eq('referee_wallet', referee_wallet).limit(1).execute(),
+            lambda: supabase.table('referrals').select('id,status').ilike('referee_wallet', referee_wallet).limit(1).execute(),
             op="check existing referral"
         )
         if existing and existing.data:
@@ -317,6 +320,20 @@ class ReferralService:
         )
 
         if not insert_result or not insert_result.data:
+            # A UNIQUE index on lower(referee_wallet) (sql/referral_unique_referee.sql)
+            # turns a lost race into a constraint violation rather than a second
+            # row. Report it as already_exists so the caller behaves exactly as
+            # if the pre-check had caught it.
+            recheck = _safe(
+                lambda: supabase.table('referrals').select('id,status').ilike('referee_wallet', referee_wallet).limit(1).execute(),
+                op="recheck existing referral after insert failure"
+            )
+            if recheck and recheck.data:
+                return {
+                    "success": False,
+                    "already_exists": True,
+                    "error": f"Wallet already has a referral record (status: {recheck.data[0].get('status', 'unknown')})"
+                }
             return {"success": False, "error": "Failed to record referral"}
 
         logger.info(f"Referral recorded: code={referral_code} referrer={referrer_wallet[:8]}... referee={referee_wallet[:8]}...")
@@ -469,14 +486,30 @@ class ReferralService:
         row = existing.data[0]
         row_id = row.get('id')
 
+        # Stamp when the claim happened so a stranded 'disbursing' row can be
+        # told apart from one that is genuinely in flight (see
+        # REFERRAL_STALE_CLAIM_SEC / reclaim_stale_disbursing). A deployment
+        # that has not run sql/referral_disbursing_at.sql has no column, so
+        # fall back to the plain update — claiming must never break on schema.
+        _claim_payload = {'status': 'disbursing',
+                          'disbursing_at': datetime.now(timezone.utc).isoformat()}
+
+        def _do_claim(payload):
+            return supabase.table('referrals') \
+                .update(payload) \
+                .eq('id', row_id) \
+                .in_('status', allowed) \
+                .execute()
+
         update_result = _safe(
-            lambda: supabase.table('referrals')
-                .update({'status': 'disbursing'})
-                .eq('id', row_id)
-                .in_('status', allowed)
-                .execute(),
+            lambda: _do_claim(_claim_payload),
             op="claim pending referral — atomic update to disbursing"
         )
+        if update_result is None:
+            update_result = _safe(
+                lambda: _do_claim({'status': 'disbursing'}),
+                op="claim pending referral — atomic update to disbursing (no disbursing_at)"
+            )
 
         # Supabase clients/deployments differ in what UPDATE returns:
         # some return count, some return updated rows in data, and some return
@@ -663,20 +696,40 @@ class ReferralService:
         # Without this guard, an admin retry that skips an already-paid leg would
         # insert a duplicate completed row and double-count "total G$ distributed".
         existing = None
-        if reward_type == 'referee' or (reward_type == 'referrer' and referral_id is not None):
-            def _existing_completed_query():
-                query = supabase.table('referral_rewards_log') \
-                    .select('*') \
-                    .eq('wallet_address', wallet_address) \
-                    .eq('reward_type', reward_type) \
-                    .eq('referral_code', referral_code) \
-                    .eq('status', 'completed')
-                if referral_id is not None:
-                    query = query.eq('referral_id', referral_id)
-                return query.limit(1).execute()
 
-            existing = _safe(_existing_completed_query, op="check existing completed reward")
-            
+        def _existing_completed_query(referral_id_filter=None, unscoped_only=False):
+            query = supabase.table('referral_rewards_log') \
+                .select('*') \
+                .ilike('wallet_address', wallet_address) \
+                .eq('reward_type', reward_type) \
+                .eq('referral_code', referral_code) \
+                .eq('status', 'completed')
+            if referral_id_filter is not None:
+                query = query.eq('referral_id', referral_id_filter)
+            if unscoped_only:
+                # "referral_id IS NULL" only. A referral_code is reused for
+                # every invite, so a scoped row for a DIFFERENT referral must
+                # never be adopted as this one's evidence.
+                query = query.is_('referral_id', 'null')
+            return query.limit(1).execute()
+
+        if reward_type in ('referee', 'referrer'):
+            existing = _safe(lambda: _existing_completed_query(referral_id),
+                             op="check existing completed reward")
+            if (not existing or not existing.data) and referral_id is not None:
+                # A completed leg recorded WITHOUT a referral_id (legacy rows,
+                # or an id lookup that hit a DB hiccup) is invisible to the
+                # scoped query, so fall back to the code+wallet+type identity.
+                # The filter MUST be "referral_id IS NULL": a referral_code is
+                # reused for every invite, so a scoped row for a DIFFERENT
+                # referral would otherwise be adopted and a real payout left
+                # unrecorded.
+                existing = _safe(lambda: _existing_completed_query(unscoped_only=True),
+                                 op="check existing completed reward (unscoped fallback)")
+                if existing is not None and existing.data:
+                    existing.data = [r for r in existing.data
+                                     if r.get('referral_id') is None]
+
             if existing and existing.data:
                 logger.info(f"Reward already logged for {wallet_address[:8]}... ({reward_type}) - skipping duplicate")
                 return {"success": True, "skipped": True, "existing": existing.data[0]}
@@ -685,18 +738,29 @@ class ReferralService:
         # an auto-retry (background reconciler) or admin retry of a previously
         # failed leg updates THE SAME row in place (failed -> completed /
         # pending_disbursed) instead of inserting a duplicate log row.
-        def _pending_reward_query():
+        def _pending_reward_query(referral_id_filter=None, unscoped_only=False):
             query = supabase.table('referral_rewards_log') \
                 .select('id') \
-                .eq('wallet_address', wallet_address) \
+                .ilike('wallet_address', wallet_address) \
                 .eq('reward_type', reward_type) \
                 .eq('referral_code', referral_code) \
                 .in_('status', ['pending', 'pending_disbursed', 'pending_face_verification', 'failed'])
-            if referral_id is not None:
-                query = query.eq('referral_id', referral_id)
+            if referral_id_filter is not None:
+                query = query.eq('referral_id', referral_id_filter)
+            if unscoped_only:
+                query = query.is_('referral_id', 'null')
             return query.limit(1).execute()
 
-        pending = _safe(_pending_reward_query, op="check existing pending reward")
+        pending = _safe(lambda: _pending_reward_query(referral_id),
+                        op="check existing pending reward")
+        if (not pending or not pending.data) and referral_id is not None:
+            # Same NULL-referral_id blind spot as above: reuse the existing
+            # pending row instead of inserting a second one for one payout.
+            # "IS NULL" only - see the completed-row fallback for why.
+            pending = _safe(lambda: _pending_reward_query(unscoped_only=True),
+                            op="check existing pending reward (unscoped fallback)")
+            if pending is not None and pending.data:
+                pending.data = [r for r in pending.data if r.get('referral_id') is None]
         
         data = {
             'wallet_address': wallet_address,
@@ -841,7 +905,38 @@ class ReferralService:
             return query.execute()
 
         rewards = _safe(_completed_rewards_query, op="check if referral already disbursed")
-        
+
+        # Rows that arrive through the unscoped fallback carry no referral_id,
+        # so the loop below must identify them by WALLET, not by the row id - a
+        # referral_code is reused for every invite, so a scoped row belonging to
+        # a different referee of the same referrer must never be adopted.
+        unscoped_ids = set()
+
+        if (not rewards or not rewards.data) and referral_id is not None:
+            # The scoped query can MISS an earlier completed leg that was
+            # recorded without a referral_id (rows written before
+            # sql/referral_rewards_log_referral_id.sql ran, or when the id
+            # lookup hit a DB hiccup). Without this fallback the referrer is
+            # paid a SECOND time on an admin retry.
+            def _unscoped_completed_query():
+                return supabase.table('referral_rewards_log') \
+                    .select('wallet_address, reward_type, status, tx_hash, referral_id') \
+                    .eq('referral_code', referral_code) \
+                    .eq('status', 'completed') \
+                    .is_('referral_id', 'null') \
+                    .execute()
+
+            fallback = _safe(_unscoped_completed_query,
+                             op="check if referral already disbursed (unscoped fallback)")
+            if fallback is not None and fallback.data:
+                # Belt-and-braces: keep only rows that really have no id, in
+                # case the deployment ignored the is_() filter.
+                fallback.data = [r for r in fallback.data
+                                 if r.get('referral_id') is None]
+            if fallback is not None and fallback.data:
+                rewards = fallback
+                unscoped_ids = {id(r) for r in fallback.data}
+
         if not rewards or not rewards.data:
             return {"fully_disbursed": False}
         
@@ -856,7 +951,7 @@ class ReferralService:
         for r in rewards.data:
             reward_wallet = (r.get('wallet_address') or '').lower()
             if r.get('reward_type') == 'referrer':
-                if referral_id is not None:
+                if referral_id is not None and id(r) not in unscoped_ids:
                     # The query above is scoped to this exact referral row, so a
                     # completed referrer reward here unambiguously belongs to
                     # this referral. Treat it as done to avoid RE-PAYING the
@@ -934,7 +1029,8 @@ class ReferralService:
             # claim. Both reward legs are already paid, so finalize the row to
             # 'completed' instead of leaving it orphaned in the intermediate
             # 'disbursing' state (which is invisible to the admin dashboard).
-            self.update_referral_status(referee_wallet, 'completed', referral_id=referral_id)
+            self.update_referral_status(referee_wallet, 'completed', referral_id=referral_id,
+                                        clear_error=True)
             return {
                 "success": True,
                 "already_disbursed": True,
@@ -948,6 +1044,32 @@ class ReferralService:
         # Track which side already completed to avoid re-sending
         referrer_already_done = existing.get("referrer_completed", False)
         referee_already_done = existing.get("referee_completed", False)
+
+        # AUTHORITATIVE contract check. The reward log can miss an earlier
+        # payout (a completed row recorded without a referral_id, or a write
+        # that silently failed), and a duplicate referrals row produces a
+        # DIFFERENT on-chain reward_id so the contract would happily pay twice.
+        # Ask the contract per leg using the same reward_id we would send; a
+        # True answer is final. Only a definitively-unpaid leg is sent.
+        if referral_id is not None:
+            for _leg, _wallet, _done in (
+                ('referee', referee_wallet, referee_already_done),
+                ('referrer', referrer_wallet, referrer_already_done),
+            ):
+                if _done:
+                    continue
+                _paid = referral_blockchain_service.reward_already_paid(
+                    referral_id, _leg, _wallet
+                )
+                if _paid.get("paid"):
+                    logger.warning(
+                        f"⛔ {_leg} reward for referral {referral_code} is ALREADY PAID "
+                        f"on-chain (reward_id={_paid.get('reward_id')}) - skipping re-send"
+                    )
+                    if _leg == 'referrer':
+                        referrer_already_done = True
+                    else:
+                        referee_already_done = True
         logger.info(f"   referrer_already_done={referrer_already_done}, referee_already_done={referee_already_done}")
 
         try:
@@ -1040,7 +1162,11 @@ class ReferralService:
                             referral_code, referee_result.get('tx_hash'), referee_status, referral_id)
 
             if referrer_result.get('success') and referee_result.get('success'):
-                self.update_referral_status(referee_wallet, 'completed', referral_id=referral_id)
+                # clear_error: a prior attempt may have parked the row with the
+                # stale "Referee not verified yet" text. The payout succeeded, so
+                # that text must not survive on a now-completed row.
+                self.update_referral_status(referee_wallet, 'completed', referral_id=referral_id,
+                                            clear_error=True)
                 logger.info(
                     f"✅ Referral rewards disbursed: {referral_code} | "
                     f"referrer={referrer_wallet[:8]}... referee={referee_wallet[:8]}..."
@@ -1771,7 +1897,8 @@ class ReferralService:
             result = self.process_referral_disbursement(
                 referrer_wallet=referrer_wallet,
                 referee_wallet=wallet_address,
-                referral_code=referral_code.upper() if referral_code else referral_code
+                referral_code=referral_code.upper() if referral_code else referral_code,
+                referral_id=referral.get('id')
             )
             
             if result.get('success'):
@@ -1801,6 +1928,81 @@ class ReferralService:
                 "verification_reason": verification_reason,
                 "referral_code": referral_code
             }
+
+    def _stale_claim_cutoff_iso(self):
+        """ISO cutoff for reclaiming a stranded 'disbursing' row."""
+        from datetime import timedelta
+        try:
+            seconds = int(os.getenv('REFERRAL_STALE_CLAIM_SEC', '300'))
+        except (TypeError, ValueError):
+            seconds = 300
+        return (datetime.now(timezone.utc) - timedelta(seconds=max(0, seconds))).isoformat()
+
+    def reclaim_stale_disbursing(self, limit: int = 200) -> dict:
+        """Reset stranded 'disbursing' referrals so they can be retried.
+
+        ``disbursing`` is an intermediate CAS-claim state. It is left behind
+        when the worker dies between the claim and the terminal write (gunicorn
+        recycles workers) or when a terminal DB write fails — every write goes
+        through ``_safe``, which swallows the exception. Nothing else picked
+        these rows up: ``reconcile_stuck_referrals`` only reads
+        ``pending_face_verification``, so the row stayed stuck forever and the
+        admin dashboard showed a permanent "Disbursing (stuck? retry)".
+
+        This mirrors the proven ``RELOADLY_REFUND_STALE_CLAIM_SEC`` /
+        ``TELEGRAM_BROADCAST_STALE_CLAIM_SECONDS`` reapers already in this repo.
+        Disbursement is duplicate-protected (contract ``rewardPaid`` + reward
+        log), so reclaiming can never double-pay.
+        """
+        supabase = _get_supabase()
+        if not supabase:
+            return {"success": False, "error": "Database not available"}
+
+        cutoff = self._stale_claim_cutoff_iso()
+        stale = _safe(
+            lambda: supabase.table('referrals')
+                .select('id,referee_wallet,referral_code,disbursing_at')
+                .eq('status', 'disbursing')
+                .lt('disbursing_at', cutoff)
+                .limit(max(1, int(limit)))
+                .execute(),
+            op="get stale disbursing referrals"
+        )
+        if stale is None:
+            # No disbursing_at column (migration not run) — cannot age the rows,
+            # so leave them to the admin rather than resetting live claims.
+            logger.info("ℹ️ Stale-claim reclaim skipped: disbursing_at unavailable "
+                        "(run sql/referral_disbursing_at.sql)")
+            return {"success": True, "reclaimed": 0, "skipped": "no_disbursing_at"}
+
+        rows = getattr(stale, 'data', None) or []
+        reclaimed = 0
+        for row in rows:
+            row_id = row.get('id')
+            if row_id is None:
+                continue
+            # CAS on the exact row + status so a concurrent worker that already
+            # finalized it is never overwritten.
+            reset = _safe(
+                lambda r_id=row_id: supabase.table('referrals')
+                    .update({
+                        'status': 'pending_face_verification',
+                        'error_message': 'Reclaimed after a stale disbursing claim (worker '
+                                         'stopped mid-flight) — will retry',
+                    })
+                    .eq('id', r_id)
+                    .eq('status', 'disbursing')
+                    .execute(),
+                op="reclaim stale disbursing referral"
+            )
+            if reset is not None:
+                reclaimed += 1
+                logger.warning(
+                    f"♻️ Reclaimed stale 'disbursing' referral id={row_id} "
+                    f"({(row.get('referee_wallet') or '')[:8]}...) — reset for retry"
+                )
+
+        return {"success": True, "reclaimed": reclaimed, "scanned": len(rows)}
 
     def reconcile_stuck_referrals(self, older_than_hours: int = 1) -> dict:
         """
