@@ -4926,6 +4926,38 @@ def reconcile_stuck_referrals():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@routes.route("/api/admin/referral/recheck-verification", methods=["POST"])
+@admin_required
+def recheck_verification_blocked_referrals():
+    """Admin: force a fresh verification re-check over blocked referrals.
+
+    Repairs rows stamped "Referee not verified yet" by a stale/lagging Identity
+    read: re-reads the chain (bypassing the cache), disburses the ones that now
+    pass, and clears the stale error text.
+    """
+    try:
+        from referral_program.referral_service import referral_service
+
+        limit = request.args.get('limit', 500, type=int)
+        result = referral_service.recheck_verification_blocked_referrals(limit=limit)
+        try:
+            log_admin_action(
+                admin_wallet=session.get("wallet"),
+                action_type="referral_recheck_verification",
+                action_details={
+                    "checked": result.get("checked"),
+                    "now_verified": result.get("now_verified"),
+                    "errors_cleared": result.get("errors_cleared"),
+                },
+            )
+        except Exception as log_err:
+            logger.warning(f"Could not log referral recheck action: {log_err}")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error re-checking blocked referrals: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @routes.route("/api/admin/referral/key-balance", methods=["GET"])
 @admin_required
 def get_referral_key_balance():
