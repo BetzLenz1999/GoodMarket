@@ -26,20 +26,13 @@ const CELO_NETWORK = Object.freeze({
     blockExplorerUrls: ['https://celoscan.io']
 });
 
-// G$ is an ERC-20 token on Celo, not a separate EVM network.  EIP-747
-// deliberately leaves the final decision to the wallet/user: calling
-// wallet_watchAsset can show a confirmation prompt and never adds the
-// token silently.  Request it after Celo is selected so wallets that
-// validate the active chain can display the correct token.
-const GOODDOLLAR_TOKEN = Object.freeze({
-    type: 'ERC20',
-    options: {
-        address: '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A',
-        symbol: 'G$',
-        decimals: 18,
-        image: window.location.origin + '/static/icons/goodmarket-icon.png'
-    }
-});
+// G$ is NOT watched from the login path. MetaMask's `wallet_watchAsset`
+// (EIP-747) always opens an "Add token?" dialog and there is no EIP-1193
+// method to ask whether the token is already tracked, so any attempt to
+// "helpfully" suggest it during connect turns a one-dialog login into
+// two or three — the reported "parang spamming". The token is now offered
+// by an explicit, user-initiated "Add G$ to my wallet" button on the wallet
+// page (wallet-main.js `addGdTokenToWallet`), never automatically.
 function _showWalletModalNow() {
     showWalletOptions();
     hidePrivyRetry();
@@ -1481,36 +1474,6 @@ async function ensureCeloChain(provider) {
     }
 }
 
-async function requestGoodDollarToken(provider) {
-    // `wallet_watchAsset` ALWAYS opens a wallet confirmation on desktop
-    // MetaMask. Doing it on every login put an "Add token?" dialog between the
-    // network switch and the login signature — the user thinks they are already
-    // signing in. Ask once per browser session instead; a user who declines can
-    // still add G$ from the wallet page.
-    const WATCH_FLAG = 'gmWatchAssetAsked_v1';
-    try {
-        if (sessionStorage.getItem(WATCH_FLAG) === '1') return false;
-    } catch (_) { /* storage blocked — fall through and ask once */ }
-    try {
-        // There is no EIP-1193 method to query a wallet's watched-token
-        // list, so a session flag is the only way to avoid re-prompting.
-        const added = await provider.request({
-            method: 'wallet_watchAsset',
-            params: GOODDOLLAR_TOKEN
-        });
-        if (added) console.info('GoodDollar (G$) token added to wallet.');
-        return !!added;
-    } catch (err) {
-        // wallet_watchAsset is optional. A wallet that does not support
-        // it, or a user who declines its confirmation, must still be
-        // able to log in and use Celo.
-        console.info('GoodDollar token setup was skipped or is unsupported:', err && err.message);
-        return false;
-    } finally {
-        try { sessionStorage.setItem(WATCH_FLAG, '1'); } catch (_) {}
-    }
-}
-
 // A hung wallet request (asleep extension service worker, stuck mobile dApp
 // browser) must not leave the connect flow spinning forever.
 function withInjectedSignTimeout(promise, ms, message) {
@@ -1528,20 +1491,31 @@ function withInjectedSignTimeout(promise, ms, message) {
     });
 }
 
+// Re-entrancy lock for the injected connect flow. The card is a plain
+// onclick button, so a double-tap (mobile finger bounce, or an impatient
+// second click while the provider poll / chain switch is still running) used
+// to start a SECOND concurrent chain — two chain prompts and two login
+// signatures in a row, which reads as spam. connectWalletConnect() already
+// guards this way; the injected path now matches.
+let _injectedConnecting = false;
 async function connectInjectedWallet() {
-    showWalletStatus('walletConnectStatus', '⏳ Detecting wallet…', 'info');
-    const provider = await awaitPreferredInjectedProvider();
-    if (!provider) {
-        if (isTrustWalletMobileContext()) {
-            showWalletStatus('walletConnectStatus', '⚠️ Trust Wallet injection not detected yet. Starting WalletConnect automatically…', 'warning');
-            await connectWalletConnect();
+    if (_injectedConnecting) return;
+    _injectedConnecting = true;
+    const connectBtn = document.getElementById('injectedWalletBtn');
+    if (connectBtn) connectBtn.disabled = true;
+    try {
+        showWalletStatus('walletConnectStatus', '⏳ Detecting wallet…', 'info');
+        const provider = await awaitPreferredInjectedProvider();
+        if (!provider) {
+            if (isTrustWalletMobileContext()) {
+                showWalletStatus('walletConnectStatus', '⚠️ Trust Wallet injection not detected yet. Starting WalletConnect automatically…', 'warning');
+                await connectWalletConnect();
+                return;
+            }
+            showWalletStatus('walletConnectStatus', 'No injected wallet found. Use WalletConnect QR to connect.', 'error');
             return;
         }
-        showWalletStatus('walletConnectStatus', 'No injected wallet found. Use WalletConnect QR to connect.', 'error');
-        return;
-    }
-    showWalletStatus('walletConnectStatus', '⏳ Connecting wallet… approve account access in your wallet.', 'info');
-    try {
+        showWalletStatus('walletConnectStatus', '⏳ Connecting wallet… approve account access in your wallet.', 'info');
         const accounts = await provider.request({ method: 'eth_requestAccounts' });
         if (!accounts || !accounts.length) throw new Error('No wallet account found.');
         const wallet = accounts[0];
@@ -1565,8 +1539,6 @@ async function connectInjectedWallet() {
                 return;
             }
         }
-        showWalletStatus('walletConnectStatus', '🪙 Optional: confirm in your wallet to add GoodDollar (G$) on Celo…', 'info');
-        await requestGoodDollarToken(provider);
         const message = makeLoginMessage(wallet);
         const messageHex = utf8ToHex(message);
         showWalletStatus('walletConnectStatus', '✍️ Signature request sent. Approve the login message in your wallet.', 'info');
@@ -1601,6 +1573,9 @@ async function connectInjectedWallet() {
             || (err.data && err.data.originalError && err.data.originalError.code));
         const rejected = code === 4001 || /reject|denied|cancel|user refused/i.test(rawMsg);
         showWalletStatus('walletConnectStatus', (rejected ? '❌ Signature or connection was rejected. ' : '❌ ') + rawMsg, rejected ? 'warning' : 'error');
+    } finally {
+        _injectedConnecting = false;
+        if (connectBtn) connectBtn.disabled = false;
     }
 }
 
