@@ -13,6 +13,7 @@
     --sheet-border: rgba(31, 19, 0, 0.14);
     --primary: #7c3aed;
     --primary-2: #6d28d9;
+    --primary-soft: rgba(124, 58, 237, 0.14);
     --primary-text: #ffffff;
     --action: #fbbf24;
     --action-2: #f59e0b;
@@ -494,6 +495,17 @@
         .wallet-option-card.wc-option .option-icon { background: #f3f0ff; }
         .wallet-option-card.wc-option .option-arrow { color: var(--primary); }
 
+        /* Log-in card: calm by default, but carries a violet accent so it is
+           visually distinct from the WalletConnect / Privy cards. It inherits
+           the .primary treatment (gold) when the returning-user check hoists
+           it above "Create" — hence the :not(.primary) guards, so the gold
+           text/icon rules are never overridden by the calm ones. */
+        .wallet-option-card.login-option:not(.primary) { border-color: rgba(124, 58, 237, 0.35); }
+        .wallet-option-card.login-option:not(.primary) .option-icon { background: #f3f0ff; }
+        .wallet-option-card.login-option:not(.primary) .option-arrow { color: var(--primary); }
+        .wallet-option-card.login-option:not(.primary) .option-title { color: var(--sheet-text); }
+        .wallet-option-card.login-option:not(.primary) .option-desc { color: var(--sheet-dim); opacity: 1; }
+
         .back-btn { color: var(--primary); }
         .back-btn:hover { color: var(--primary-2); }
         .wallet-label { color: var(--sheet-text); }
@@ -595,6 +607,27 @@
         .wallet-detect-banner.show { display: flex; }
         .wallet-detect-banner strong { font-weight: 800; }
         .wallet-detect-banner .wdb-icon { font-size: 1.05rem; flex-shrink: 0; }
+
+        /* ── "Welcome back" banner for a returning local-wallet user ──
+           Mirrors the detect banner's geometry but uses the violet accent,
+           because this one points at LOG IN rather than CONNECT. Starts
+           display:none so it cannot flash before the keystore check runs. */
+        .wallet-return-banner {
+            display: none;
+            align-items: flex-start;
+            gap: 0.6rem;
+            padding: 0.7rem 0.85rem;
+            margin-bottom: 0.75rem;
+            border-radius: 12px;
+            background: var(--primary-soft);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            color: var(--primary-2);
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+        .wallet-return-banner.show { display: flex; }
+        .wallet-return-banner strong { font-weight: 800; }
+        .wallet-return-banner .wrb-icon { font-size: 1.05rem; flex-shrink: 0; }
 
         /* ── New: pre-create reminder step ── */
         .lw-preflight-panel {
