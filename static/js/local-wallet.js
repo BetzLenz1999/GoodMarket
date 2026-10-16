@@ -629,12 +629,13 @@
     }
 
     // Show/hide the passkey button based on real device support + whether the
-    // user has enrolled. Never blocks the PIN path.
+    // user has enrolled. Never blocks the PIN path. Returns true when the
+    // device prompt can be offered automatically.
     async function _refreshPasskeyButton(overlay) {
         var btn = overlay.querySelector('#lwModalPasskey');
         if (!btn || typeof window.GMLocalWalletPasskey === 'undefined') {
             if (btn) btn.style.display = 'none';
-            return;
+            return false;
         }
         btn.style.display = 'none';
         try {
@@ -645,7 +646,8 @@
                 var label = overlay.getAttribute('data-pk-label') || '👆 Use fingerprint / Face ID';
                 btn.textContent = label;
             }
-        } catch (_) { /* unsupported → PIN only */ }
+            return !!available;
+        } catch (_) { return false; /* unsupported → PIN only */ }
     }
 
     window._lwOpenUnlockModal = function (opts) {
@@ -732,8 +734,11 @@
             // enrolled on a supported device; every failure falls through to
             // the normal PIN prompt (never resolves on a failed attempt).
             var pkBtn = overlay.querySelector('#lwModalPasskey');
+            var pkAttempt = null;
+            function closePkErr() { if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; } }
             if (pkBtn) {
-                pkBtn.onclick = async function () {
+                pkAttempt = async function (silentCancel) {
+                    if (pkBtn.disabled) return;
                     pkBtn.disabled = true;
                     var original = pkBtn.textContent;
                     pkBtn.textContent = 'Waiting for device…';
@@ -742,18 +747,33 @@
                         close();
                         resolveFn();
                     } catch (err) {
-                        showError((err && err.message) || 'Passkey unlock failed. Please enter your PIN.');
+                        // A cancelled ceremony is a normal way to pick the PIN —
+                        // don't flash an error for it.
+                        var msg = (err && err.message) || 'Passkey unlock failed. Please enter your PIN.';
+                        var cancelled = /cancel|timed out|not allowed|denied/i.test(msg);
+                        if (!(silentCancel && cancelled)) showError(msg);
                         pinInput.focus();
                     } finally {
                         pkBtn.disabled = false;
                         pkBtn.textContent = original;
                     }
                 };
+                pkBtn.onclick = function () { closePkErr(); pkAttempt(false); };
             }
-            _refreshPasskeyButton(overlay);
-
-            overlay.style.display = 'flex';
-            setTimeout(function () { pinInput.focus(); }, 100);
+            _refreshPasskeyButton(overlay).then(function (available) {
+                // Option A: offer the device's screen lock as soon as the sheet
+                // opens when the user has enrolled — no extra tap. PIN stays as
+                // the fallback (cancel/timeout focuses the PIN field).
+                overlay.style.display = 'flex';
+                if (available && pkAttempt) {
+                    pkAttempt(true);
+                } else {
+                    setTimeout(function () { pinInput.focus(); }, 100);
+                }
+            }).catch(function () {
+                overlay.style.display = 'flex';
+                setTimeout(function () { pinInput.focus(); }, 100);
+            });
         });
     };
 
