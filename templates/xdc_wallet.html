@@ -520,6 +520,7 @@
     <!-- In-app self-custodial wallet for local logins (ethers is loaded in
          <head>, which local-wallet.js requires for PIN decrypt + signing). -->
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/local-wallet-passkey.js', v=ASSET_VERSION) }}"></script>
     <script>
         if (typeof GMWalletConnect !== "undefined") {
             GMWalletConnect.configure({
