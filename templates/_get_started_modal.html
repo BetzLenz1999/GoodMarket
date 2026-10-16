@@ -14,8 +14,8 @@
         <div class="wallet-modal-content">
             <div class="modal-header">
                 <div class="modal-header-inner">
-                    <h2 class="modal-title">Create your GoodMarket account</h2>
-                    <p class="modal-subtitle">Choose how you want to join</p>
+                    <h2 class="modal-title">Log in or create your GoodMarket account</h2>
+                    <p class="modal-subtitle">Use your email + PIN, or connect a wallet you already have</p>
                 </div>
                 <button class="close-modal" onclick="closeWalletModal()">×</button>
             </div>
@@ -29,11 +29,33 @@
                     <span class="wdb-icon" aria-hidden="true">👛</span>
                     <span id="walletDetectText"></span>
                 </div>
+                <!-- Returning local-wallet user: this browser still holds the
+                     encrypted keystore (it survives logout — only the Flask
+                     session + cookies are cleared), so point them at the log-in
+                     card instead of letting them land on "Create". Hidden until
+                     the keystore check runs so it can never flash. -->
+                <div class="wallet-return-banner" id="walletReturnBanner" role="status" aria-live="polite">
+                    <span class="wrb-icon" aria-hidden="true">👋</span>
+                    <span id="walletReturnText"></span>
+                </div>
                 <button id="localWalletBtn" class="wallet-option-card primary" type="button" onclick="openCreatePreflight()">
                     <div class="option-icon">🆓</div>
                     <div class="option-text">
                         <div class="option-title">Create GoodMarket Wallet</div>
                         <p class="option-desc">Email + PIN — no wallet app needed. Your wallet is created instantly, free.</p>
+                    </div>
+                    <span class="option-arrow">→</span>
+                </button>
+                <!-- Log in to an EXISTING GoodMarket (email + PIN) wallet.
+                     Always rendered — a returning user on a NEW device has no
+                     cached keystore, so the log-in card must never depend on
+                     detection. It is hoisted above "Create" (and takes the
+                     single gold treatment) when a keystore IS found. -->
+                <button id="loginWalletBtn" class="wallet-option-card login-option" type="button" onclick="openLoginPanel()">
+                    <div class="option-icon">🔑</div>
+                    <div class="option-text">
+                        <div class="option-title">Log in to my wallet</div>
+                        <p class="option-desc">Already have a GoodMarket wallet? Sign in with your email + PIN.</p>
                     </div>
                     <span class="option-arrow">→</span>
                 </button>
