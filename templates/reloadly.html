@@ -306,6 +306,54 @@
             font-size: 11px; color: #6b7280; margin-top: 6px;
             display: flex; align-items: center; gap: 6px;
         }
+
+        /* ── Top-up state-driven UI ── */
+        .tu-required { color: #9ca3af; font-weight: normal; font-size: 11px; }
+        .tu-field-error {
+            margin-top: 8px; font-size: 12.5px; line-height: 1.45;
+            color: #f87171; background: rgba(248,113,113,0.10);
+            border: 1px solid rgba(248,113,113,0.35);
+            border-radius: 8px; padding: 9px 12px;
+            display: flex; align-items: flex-start; gap: 8px;
+        }
+        .tu-field-error::before {
+            content: '\f071'; font-family: 'Font Awesome 6 Free'; font-weight: 900;
+            font-size: 12px; line-height: 1.4; flex-shrink: 0;
+        }
+        .tu-loading {
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            padding: 34px 12px; text-align: center; color: #e0e0e0; font-size: 14px;
+        }
+        .tu-loading i.fa-spinner { font-size: 26px; color: #7986cb; }
+        .tu-loading-sub { font-size: 12.5px; color: #9ca3af; }
+        .tu-error {
+            font-size: 13.5px; line-height: 1.5; color: #f87171;
+            background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.30);
+            border-radius: 10px; padding: 14px 16px;
+        }
+        .tu-state-actions {
+            display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px;
+        }
+        .tu-state-actions .btn { flex: 1 1 auto; }
+        .tu-summary {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            background: #252840; border: 1px solid #2e3150; border-radius: 10px;
+            padding: 11px 14px; margin-bottom: 14px;
+        }
+        .tu-summary-main { flex: 1 1 auto; min-width: 0; }
+        .tu-summary-op { font-size: 14px; font-weight: 600; color: #fff; }
+        .tu-summary-num { font-size: 12.5px; color: #9ca3af; margin-top: 2px; }
+        .tu-summary-badge {
+            font-size: 10.5px; font-weight: 600; color: #15803d;
+            background: rgba(105,240,174,0.12); border: 1px solid rgba(105,240,174,0.30);
+            border-radius: 999px; padding: 3px 9px; white-space: nowrap;
+        }
+        .tu-banner {
+            font-size: 12.5px; line-height: 1.45; color: #fcd34d;
+            background: rgba(252,211,77,0.10); border: 1px solid rgba(252,211,77,0.30);
+            border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
+            display: flex; align-items: flex-start; gap: 8px;
+        }
         .country-required-msg {
             font-size: 12.5px; color: #9ca3af;
             padding: 12px 14px; border: 1px dashed #2e3150;
@@ -507,6 +555,33 @@
             background: rgba(255,255,255,0.6);
         }
         .country-required-msg i { color: #c2410c; }
+
+        /* ── Top-up state-driven UI (light theme) ── */
+        .tu-required { color: var(--text-muted); }
+        .tu-field-error {
+            color: #b91c1c; background: #fef2f2;
+            border-color: rgba(185,28,28,0.28);
+        }
+        .tu-loading { color: var(--text); }
+        .tu-loading i.fa-spinner { color: #c2410c; }
+        .tu-loading-sub { color: var(--text-muted); }
+        .tu-error {
+            color: #b91c1c; background: #fef2f2;
+            border-color: rgba(185,28,28,0.25);
+        }
+        .tu-summary {
+            background: #fff7ed; border-color: rgba(var(--accent-rgb),0.35);
+        }
+        .tu-summary-op { color: var(--text); }
+        .tu-summary-num { color: var(--text-dim); }
+        .tu-summary-badge {
+            color: #15803d; background: rgba(21,128,61,0.10);
+            border-color: rgba(21,128,61,0.28);
+        }
+        .tu-banner {
+            color: #92400e; background: #fffbeb;
+            border-color: rgba(217,126,10,0.35);
+        }
     </style>
     <div id="privyWalletMount" style="display:none"></div>
     <script type="module">
@@ -610,10 +685,12 @@
     <button class="tab-btn" onclick="switchTab('orders', this)"><i class="fas fa-receipt"></i> My Orders</button>
 </div>
 
-<!-- TOP-UP TAB -->
+<!-- TOP-UP TAB — state-driven: exactly one state block is visible at a time. -->
 <div id="tab-topup" class="tab-content active">
-    <div class="card">
-        <h3><i class="fas fa-search"></i> Find Operator</h3>
+
+    <!-- STATE: form — country + required recipient number + detect -->
+    <div class="card tu-state" id="tuStepForm">
+        <h3><i class="fas fa-search"></i> Send a mobile top-up</h3>
         <div class="form-group">
             <label>Country</label>
             <button type="button" class="country-picker-btn" id="tuCountryBtn" onclick="openCountryPicker('topup')">
@@ -624,37 +701,76 @@
             <input type="hidden" id="tuCountry" value=""/>
         </div>
         <div class="form-group" id="tuPhoneGroup" style="display:none">
-            <label>Phone Number <span style="color:#6b7280;font-weight:normal;font-size:11px">(optional — auto-detect operator)</span></label>
+            <label>Recipient mobile number <span class="tu-required">(required)</span></label>
             <div class="phone-input-wrap">
                 <span class="phone-prefix" id="tuPhonePrefix">+--</span>
-                <input id="tuPhone" type="tel" inputmode="numeric" autocomplete="off" placeholder="9171234567" oninput="formatPhoneInput(this)"/>
+                <input id="tuPhone" type="tel" inputmode="numeric" autocomplete="off" placeholder="9171234567"
+                       oninput="formatPhoneInput(this)" onblur="validateTopupNumberField()"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();submitTopupNumber();}"/>
             </div>
             <div class="phone-hint">
                 <i class="fas fa-info-circle"></i> Skip the leading 0 — your country code is already added.
             </div>
+            <div class="tu-field-error" id="tuPhoneError" style="display:none" role="alert"></div>
         </div>
         <div id="tuCountryHint" class="country-required-msg">
             <i class="fas fa-globe"></i> Please pick a country to continue.
         </div>
-        <button class="btn btn-primary" id="tuFindBtn" onclick="loadOperators()" disabled style="margin-top:4px"><i class="fas fa-search"></i> Find Operators</button>
+        <button class="btn btn-primary btn-full" id="tuFindBtn" onclick="submitTopupNumber()" disabled style="margin-top:4px">
+            <i class="fas fa-search"></i> Find operator &amp; packages
+        </button>
     </div>
-    <div id="operatorList"></div>
-    <div id="topupForm" style="display:none">
-        <div class="card">
-            <h3 id="tuOperatorName"></h3>
-            <div id="tuAmountSection"></div>
-            <div class="form-group" style="margin-top:12px">
-                <label>Recipient Phone Number</label>
-                <div class="phone-input-wrap">
-                    <span class="phone-prefix" id="tuRecipientPrefix">+--</span>
-                    <input id="tuRecipient" type="tel" inputmode="numeric" autocomplete="off" placeholder="Phone number to top-up" oninput="formatPhoneInput(this)"/>
-                </div>
-                <div class="phone-hint">
-                    <i class="fas fa-info-circle"></i> Skip the leading 0 — your country code is already added.
-                </div>
-            </div>
-            <div class="summary-box" id="tuSummary" style="display:none"></div>
-            <button class="btn btn-primary btn-full" onclick="initiateTopup()" style="margin-top:12px"><i class="fas fa-bolt"></i> Pay with G$</button>
+
+    <!-- STATE: loading — validating / detecting / fetching products -->
+    <div class="card tu-state" id="tuStepLoading" style="display:none" role="status" aria-live="polite">
+        <div class="tu-loading">
+            <i class="fas fa-spinner fa-spin"></i>
+            <div><strong>Finding your operator…</strong></div>
+            <div class="tu-loading-sub" id="tuLoadingSub"></div>
+        </div>
+    </div>
+
+    <!-- STATE: operators — manual pick (detection failed, or user asked to change) -->
+    <div class="card tu-state" id="tuStepOperators" style="display:none">
+        <div class="tu-banner" id="tuOperatorBanner" style="display:none"></div>
+        <h3>Choose operator</h3>
+        <div class="operator-grid" id="tuOperatorGrid"></div>
+        <div class="tu-state-actions">
+            <button type="button" class="btn btn-secondary" onclick="backToTopupNumber()">
+                <i class="fas fa-arrow-left"></i> Change number
+            </button>
+        </div>
+    </div>
+
+    <!-- STATE: products — detected operator + packages + compact summary -->
+    <div class="card tu-state" id="tuStepProducts" style="display:none">
+        <div class="tu-summary" id="tuSummaryBar"></div>
+        <h3 id="tuOperatorName"></h3>
+        <div id="tuAmountSection"></div>
+        <div class="summary-box" id="tuSummary" style="display:none"></div>
+        <div class="tu-state-actions">
+            <button type="button" class="btn btn-secondary" onclick="showTopupOperatorPicker()">
+                <i class="fas fa-sim-card"></i> Change operator
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="changeTopupNumber()">
+                <i class="fas fa-pen"></i> Change number
+            </button>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="initiateTopup()" style="margin-top:8px">
+            <i class="fas fa-bolt"></i> Pay with G$
+        </button>
+    </div>
+
+    <!-- STATE: error / empty — with retry -->
+    <div class="card tu-state" id="tuStepError" style="display:none">
+        <div class="tu-error" id="tuErrorMsg"></div>
+        <div class="tu-state-actions">
+            <button type="button" class="btn btn-secondary" onclick="backToTopupNumber()">
+                <i class="fas fa-arrow-left"></i> Change number
+            </button>
+            <button type="button" class="btn btn-primary" id="tuRetryBtn" onclick="retryTopup()">
+                <i class="fas fa-redo"></i> Retry
+            </button>
         </div>
     </div>
 </div>
@@ -1092,19 +1208,9 @@ function applyTopupCountry(country) {
     // Reveal phone input + dial-code prefix
     const prefix = dial || '+--';
     document.getElementById('tuPhonePrefix').textContent = prefix;
-    const recPrefix = document.getElementById('tuRecipientPrefix');
-    if (recPrefix) recPrefix.textContent = prefix;
     document.getElementById('tuPhoneGroup').style.display = 'block';
     const hint = document.getElementById('tuCountryHint');
     if (hint) hint.style.display = 'none';
-
-    // Enable Find Operators
-    const btn = document.getElementById('tuFindBtn');
-    btn.disabled = false;
-
-    // Clear stale phone values when switching country
-    const tuPhone = document.getElementById('tuPhone'); if (tuPhone) tuPhone.value = '';
-    const tuRecipient = document.getElementById('tuRecipient'); if (tuRecipient) tuRecipient.value = '';
 
     // Drop cached operator list — it belongs to the previous country.
     window._allOperators = null;
@@ -1112,10 +1218,29 @@ function applyTopupCountry(country) {
     window._currentlyFiltered = false;
     selectedOperator = null;
     selectedAmount = null;
-    const opList = document.getElementById('operatorList');
-    if (opList) opList.innerHTML = '';
-    const tf = document.getElementById('topupForm');
-    if (tf) tf.style.display = 'none';
+
+    // Reset the machine for the new country. A country change always clears the
+    // number: keeping it would let a number from the old country be validated
+    // against the new country's rules.
+    topupState.countryIso = country.isoName;
+    topupState.dialCode = prefix;
+    topupState.countryName = country.name;
+    topupState.countryFlag = country.flag || '';
+    topupState.nationalNumber = '';
+    topupState.e164 = '';
+    topupState.detection = null;
+    topupState.operatorId = null;
+    topupState.operator = null;
+    topupState.products = [];
+    topupState.selectedAmount = null;
+    topupState.error = null;
+    topupState.errorKind = null;
+
+    const tuPhone = document.getElementById('tuPhone'); if (tuPhone) tuPhone.value = '';
+    const findBtn = document.getElementById('tuFindBtn');
+    if (findBtn) findBtn.disabled = true;
+    clearTopupFieldError();
+    renderTopupState('form');
 }
 
 // Digits-only input + strip leading zeros (national prefix not allowed once
@@ -1124,9 +1249,21 @@ function formatPhoneInput(input) {
     let v = (input.value || '').replace(/\D/g, '');
     while (v.startsWith('0')) v = v.slice(1);
     input.value = v;
-    // When the user is typing in the Find Operator phone field, narrow the
-    // operator list to just the matching brand family (Globe & TM, etc.).
-    if (input.id === 'tuPhone') schedulePhoneFilter();
+    if (input.id === 'tuPhone') {
+        // The number is the single source of truth: mirror it into state and
+        // gate the detect button on a *valid* number, so an empty/garbage value
+        // can never reach the operator API.
+        topupState.nationalNumber = v;
+        const check = validateTopupNumber(v);
+        const findBtn = document.getElementById('tuFindBtn');
+        if (findBtn) findBtn.disabled = !check.valid;
+        if (check.valid) clearTopupFieldError();
+        else if (v.length > 0) showTopupFieldError(check.message);
+        else clearTopupFieldError();
+        // If the user edits the number after a result was shown, invalidate the
+        // operator/product so a stale selection can never be submitted.
+        if (v !== topupState.e164National) invalidateTopupSelection();
+    }
 }
 
 // Close picker on Escape
@@ -1239,7 +1376,7 @@ function findOperatorFamily(country, operatorName) {
 // family map exists for the country (so we never show unrelated operators).
 function filterOperatorsByFamily(operators, detectedId, country) {
     if (!detectedId || !operators?.length) return { list: operators, filtered: false };
-    const detected = operators.find(op => op.id === detectedId);
+    const detected = operators.find(op => operatorRef(op) === detectedId || op.id === detectedId);
     if (!detected) return { list: operators, filtered: false };
     const family = findOperatorFamily(country, detected.name);
     if (!family) return { list: [detected], filtered: true };
@@ -1250,24 +1387,20 @@ function filterOperatorsByFamily(operators, detectedId, country) {
     return { list: matched.length ? matched : [detected], filtered: true };
 }
 
+// The detected operator's sibling brands (e.g. PH: Smart → TNT / Sun). Used by
+// the manual picker to highlight siblings, because a number can belong to any
+// brand in the same family and Reloadly only returns ONE of them.
+function operatorFamilyKeywords(country, operatorName) {
+    return findOperatorFamily(country, operatorName) || [];
+}
+
 // Debounced live filter — re-runs loadOperators a moment after the user
 // stops typing the phone number, so the operator list narrows itself
 // without the user having to click "Find Operators" again.
-let _phoneFilterTimer = null;
-function schedulePhoneFilter() {
-    clearTimeout(_phoneFilterTimer);
-    const phone = (document.getElementById('tuPhone')?.value || '').trim();
-    if (!_selectedCountry) return;
-    if (phone.length < 4) {
-        // Not enough digits — if a list is already shown, just unfilter it.
-        if (window._allOperators && window._currentlyFiltered) {
-            renderOperators(window._allOperators, null);
-            window._currentlyFiltered = false;
-        }
-        return;
-    }
-    _phoneFilterTimer = setTimeout(() => { loadOperators({ silent: true }); }, 500);
-}
+// Retired: the top-up flow is now state-driven — the number is validated and
+// detection is explicit (submitTopupNumber). Kept as a no-op so any stale
+// reference cannot throw.
+function schedulePhoneFilter() { /* retired — see topupState */ }
 
 function switchTab(name, btn) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -2280,175 +2413,409 @@ function closePayModal() {
 }
 
 // ─── TOP-UP ───────────────────────────────────────────────────────────────────
-async function loadOperators(opts = {}) {
-    const { silent = false } = opts;
-    const country = document.getElementById('tuCountry').value.trim().toUpperCase();
-    if (!country || !_selectedCountry) {
-        if (!silent) showToast('Please select a country first', 'error');
+// State-driven flow: the recipient number is entered ONCE, becomes the single
+// source of truth, and is carried through detection, product selection and the
+// order payload. Exactly one state block is visible at a time.
+//
+//   form → loading → products            (operator detected)
+//                  → operators           (detection failed → manual pick)
+//                  → error               (API failure / no operators)
+
+const topupState = {
+    step: 'form',
+    countryIso: null,
+    countryName: '',
+    countryFlag: '',
+    dialCode: '',
+    nationalNumber: '',      // digits as typed (leading 0 stripped)
+    e164National: '',        // nationalNumber at the time of the last resolve
+    e164: '',                // dial digits + national digits — the ONLY value submitted
+    detection: null,         // { operatorId, name } | null
+    operatorId: null,
+    operator: null,
+    products: [],
+    selectedAmount: null,
+    error: null,
+    errorKind: null,         // 'detection' | 'empty' | 'api'
+    lastAction: 'detect',    // what Retry should re-run
+};
+
+// National significant-number length per country. Deliberately small: it stops
+// obviously-wrong input from reaching the API, while Reloadly's auto-detect
+// remains the authority on which operator actually serves the number. Any
+// country not listed falls back to the ITU E.164 range (7–15 digits).
+const TOPUP_NUMBER_LENGTHS = {
+    PH: [10], NG: [10], ID: [9, 10, 11, 12], IN: [10], US: [10], CA: [10],
+    MX: [10], BR: [10, 11], PK: [10], BD: [10], KE: [9], GH: [9], EG: [10],
+    ZA: [9], GB: [10], AU: [9], MY: [9, 10], SG: [8], TH: [9], VN: [9],
+    AE: [9], SA: [9], DE: [10, 11], FR: [9], IT: [9, 10], ES: [9], JP: [10],
+};
+
+function topupNumberHint() {
+    const iso = topupState.countryIso;
+    const lens = iso && TOPUP_NUMBER_LENGTHS[iso];
+    if (lens && lens.length === 1) return `${lens[0]} digits`;
+    if (lens) return `${lens.join(' or ')} digits`;
+    return '7–15 digits';
+}
+
+// Validate the national number for the selected country. Returns
+// { valid, message }. Frontend-only guard — the Reloadly API is the authority
+// on whether the number maps to a real operator.
+function validateTopupNumber(raw) {
+    const v = String(raw == null ? '' : raw).replace(/\D/g, '').replace(/^0+/, '');
+    if (!topupState.countryIso) {
+        return { valid: false, message: 'Please choose a country first.' };
+    }
+    if (!v) {
+        return { valid: false, message: 'Enter the recipient mobile number.' };
+    }
+    if (/^(\d)\1+$/.test(v)) {
+        return { valid: false, message: `That doesn't look like a valid mobile number (${topupNumberHint()}).` };
+    }
+    const lens = TOPUP_NUMBER_LENGTHS[topupState.countryIso];
+    if (lens && !lens.includes(v.length)) {
+        return { valid: false, message: `Enter a valid ${topupNumberHint()} mobile number for this country.` };
+    }
+    if (!lens && (v.length < 7 || v.length > 15)) {
+        return { valid: false, message: `Enter a valid ${topupNumberHint()} mobile number.` };
+    }
+    return { valid: true, message: '' };
+}
+
+function buildE164(national) {
+    const dial = (topupState.dialCode || '').replace(/\D/g, '');
+    return dial + String(national || '').replace(/\D/g, '');
+}
+
+// ─── state rendering ──────────────────────────────────────────────────────────
+
+function renderTopupState(step) {
+    if (step) topupState.step = step;
+    const s = topupState.step;
+    const blocks = {
+        form: 'tuStepForm',
+        loading: 'tuStepLoading',
+        products: 'tuStepProducts',
+        operators: 'tuStepOperators',
+        error: 'tuStepError',
+    };
+    Object.entries(blocks).forEach(([name, id]) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (name === s) ? 'block' : 'none';
+    });
+    if (s === 'loading') {
+        const sub = document.getElementById('tuLoadingSub');
+        if (sub) {
+            sub.textContent = topupState.dialCode
+                ? `Checking ${topupState.dialCode} ${topupState.nationalNumber}…`
+                : '';
+        }
+    }
+    if (s === 'error') {
+        const box = document.getElementById('tuErrorMsg');
+        if (box) box.innerHTML = topupState.error || 'Something went wrong. Please try again.';
+    }
+    if (s === 'products') renderTopupSummaryBar();
+}
+
+function showTopupFieldError(msg) {
+    const el = document.getElementById('tuPhoneError');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.display = msg ? 'flex' : 'none';
+}
+
+function clearTopupFieldError() {
+    const el = document.getElementById('tuPhoneError');
+    if (el) { el.textContent = ''; el.style.display = 'none'; }
+}
+
+function validateTopupNumberField() {
+    const v = (document.getElementById('tuPhone')?.value || '');
+    const check = validateTopupNumber(v);
+    if (!v) { clearTopupFieldError(); return check; }
+    if (!check.valid) showTopupFieldError(check.message);
+    else clearTopupFieldError();
+    return check;
+}
+
+// Any change to the number invalidates a previously resolved operator/product
+// so a stale selection can never be submitted for the new number.
+function invalidateTopupSelection() {
+    topupState.detection = null;
+    topupState.operatorId = null;
+    topupState.operator = null;
+    topupState.products = [];
+    topupState.selectedAmount = null;
+    topupState.e164 = '';
+    selectedOperator = null;
+    selectedAmount = null;
+}
+
+function renderTopupSummaryBar() {
+    const bar = document.getElementById('tuSummaryBar');
+    if (!bar) return;
+    const op = topupState.operator;
+    if (!op) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    const badge = topupState.detection
+        ? '<span class="tu-summary-badge">✓ Auto-detected</span>' : '';
+    bar.style.display = 'flex';
+    bar.innerHTML =
+        `<div class="tu-summary-main">
+            <div class="tu-summary-op">${_tuEsc(op.name || 'Operator')}</div>
+            <div class="tu-summary-num">${_tuEsc(topupState.dialCode)} ${_tuEsc(topupState.nationalNumber)} · ${_tuEsc(topupState.countryName || topupState.countryIso || '')}</div>
+        </div>${badge}`;
+}
+
+function _tuEsc(v) {
+    return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Reloadly list objects expose both `id` and `operatorId`; detection returns
+// the same. Normalize through one helper so detection, selection and the order
+// payload can never disagree about which operator is meant.
+function operatorRef(op) {
+    if (!op) return null;
+    const id = op.operatorId != null ? op.operatorId : op.id;
+    return id == null ? null : id;
+}
+
+function renderTopupOperators(list, opts = {}) {
+    const grid = document.getElementById('tuOperatorGrid');
+    const banner = document.getElementById('tuOperatorBanner');
+    if (!grid) return;
+    if (banner) {
+        if (opts.banner) { banner.innerHTML = opts.banner; banner.style.display = 'flex'; }
+        else { banner.innerHTML = ''; banner.style.display = 'none'; }
+    }
+    if (!list || !list.length) {
+        grid.innerHTML = '<div class="empty-msg">No operators available for this country.</div>';
         return;
     }
-    const localPhone = document.getElementById('tuPhone').value.trim();
-    const dialDigits = getDialCode(_selectedCountry).replace(/\D/g, '');
-    const fullPhone = localPhone ? (dialDigits + localPhone) : '';
+    window._operators = list;
+    const detectedId = opts.detectedId != null ? opts.detectedId : null;
+    // Sibling brands of the detected operator (e.g. PH: Smart → TNT / Sun) are
+    // marked "likely" — a number can belong to any brand in the same family and
+    // Reloadly only returns one, so this preserves the TNT/TM affordance.
+    const family = detectedId != null
+        ? (() => {
+            const det = list.find(op => operatorRef(op) === detectedId);
+            return det ? operatorFamilyKeywords(topupState.countryIso, det.name) : [];
+        })()
+        : [];
+    grid.innerHTML = list.map((op, i) => {
+        const isDetected = detectedId != null && operatorRef(op) === detectedId;
+        const n = ' ' + (op.name || '').toLowerCase() + ' ';
+        const isSibling = !isDetected && family.length > 0 && family.some(kw => n.includes(kw));
+        return `
+        <div class="operator-card${isDetected ? ' selected' : ''}" onclick="selectTopupOperator(${i})" id="opcard-${i}">
+            ${op.logoUrls && op.logoUrls[0] ? `<img src="${op.logoUrls[0]}" style="height:32px;margin-bottom:8px;object-fit:contain;max-width:100%">` : ''}
+            <div class="op-name">${_tuEsc(op.name || '')}</div>
+            <div class="op-country">${_tuEsc((op.country && op.country.name) || '')}</div>
+            <div class="op-amounts">${op.gd_amounts ? op.gd_amounts.slice(0, 3).map(a => `${a} G$`).join(' · ') : (op.minAmount ? `$${op.minAmount}–$${op.maxAmount}` : '')}</div>
+            ${isDetected ? '<div style="font-size:9px;color:#15803d;margin-top:4px">● Detected</div>' : ''}
+            ${isSibling ? '<div style="font-size:9px;color:#c2410c;margin-top:4px">● Same family</div>' : ''}
+        </div>`;
+    }).join('');
+}
 
-    const list = document.getElementById('operatorList');
-    if (!silent) {
-        list.innerHTML = '<div class="loading"><i class="fas fa-spinner"></i></div>';
-        selectedOperator = null;
-        selectedAmount = null;
-        document.getElementById('topupForm').style.display = 'none';
+// ─── the flow ─────────────────────────────────────────────────────────────────
+
+async function fetchTopupOperators() {
+    const country = topupState.countryIso;
+    if (!country) return [];
+    if (window._allOperators && window._allOperatorsCountry === country) {
+        return window._allOperators;
     }
+    const data = await apiFetch(`/reloadly/api/topup/operators?country=${encodeURIComponent(country)}`);
+    if (!data.success) throw new Error(data.error || 'Failed to load operators');
+    const ops = data.operators || [];
+    window._allOperators = ops;
+    window._allOperatorsCountry = country;
+    return ops;
+}
+
+// Detect the operator for the current number. Best-effort: Reloadly can answer
+// 404 for an invalid pair OR a recently ported (MNP) number, so a failure here
+// must NOT block the user — the caller falls back to the manual operator picker.
+async function detectTopupOperator() {
+    if (!topupState.e164) return null;
     try {
-        let detectedId = null;
+        const det = await apiFetch(`/reloadly/api/topup/detect-operator?phone=${encodeURIComponent(topupState.e164)}&country=${encodeURIComponent(topupState.countryIso)}`);
+        if (det.success && det.operator) {
+            return { operatorId: operatorRef(det.operator), name: det.operator.name || '' };
+        }
+    } catch (_) { /* best-effort — fall back to the manual picker */ }
+    return null;
+}
 
-        // Auto-detect operator from phone number, but still load all operators
-        if (fullPhone && localPhone.length >= 4) {
-            try {
-                const det = await apiFetch(`/reloadly/api/topup/detect-operator?phone=${encodeURIComponent(fullPhone)}&country=${country}`);
-                if (det.success && det.operator) detectedId = det.operator.id;
-            } catch (_) { /* ignore detection failures */ }
+// Validate → detect → fetch products. The single entry point for advancing.
+async function submitTopupNumber() {
+    if (!topupState.countryIso) { showToast('Please select a country first', 'error'); renderTopupState('form'); return; }
+    const raw = (document.getElementById('tuPhone')?.value || '');
+    const check = validateTopupNumber(raw);
+    if (!check.valid) {
+        showTopupFieldError(check.message);
+        showToast(check.message, 'error');
+        renderTopupState('form');
+        return;
+    }
+
+    clearTopupFieldError();
+    topupState.nationalNumber = String(raw).replace(/\D/g, '').replace(/^0+/, '');
+    topupState.e164 = buildE164(topupState.nationalNumber);
+    topupState.e164National = topupState.nationalNumber;
+    topupState.error = null;
+    topupState.errorKind = null;
+    topupState.lastAction = 'detect';
+
+    renderTopupState('loading');
+    try {
+        const [allOps, detection] = await Promise.all([
+            fetchTopupOperators(),
+            detectTopupOperator(),
+        ]);
+        topupState.detection = detection;
+
+        if (!allOps.length) {
+            topupState.errorKind = 'empty';
+            topupState.error = `No operators are available for ${_tuEsc(topupState.countryName || topupState.countryIso)} right now.`;
+            renderTopupState('error');
+            return;
         }
 
-        // Load (and cache) the full operator list for this country
-        let allOps = window._allOperators;
-        if (!allOps || window._allOperatorsCountry !== country) {
-            const data = await apiFetch(`/reloadly/api/topup/operators?country=${country}`);
-            if (!data.success) { list.innerHTML = `<div class="empty-msg">❌ ${data.error}</div>`; return; }
-            allOps = data.operators || [];
-            window._allOperators = allOps;
-            window._allOperatorsCountry = country;
+        if (!detection || detection.operatorId == null) {
+            // Detection failed — do not block. Fall back to the country's
+            // operator list (Reloadly's own documented remedy for a ported or
+            // unknown number).
+            renderTopupOperators(allOps, {
+                detectedId: null,
+                banner: '<i class="fas fa-triangle-exclamation"></i><span>We couldn\'t identify the operator for this number — it may have been ported to another network. Please choose your operator below.</span>',
+            });
+            renderTopupState('operators');
+            return;
         }
 
-        // If we detected one, narrow the list to its brand family.
-        const { list: opsToShow, filtered } = filterOperatorsByFamily(allOps, detectedId, country);
-        window._currentlyFiltered = filtered;
-
-        renderOperators(opsToShow, detectedId, {
-            filtered,
-            totalCount: allOps.length,
-            phoneTyped: !!localPhone,
-        });
-
-        // Auto-select the detected operator if found
-        if (detectedId !== null) {
-            const idx = opsToShow.findIndex(op => op.id === detectedId);
-            if (idx !== -1) selectOperator(idx);
+        const match = allOps.find(op => operatorRef(op) === detection.operatorId) || null;
+        if (!match) {
+            // Detected an operator that is not in the country list — manual pick.
+            renderTopupOperators(allOps, {
+                detectedId: null,
+                banner: '<i class="fas fa-circle-info"></i><span>We detected an operator but it isn\'t listed for this country. Please choose your operator below.</span>',
+            });
+            renderTopupState('operators');
+            return;
         }
 
-        // Pre-fill the recipient field with what the user already typed
-        if (localPhone) {
-            const rec = document.getElementById('tuRecipient');
-            if (rec && !rec.value) rec.value = localPhone;
-        }
-    } catch(e) {
-        if (!silent) list.innerHTML = '<div class="empty-msg">❌ Failed to load operators</div>';
+        selectTopupOperator(allOps.indexOf(match), allOps);
+    } catch (e) {
+        topupState.errorKind = 'api';
+        topupState.error = 'Couldn\'t load operators or packages. Please check your connection and try again.';
+        renderTopupState('error');
     }
 }
 
-function showAllOperatorsForCountry() {
-    if (!window._allOperators) return;
-    window._currentlyFiltered = false;
-    selectedOperator = null;
-    document.getElementById('topupForm').style.display = 'none';
-    renderOperators(window._allOperators, null, {
-        filtered: false,
-        totalCount: window._allOperators.length,
-        phoneTyped: !!document.getElementById('tuPhone').value.trim(),
-    });
-}
-
-function renderOperators(operators, detectedId = null, meta = {}) {
-    const list = document.getElementById('operatorList');
-    if (!operators || !operators.length) { list.innerHTML = '<div class="empty-msg">No operators found.</div>'; return; }
-    window._operators = operators;
-    const { filtered = false, totalCount = operators.length, phoneTyped = false } = meta;
-
-    let banner = '';
-    if (filtered) {
-        const hidden = Math.max(0, totalCount - operators.length);
-        banner = `
-            <div style="background:rgba(105,240,174,0.08);border:1px solid rgba(105,240,174,0.25);
-                        border-radius:10px;padding:10px 14px;margin-bottom:14px;
-                        display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                <i class="fas fa-bullseye" style="color:#15803d"></i>
-                <div style="flex:1;font-size:12.5px;color:#3a5c47;line-height:1.45">
-                    Showing <strong style="color:#15803d">${operators.length}</strong>
-                    operator${operators.length === 1 ? '' : 's'} matching your number's prefix.
-                    ${hidden > 0 ? `<span style="color:#9ca3af">${hidden} other${hidden === 1 ? '' : 's'} hidden.</span>` : ''}
-                </div>
-                <button type="button" onclick="showAllOperatorsForCountry()"
-                    style="background:transparent;border:1px solid #2e3150;color:#7986cb;
-                           padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer">
-                    Show all
-                </button>
-            </div>`;
-    } else if (phoneTyped) {
-        banner = `
-            <div style="background:rgba(121,134,203,0.08);border:1px solid rgba(121,134,203,0.25);
-                        border-radius:10px;padding:10px 14px;margin-bottom:14px;
-                        display:flex;align-items:center;gap:10px;font-size:12.5px;color:#3a3226">
-                <i class="fas fa-info-circle" style="color:#c2410c"></i>
-                <span>Couldn't auto-match your number. Showing all operators for this country.</span>
-            </div>`;
-    }
-
-    const headerExtra = detectedId
-        ? '<span style="font-size:11px;color:#15803d;font-weight:400;margin-left:6px">✓ Auto-detected from phone number</span>'
-        : '';
-
-    list.innerHTML = `<div class="card">
-        <h3>Select Operator ${headerExtra}</h3>
-        ${banner}
-        <div class="operator-grid">${
-        operators.map((op, i) => {
-            const isDetected = op.id === detectedId;
-            return `
-            <div class="operator-card${isDetected ? ' selected' : ''}" onclick="selectOperator(${i})" id="opcard-${i}">
-                ${op.logoUrls && op.logoUrls[0] ? `<img src="${op.logoUrls[0]}" style="height:32px;margin-bottom:8px;object-fit:contain;max-width:100%">` : ''}
-                <div class="op-name">${op.name}</div>
-                <div class="op-country">${op.country?.name || ''}</div>
-                <div class="op-amounts">${op.gd_amounts ? op.gd_amounts.slice(0,3).map(a=>`${a} G$`).join(' · ') : (op.minAmount ? `$${op.minAmount}–$${op.maxAmount}` : '')}</div>
-                ${isDetected ? '<div style="font-size:9px;color:#15803d;margin-top:4px">● Detected</div>' : ''}
-            </div>`;
-        }).join('')
-    }</div></div>`;
-}
-
-function selectOperator(idx) {
-    selectedOperator = window._operators[idx];
+// Select an operator and render its packages. `list` lets callers pass the
+// array an index refers to (the manual picker vs. the cached country list).
+function selectTopupOperator(idx, list) {
+    const ops = list || window._operators || [];
+    const op = ops[idx];
+    if (!op) return;
+    selectedOperator = op;
     selectedAmount = null;
-    document.querySelectorAll('.operator-card').forEach(c => c.classList.remove('selected'));
-    document.getElementById('opcard-' + idx)?.classList.add('selected');
-    document.getElementById('tuOperatorName').textContent = selectedOperator.name;
+    topupState.operator = op;
+    topupState.operatorId = operatorRef(op);
+    topupState.selectedAmount = null;
+    topupState.products = op.fixedAmounts || [];
+
+    const nameEl = document.getElementById('tuOperatorName');
+    if (nameEl) nameEl.textContent = op.name || '';
+
+    renderTopupAmountSection(op);
+    renderTopupState('products');
+    updateTuSummary();
+}
+
+// Open the manual operator picker (used by "Change operator" and the detection
+// fallback). Reuses the cached country list.
+async function showTopupOperatorPicker() {
+    topupState.lastAction = 'operators';
+    if (window._allOperators && window._allOperatorsCountry === topupState.countryIso) {
+        renderTopupOperators(window._allOperators, { detectedId: topupState.operatorId });
+        renderTopupState('operators');
+        return;
+    }
+    renderTopupState('loading');
+    try {
+        const ops = await fetchTopupOperators();
+        if (!ops.length) {
+            topupState.errorKind = 'empty';
+            topupState.error = `No operators are available for ${_tuEsc(topupState.countryName || topupState.countryIso)} right now.`;
+            renderTopupState('error');
+            return;
+        }
+        renderTopupOperators(ops, { detectedId: topupState.operatorId });
+        renderTopupState('operators');
+    } catch (e) {
+        topupState.errorKind = 'api';
+        topupState.error = 'Couldn\'t load operators. Please check your connection and try again.';
+        renderTopupState('error');
+    }
+}
+
+// Back to the number form, keeping the number for editing. The operator and
+// product are invalidated so a stale selection can't survive the edit.
+function changeTopupNumber() {
+    invalidateTopupSelection();
+    const inp = document.getElementById('tuPhone');
+    if (inp) inp.value = topupState.nationalNumber || '';
+    const findBtn = document.getElementById('tuFindBtn');
+    if (findBtn) findBtn.disabled = !validateTopupNumber(topupState.nationalNumber).valid;
+    renderTopupState('form');
+    setTimeout(() => { try { if (inp) inp.focus(); } catch (_) {} }, 50);
+}
+
+function backToTopupNumber() { changeTopupNumber(); }
+
+function retryTopup() {
+    if (topupState.lastAction === 'operators') showTopupOperatorPicker();
+    else submitTopupNumber();
+}
+
+// ─── amount / package rendering ───────────────────────────────────────────────
+
+function renderTopupAmountSection(op) {
     const sec = document.getElementById('tuAmountSection');
-    if (selectedOperator.fixedAmounts && selectedOperator.fixedAmounts.length) {
-        const gd = selectedOperator.gd_amounts || selectedOperator.fixedAmounts.map(a => Math.round(a / GD_PRICE));
-        const localAmounts = selectedOperator.localFixedAmounts || [];
-        const localDescs = selectedOperator.localFixedAmountsDescriptions || {};
-        const usdDescs = selectedOperator.fixedAmountsDescriptions || {};
-        const currSymbol = selectedOperator.destinationCurrencySymbol || '$';
-        const currCode = selectedOperator.destinationCurrencyCode || 'USD';
+    if (!sec) return;
+    if (op.fixedAmounts && op.fixedAmounts.length) {
+        const gd = op.gd_amounts || op.fixedAmounts.map(a => Math.round(a / GD_PRICE));
+        const localAmounts = op.localFixedAmounts || [];
+        const localDescs = op.localFixedAmountsDescriptions || {};
+        const usdDescs = op.fixedAmountsDescriptions || {};
+        const currSymbol = op.destinationCurrencySymbol || '$';
+        const currCode = op.destinationCurrencyCode || 'USD';
         const isUSD = currCode === 'USD';
         const hasDescs = Object.keys(localDescs).length > 0 || Object.keys(usdDescs).length > 0;
-        const isBundle = selectedOperator.bundle || selectedOperator.data || hasDescs;
+        const isBundle = op.bundle || op.data || hasDescs;
 
         sec.innerHTML = `<label style="font-size:12px;color:#6b5d48;display:block;margin-bottom:8px">
             ${isBundle ? 'Select Promo / Bundle' : 'Select Amount'}
             </label>
-            <div class="${isBundle ? 'bundle-list' : 'amount-chips'}">${selectedOperator.fixedAmounts.map((a, i) => {
+            <div class="${isBundle ? 'bundle-list' : 'amount-chips'}">${op.fixedAmounts.map((a, i) => {
                 const localAmt = localAmounts[i];
                 const localKey = localAmt !== undefined ? parseFloat(localAmt).toFixed(2) : null;
                 const usdKey = parseFloat(a).toFixed(2);
-                // Try local description first, then USD description
                 const desc = (localKey && (localDescs[localKey] || localDescs[parseFloat(localKey)])) ||
                              usdDescs[a] || usdDescs[usdKey] || usdDescs[String(parseFloat(a))] || '';
-                // Local currency display
                 const localDisplay = localAmt !== undefined && !isUSD
                     ? `${currSymbol}${parseFloat(localAmt).toLocaleString()}`
                     : `$${parseFloat(a).toFixed(2)}`;
                 if (isBundle && desc) {
                     return `<div class="bundle-chip" onclick="selectFixedAmt(${a},${gd[i]},this)" data-usd="${a}" data-local="${localAmt||''}">
-                        <div class="bundle-name">${desc}</div>
+                        <div class="bundle-name">${_tuEsc(desc)}</div>
                         <div class="bundle-price">
                             <div style="color:#15803d;font-weight:700;font-size:13px">${Math.round(gd[i]).toLocaleString()} G$</div>
                             <div style="color:#888;font-size:10px">${localDisplay}</div>
@@ -2460,20 +2827,18 @@ function selectOperator(idx) {
                 </div>`;
             }).join('')}</div>`;
     } else {
-        const cSym = selectedOperator.destinationCurrencySymbol || '$';
-        const localMin = selectedOperator.localMinAmount || selectedOperator.minAmount;
-        const localMax = selectedOperator.localMaxAmount || selectedOperator.maxAmount;
-        const isLocalUSD = (selectedOperator.destinationCurrencyCode || 'USD') === 'USD';
+        const cSym = op.destinationCurrencySymbol || '$';
+        const localMin = op.localMinAmount || op.minAmount;
+        const localMax = op.localMaxAmount || op.maxAmount;
+        const isLocalUSD = (op.destinationCurrencyCode || 'USD') === 'USD';
         const rangeLabel = isLocalUSD
-            ? `$${selectedOperator.minAmount} – $${selectedOperator.maxAmount} USD`
-            : `${cSym}${localMin} – ${cSym}${localMax} (${selectedOperator.destinationCurrencyCode})`;
+            ? `$${op.minAmount} – $${op.maxAmount} USD`
+            : `${cSym}${localMin} – ${cSym}${localMax} (${op.destinationCurrencyCode})`;
         sec.innerHTML = `<div class="form-group">
             <label style="font-size:12px;color:#6b5d48">Amount in USD — ${rangeLabel}</label>
-            <input id="tuCustomAmt" type="number" step="0.01" min="${selectedOperator.minAmount}" max="${selectedOperator.maxAmount}" placeholder="USD amount" oninput="updateTuSummary()"/>
+            <input id="tuCustomAmt" type="number" step="0.01" min="${op.minAmount}" max="${op.maxAmount}" placeholder="USD amount" oninput="updateTuSummary()"/>
         </div>`;
     }
-    document.getElementById('topupForm').style.display = 'block';
-    updateTuSummary();
 }
 
 function selectFixedAmt(usd, gd, el) {
@@ -2485,11 +2850,13 @@ function selectFixedAmt(usd, gd, el) {
     const currCode = selectedOperator?.destinationCurrencyCode || 'USD';
     const localDisplay = localAmt && currCode !== 'USD' ? `${currSym}${parseFloat(localAmt).toLocaleString()} ${currCode}` : `$${parseFloat(usd).toFixed(2)} USD`;
     selectedAmount = { usd, gd, desc, localDisplay };
+    topupState.selectedAmount = selectedAmount;
     updateTuSummary();
 }
 
 function updateTuSummary() {
     const s = document.getElementById('tuSummary');
+    if (!s) return;
     let usd, gd;
     if (selectedAmount) { usd = selectedAmount.usd; gd = selectedAmount.gd; }
     else { const inp = document.getElementById('tuCustomAmt'); if (!inp?.value) { s.style.display='none'; return; } usd = parseFloat(inp.value); gd = Math.ceil(usd / GD_PRICE); }
@@ -2497,32 +2864,37 @@ function updateTuSummary() {
     s.style.display='block';
     const amountDisplay = selectedAmount?.localDisplay || `$${parseFloat(usd).toFixed(2)} USD`;
     s.innerHTML = `${selectedAmount?.desc
-        ? `<div class="summary-row"><span>Promo</span><span style="text-align:right;max-width:55%;font-size:12px">${selectedAmount.desc}</span></div>`
+        ? `<div class="summary-row"><span>Promo</span><span style="text-align:right;max-width:55%;font-size:12px">${_tuEsc(selectedAmount.desc)}</span></div>`
         : ''}
         <div class="summary-row"><span>Amount</span><span>${amountDisplay}</span></div>
-        <div class="summary-row"><span>Operator</span><span>${selectedOperator?.name||''}</span></div>
+        <div class="summary-row"><span>Operator</span><span>${_tuEsc(selectedOperator?.name||'')}</span></div>
+        <div class="summary-row"><span>Recipient</span><span>${_tuEsc(topupState.dialCode)} ${_tuEsc(topupState.nationalNumber)}</span></div>
         <div class="summary-row"><span>You Pay</span><span style="color:#15803d;font-weight:700">${Math.round(gd).toLocaleString()} G$</span></div>`;
 }
 
 function initiateTopup() {
-    const localPhone = document.getElementById('tuRecipient').value.trim();
-    if (!localPhone) { showToast('Enter recipient phone number', 'error'); return; }
-    if (!_selectedCountry) { showToast('Select a country first', 'error'); return; }
-    if (!selectedOperator) { showToast('Select an operator', 'error'); return; }
+    // The recipient number is the one entered for detection — there is no
+    // second field. It is validated again here so a stale state can't be paid.
+    const check = validateTopupNumber(topupState.nationalNumber);
+    if (!topupState.e164 || !check.valid) { showToast('Enter a valid recipient number', 'error'); changeTopupNumber(); return; }
+    if (!topupState.countryIso) { showToast('Select a country first', 'error'); return; }
+    if (!selectedOperator || topupState.operatorId == null) { showToast('Select an operator', 'error'); return; }
     let usd, gd;
     if (selectedAmount) { usd = selectedAmount.usd; gd = selectedAmount.gd; }
     else { const inp = document.getElementById('tuCustomAmt'); if (!inp?.value) { showToast('Enter amount', 'error'); return; } usd = parseFloat(inp.value); gd = Math.ceil(usd / GD_PRICE); }
-    const country = _selectedCountry.isoName;
-    const dial = getDialCode(_selectedCountry);
-    const dialDigits = dial.replace(/\D/g, '');
-    const fullPhone = dialDigits + localPhone;     // E.164 digits, no + sign
-    const displayPhone = `${dial} ${localPhone}`;
+    const country = topupState.countryIso;
+    const fullPhone = topupState.e164;             // E.164 digits, no + sign
+    const displayPhone = `${topupState.dialCode} ${topupState.nationalNumber}`;
     const promoLabel = selectedAmount?.desc ? selectedAmount.desc : `$${parseFloat(usd).toFixed(2)}`;
     openPayModal({ order_type: 'topup', usd_amount: usd, gd_amount: gd,
-        payload: { operator_id: selectedOperator.operatorId, amount: usd, phone: fullPhone, country,
+        payload: { operator_id: topupState.operatorId, amount: usd, phone: fullPhone, country,
                    operator_name: selectedOperator.name, promo_name: selectedAmount?.desc || null },
         label: `${promoLabel} · ${displayPhone} · ${selectedOperator.name}` });
 }
+
+// Back-compat shims: the old inline handler names may survive in a cached page.
+async function loadOperators() { return submitTopupNumber(); }
+function showAllOperatorsForCountry() { return showTopupOperatorPicker(); }
 
 // ─── GIFT CARDS ───────────────────────────────────────────────────────────────
 async function loadGiftcards() {
@@ -3097,9 +3469,10 @@ async function applyAiMobileLoad(action) {
     while (phone.startsWith('0')) phone = phone.slice(1);
     const findPhone = document.getElementById('tuPhone');
     if (findPhone) findPhone.value = phone;
-    await loadOperators();
-    const recipient = document.getElementById('tuRecipient');
-    if (recipient) recipient.value = phone;
+    // Seed the state machine so the AI-driven flow runs through the exact same
+    // validate → detect → products path as a manual entry (no second field).
+    topupState.nationalNumber = phone;
+    await submitTopupNumber();
 
     if (selectedOperator && fiatAmount) {
         const wanted = Number(fiatAmount);
