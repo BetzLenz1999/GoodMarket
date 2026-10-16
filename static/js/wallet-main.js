@@ -7763,6 +7763,110 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             }
         };
 
+        // ── Add G$ to the user's own wallet (explicit, user-initiated) ────
+        // G$ is never auto-suggested during login any more: MetaMask's
+        // wallet_watchAsset (EIP-747) always opens an "Add token?" dialog and
+        // there is no EIP-1193 way to query whether the token is already
+        // tracked, so suggesting it on connect stacked extra prompts on the
+        // login. This is the one place the wallet is asked to watch G$, and
+        // only when the user taps the button.
+        const GD_WATCH_ASSET = Object.freeze({
+            type: 'ERC20',
+            options: {
+                address: GD_TOKEN_ADDRESS || '0x62B8B11039FcfE5aB0C56E502b1C372A3d2a9c7A',
+                symbol: 'G$',
+                decimals: 18,
+                image: (typeof window !== 'undefined' && window.location ? window.location.origin : '') + '/static/icons/goodmarket-icon.png'
+            }
+        });
+
+        function _gdWatchStatus(msg, kind) {
+            const el = document.getElementById('gdWatchStatus');
+            if (!el) return;
+            const colors = { ok: '#34d399', err: '#f87171', info: 'var(--text-dim)' };
+            el.textContent = msg || '';
+            el.style.color = colors[kind] || colors.info;
+            el.style.display = msg ? 'block' : 'none';
+        }
+
+        // Resolve the EIP-1193 provider that should receive the watch request,
+        // matching the signer routing used everywhere else on this page.
+        async function _gdWatchProvider() {
+            if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+                return GMLocalWallet.getProvider();
+            }
+            if (IS_PRIVY_LOGIN) {
+                const privyProvider = await _walletGetPrivyProviderIfPreferred({ promptLogin: false, timeoutMs: 4000 });
+                if (privyProvider) return privyProvider;
+            }
+            const ep = await _awaitEthProvider();
+            return ep;
+        }
+
+        window.addGdTokenToWallet = async function () {
+            const btn = document.getElementById('gdWatchBtn');
+            if (btn) btn.disabled = true;
+            _gdWatchStatus('Requesting your wallet to add G$…', 'info');
+            try {
+                const provider = await _gdWatchProvider();
+                if (!provider || typeof provider.request !== 'function') {
+                    _gdWatchStatus('No wallet detected on this page. Open the app inside your wallet, or use WalletConnect.', 'err');
+                    return;
+                }
+                // Only injected/WC/Privy providers expose wallet_watchAsset.
+                // The in-app wallet has no token list, so this is a no-op there.
+                if ((LOGIN_METHOD || '').toLowerCase() === 'local' && typeof GMLocalWallet !== 'undefined') {
+                    _gdWatchStatus('Your G$ balance is already shown inside GoodMarket — this wallet has no separate token list to add to.', 'info');
+                    return;
+                }
+                const added = await provider.request({ method: 'wallet_watchAsset', params: GD_WATCH_ASSET });
+                if (added) _gdWatchStatus('✅ G$ was added to your wallet.', 'ok');
+                else _gdWatchStatus('G$ was not added (you may have declined, or it is already tracked).', 'info');
+            } catch (err) {
+                const msg = (err && err.message) ? err.message : 'Could not add G$.';
+                _gdWatchStatus('❌ ' + msg + ' You can also add it manually from your wallet settings.', 'err');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        };
+
+        // Built in JS rather than in wallet.html: the template is served
+        // no-cache and sits on a hard 200 KB budget (see the load-perf test).
+        // Shown only for injected / WalletConnect / Privy logins — the in-app
+        // wallet has no external token list to add to.
+        (function _ensureGdWatchSection() {
+            const lm = (LOGIN_METHOD || '').toLowerCase();
+            if (lm === 'local' || lm === '') return;
+            const sheet = document.querySelector('#settingsModal .modal-sheet');
+            if (!sheet || document.getElementById('gdWatchSection')) return;
+            const host = document.createElement('div');
+            host.id = 'gdWatchSection';
+            host.style.cssText = 'margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);';
+            const mk = function (tag, css, text) {
+                const el = document.createElement(tag);
+                if (css) el.style.cssText = css;
+                if (text) el.textContent = text;
+                return el;
+            };
+            const btn = mk('button', 'width:100%;', 'Add G$ to my wallet');
+            btn.type = 'button';
+            btn.id = 'gdWatchBtn';
+            btn.className = 'btn-secondary';
+            btn.addEventListener('click', function () { window.addGdTokenToWallet(); });
+            const status = mk('div', 'display:none;margin-top:0.6rem;font-size:0.8rem;line-height:1.5;');
+            status.id = 'gdWatchStatus';
+            status.setAttribute('role', 'status');
+            status.setAttribute('aria-live', 'polite');
+            host.appendChild(mk('div', 'font-size:0.82rem;font-weight:600;color:var(--text-dim);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.05em;', '🪙 G$ Token'));
+            host.appendChild(mk('div', 'font-size:0.8rem;color:var(--text-dim);line-height:1.5;margin-bottom:0.6rem;', 'Show your G$ balance inside your wallet app by adding the G$ token on Celo.'));
+            host.appendChild(btn);
+            host.appendChild(status);
+            // Sits right after the Login Method block.
+            const lmBlock = sheet.querySelector('#gdWatchAnchor');
+            if (lmBlock) lmBlock.parentNode.insertBefore(host, lmBlock.nextSibling);
+            else sheet.insertBefore(host, sheet.querySelector('.modal-sheet-footer') || null);
+        })();
+
         // Per-network card action. Selects the network AND starts its claim in
         // one tap, so a user whose Celo route keeps failing can go straight to
         // XDC without hunting for the /xdc-wallet detour.
