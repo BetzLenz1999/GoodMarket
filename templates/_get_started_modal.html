@@ -198,6 +198,22 @@
                     </p>
                 </div>
 
+                <div id="lwPasskeyStep" style="display:none">
+                    <p class="wc-panel-note"><strong>👆 Unlock faster next time.</strong><br>
+                        Use your device's own verification — fingerprint, Face ID, or your device PIN —
+                        instead of typing your wallet PIN every time.</p>
+                    <div class="lw-warning" style="text-align:left">
+                        <strong>Your wallet PIN is never stored.</strong> It is encrypted together with your
+                        wallet backup and can only be unlocked on this device. If you lose this device,
+                        use your <strong>12 recovery words</strong>.
+                    </div>
+                    <div id="lwPasskeyStatus" class="status-message" style="margin-top:0.6rem;"></div>
+                    <button id="lwPasskeyEnableBtn" class="connect-btn" type="button" onclick="submitLocalWalletPasskey()">Enable fingerprint unlock</button>
+                    <p class="wc-panel-note" style="margin-top:0.7rem;text-align:center;">
+                        <button class="back-btn" style="display:inline;margin:0;" type="button" onclick="skipLocalWalletPasskey()">Not now</button>
+                    </p>
+                </div>
+
                 <div id="localWalletStatus" class="status-message" style="margin-top:0.85rem;"></div>
             </div>
 
