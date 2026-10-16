@@ -7349,6 +7349,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 && !GMLocalWallet.isUnlocked();
         }
 
+        function _lwSetUnlockCopy(hasPasskey) {
+            const sub = document.getElementById('lwUnlockSubtitle');
+            if (!sub) return;
+            sub.textContent = hasPasskey
+                ? 'Confirm with your fingerprint, Face ID, or device PIN — or enter your wallet PIN below.'
+                : 'Enter your PIN to confirm and sign. Your wallet locks automatically after 15 minutes for security.';
+        }
+
         function _lwUnlockIfNeeded() {
             if (!_lwIsNeeded()) return Promise.resolve();
             return new Promise(function (resolve, reject) {
@@ -7360,8 +7368,28 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (errEl) errEl.style.display = 'none';
                 if (pinInput) pinInput.value = '';
                 if (modal) modal.classList.add('open');
-                _refreshLwPasskeyBtn();
-                setTimeout(function () { if (pinInput) pinInput.focus(); }, 100);
+                _lwSetUnlockCopy(false);
+                // Option A: when the user has enrolled a passkey, offer the
+                // device's own screen lock (fingerprint / Face ID / device PIN)
+                // the moment the sheet opens — no extra tap. The PIN field
+                // stays visible as the fallback; if the ceremony is cancelled
+                // or unsupported we fall back to focusing the PIN.
+                //
+                // Best-effort: browsers that require a fresh user gesture for
+                // WebAuthn simply reject the auto-attempt, and the passkey
+                // button (still shown) remains a one-tap retry.
+                _refreshLwPasskeyBtn().then(function (available) {
+                    _lwSetUnlockCopy(available);
+                    if (available) {
+                        // Auto-attempt: a cancel here means "I'll type my PIN",
+                        // so stay quiet instead of flashing an error.
+                        window._lwUnlockViaPasskey({ silentCancel: true });
+                    } else if (pinInput) {
+                        setTimeout(function () { pinInput.focus(); }, 100);
+                    }
+                }).catch(function () {
+                    if (pinInput) setTimeout(function () { pinInput.focus(); }, 100);
+                });
             });
         }
 
@@ -7420,18 +7448,22 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
 
         // Reveal the passkey button only on a device that supports a platform
         // authenticator AND the user has enrolled. Never blocks the PIN path.
+        // Returns true when the passkey affordance is available (callers use
+        // this to offer the device prompt automatically).
         async function _refreshLwPasskeyBtn() {
             const btn = document.getElementById('lwUnlockPasskeyBtn');
-            if (!btn) return;
+            if (!btn) return false;
             btn.style.display = 'none';
-            if (!_passkeySupported()) return;
+            if (!_passkeySupported()) return false;
             try {
                 const available = await window.GMLocalWalletPasskey.isAvailable();
                 if (available) btn.style.display = 'block';
-            } catch (_) { /* unsupported → PIN only */ }
+                return !!available;
+            } catch (_) { return false; /* unsupported → PIN only */ }
         }
 
-        window._lwUnlockViaPasskey = async function () {
+        window._lwUnlockViaPasskey = async function (opts) {
+            opts = opts || {};
             const btn = document.getElementById('lwUnlockPasskeyBtn');
             const errEl = document.getElementById('lwUnlockError');
             if (errEl) errEl.style.display = 'none';
@@ -7447,7 +7479,10 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 const pinInput = document.getElementById('lwUnlockPin');
                 if (pinInput) pinInput.value = '';
             } catch (err) {
-                if (errEl) {
+                // A cancelled/timed-out ceremony is a normal way to choose the
+                // PIN instead — don't shout an error at the user for it.
+                const cancelled = /cancel|timed out|not allowed|denied/i.test((err && err.message) || '');
+                if (errEl && !(opts.silentCancel && cancelled)) {
                     errEl.textContent = (err && err.message) || 'Passkey unlock failed. Please enter your PIN.';
                     errEl.style.display = 'block';
                 }
