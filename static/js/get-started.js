@@ -49,6 +49,9 @@ function _showWalletModalNow() {
     // so the local-wallet create form keeps the referral context.
     try { initReferralFromUrl(); } catch (e) {}
     detectInjectedWallet(0);
+    // Surface the log-in path for a returning local-wallet user BEFORE they
+    // read the option list, so "Create" is not the only obvious choice.
+    if (typeof _lwDetectReturningUser === 'function') _lwDetectReturningUser();
     if (window.GM_PRIVY_CONFIG && window.GM_PRIVY_CONFIG.enabled && window.GM_PRIVY_CONFIG.appId) {
         showWalletStatus('walletConnectStatus', '🔐 Tap Open Privy Login to continue.', 'info');
     } else {
@@ -209,6 +212,57 @@ let _lwPreflightAcked = false;
 
 function openCreatePreflight() {
     showLocalWalletPanel('create');
+}
+
+// Log in to an EXISTING email + PIN wallet. Deliberately skips the
+// create preflight reminder — that gate exists to stop people making a
+// SECOND wallet, and a returning user is doing the opposite.
+function openLoginPanel() {
+    showLocalWalletPanel('unlock');
+}
+
+// ─── Returning local-wallet user detection ───────────────────────────
+// A local wallet's encrypted keystore lives in localStorage and SURVIVES
+// logout (the logout route only clears the Flask session + cookies). So a
+// returning user lands on the option list, sees the loud "Create" card
+// first, and has to press it to discover the "Log in" link buried at the
+// bottom of the create form. Detect the cached keystore and surface the
+// log-in path instead: hoist the log-in card above "Create", give it the
+// single gold treatment, and say why.
+//
+// This is a CONVENIENCE, never a gate: the log-in card is always rendered,
+// so a returning user on a new device (no cached keystore) still has a
+// clear way in — they just get the calm card instead of the gold one.
+function _lwDetectReturningUser() {
+    const banner = document.getElementById('walletReturnBanner');
+    const text = document.getElementById('walletReturnText');
+    const loginBtn = document.getElementById('loginWalletBtn');
+    const createBtn = document.getElementById('localWalletBtn');
+    if (!banner || !text || !loginBtn || !createBtn) return false;
+
+    let saved = null;
+    try {
+        saved = (typeof GMLocalWallet !== 'undefined' && GMLocalWallet.getLocalKeystore)
+            ? GMLocalWallet.getLocalKeystore() : null;
+    } catch (_) { saved = null; }
+    if (!saved || !saved.keystore) {
+        banner.classList.remove('show');
+        return false;
+    }
+
+    text.innerHTML = '<strong>Welcome back.</strong> This device already has your GoodMarket wallet — log in with your email + PIN.';
+    banner.classList.add('show');
+    // Hoist the log-in card directly under the banner (above "Create") and
+    // move the single gold treatment to it, so exactly one card stays loud.
+    if (banner.parentElement && loginBtn.previousElementSibling !== banner) {
+        banner.insertAdjacentElement('afterend', loginBtn);
+    }
+    loginBtn.classList.add('primary');
+    createBtn.classList.remove('primary');
+    // Prefill the email so the returning user only types their PIN.
+    const emailEl = document.getElementById('lwEmail');
+    if (emailEl && saved.email && !emailEl.value) emailEl.value = saved.email;
+    return true;
 }
 
 function _lwShowPreflightStep() {
@@ -2114,6 +2168,7 @@ window.showWalletOptions       = showWalletOptions;
 window.showLocalWalletPanel    = showLocalWalletPanel;
 window.setLocalWalletMode      = setLocalWalletMode;
 window.openCreatePreflight     = openCreatePreflight;
+window.openLoginPanel          = openLoginPanel;
 window.onPreflightAckChange    = onPreflightAckChange;
 window.ackCreatePreflight      = ackCreatePreflight;
 window.cancelCreatePreflight   = cancelCreatePreflight;
