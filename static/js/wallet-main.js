@@ -7598,6 +7598,74 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
             _refreshPasskeySettings();
         };
 
+        // ── Flow C: one-time passkey nudge for already-logged-in users ──
+        // Users who signed in before this shipped never saw the offer. This is
+        // their path. Built in JS rather than the template so wallet.html stays
+        // inside its 200 KB no-cache budget.
+        var PASSKEY_NUDGE_SEEN_KEY = 'gmPasskeyNudgeSeen_v1';
+
+        function _passkeyNudgeSeen() {
+            try { return localStorage.getItem(PASSKEY_NUDGE_SEEN_KEY) === '1'; }
+            // Storage blocked: we cannot remember, so report seen (never nag).
+            catch (_) { return true; }
+        }
+
+        window.showPasskeyNudgeOnce = async function () {
+            if (_passkeyNudgeSeen()) return;
+            if (!_passkeySupported()) return;
+            if ((LOGIN_METHOD || '').toLowerCase() !== 'local') return;
+            // Asked in the signup/login flow? Never ask again.
+            try { if (localStorage.getItem('gm_passkey_offer_declined_v1') === '1') return; } catch (_) {}
+            try { if (window.GMLocalWalletPasskey.hasStoredCredential()) return; } catch (_) { return; }
+            var supported = false;
+            try { supported = await window.GMLocalWalletPasskey.isSupported(); } catch (_) {}
+            if (!supported) return;
+            var banner = document.getElementById('passkeyNudgeBanner');
+            if (!banner) return;
+            banner.style.display = 'block';
+            // Stamp at REVEAL (same one-shot rule as the community banner), so
+            // dismissing without enabling does not bring it back.
+            try { localStorage.setItem(PASSKEY_NUDGE_SEEN_KEY, '1'); } catch (_) {}
+        };
+
+        window.startPasskeyEnrollFromNudge = function () {
+            var banner = document.getElementById('passkeyNudgeBanner');
+            if (banner) banner.style.display = 'none';
+            window.openPasskeyEnrollModal();
+        };
+
+        window.dismissPasskeyNudge = function () {
+            var banner = document.getElementById('passkeyNudgeBanner');
+            if (banner) banner.style.display = 'none';
+            // Remember the decline so the signup/login flow does not re-ask.
+            try { localStorage.setItem('gm_passkey_offer_declined_v1', '1'); } catch (_) {}
+        };
+
+        function _ensurePasskeyNudgeBanner() {
+            if (document.getElementById('passkeyNudgeBanner')) return;
+            var el = document.createElement('div');
+            el.id = 'passkeyNudgeBanner';
+            el.setAttribute('role', 'region');
+            el.setAttribute('aria-label', 'Enable passkey sign-in');
+            el.style.cssText = 'position:relative;z-index:5;margin:0.75rem 0;padding:0.85rem 1rem;'
+                + 'border:1px solid var(--card-border);border-radius:14px;background:var(--card-soft);'
+                + 'display:none;align-items:flex-start;gap:0.75rem;';
+            el.innerHTML = ''
+                + '<div style="font-size:1.4rem;line-height:1.2">\uD83D\uDC46</div>'
+                + '<div style="flex:1;min-width:0">'
+                + '<div style="font-weight:700;color:var(--text);font-size:0.9rem;margin-bottom:0.2rem">Unlock faster next time</div>'
+                + '<div style="color:var(--text-dim);font-size:0.8rem;line-height:1.45">'
+                + 'Enable fingerprint, Face ID, or your device PIN so you don\u2019t type your wallet PIN every time.'
+                + '</div>'
+                + '<div style="display:flex;gap:0.5rem;margin-top:0.7rem;flex-wrap:wrap">'
+                + '<button type="button" class="btn-primary" style="width:auto;padding:0.5rem 0.9rem;font-size:0.82rem" onclick="startPasskeyEnrollFromNudge()">Enable</button>'
+                + '<button type="button" class="btn-secondary" style="width:auto;padding:0.5rem 0.9rem;font-size:0.82rem" onclick="dismissPasskeyNudge()">Not now</button>'
+                + '</div></div>';
+            var host = document.querySelector('.portfolio-card') || document.querySelector('.container') || document.body;
+            if (host && host.parentNode) host.parentNode.insertBefore(el, host.nextSibling);
+            else document.body.insertBefore(el, document.body.firstChild);
+        }
+
         // doSend / submitGcashCashout / the raffle signer live OUTSIDE this
         // IIFE — without these globals their locked-wallet unlock prompt
         // silently no-ops and the triggering button appears dead for local
@@ -8080,6 +8148,14 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         }
         loadBalances();
         loadPortfolioCardholder();
+        // One-time passkey nudge for users who signed in before this shipped.
+        // Delayed so late-injecting wallets/authenticators are seen.
+        try {
+            _ensurePasskeyNudgeBanner();
+            setTimeout(function () {
+                try { window.showPasskeyNudgeOnce(); } catch (_) {}
+            }, 2000);
+        } catch (_) {}
         // Keep GoodSwap and Bridge visible in all wallet environments.
         // GoodReserve is no longer a top-level action — it lives as a
         // sub-tab inside GoodSwap (see /swap → GoodSwap → GoodReserve).
