@@ -4,6 +4,11 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from flask import Blueprint, request, jsonify, render_template, session
 
+from .catalog import (
+    PRODUCT_FILTERS,
+    normalize_operator_products,
+    operator_flag_products,
+)
 from .client import reloadly_client
 from .service import (
     usd_to_gd, get_gd_usd_price,
@@ -216,6 +221,10 @@ def api_topup_operators():
     try:
         operators = reloadly_client.get_topup_operators(country)
         gd_price = get_gd_usd_price()
+        # Tag each operator as airtime vs data/bundle so the store can filter
+        # and badge them. Reloadly returns both kinds in one payload and gives
+        # no label of its own (data plans are separate operators).
+        operators = operator_flag_products(operators)
         for op in operators:
             # fixedAmounts are in USD (senderCurrencyCode) — convert directly to G$
             fixed_amounts = op.get("fixedAmounts", [])  # USD
@@ -228,9 +237,42 @@ def api_topup_operators():
                 op["gd_min"] = round(min_amt / gd_price)
             if max_amt is not None:
                 op["gd_max"] = round(max_amt / gd_price)
-        return jsonify({"success": True, "operators": operators, "gd_price": gd_price})
+        return jsonify({
+            "success": True,
+            "operators": operators,
+            "gd_price": gd_price,
+            "filters": list(PRODUCT_FILTERS),
+        })
     except Exception as e:
         logger.error(f"api_topup_operators error: {e}")
+        return jsonify({"success": False, "error": sanitize_error(e)}), 500
+
+
+@reloadly_bp.route("/api/topup/operator-products/<int:operator_id>")
+def api_topup_operator_products(operator_id):
+    """Full product list (amounts + data/bundle plan descriptions) for one operator.
+
+    The country operator list only carries a summary; the per-operator detail
+    is where the plan descriptions live (e.g. "5GB Plan, Validity 30days"), so
+    the store fetches it when the user picks an operator.
+    """
+    wallet, verified = _require_auth()
+    if not wallet:
+        return jsonify({"error": "Not authenticated"}), 401
+    try:
+        payload = reloadly_client.get_operator_products(operator_id)
+        products = normalize_operator_products(payload)
+        gd_price = get_gd_usd_price()
+        for entry in products.get("fixed", []):
+            usd = entry.get("usd")
+            entry["gd"] = round(usd / gd_price) if usd else 0
+        return jsonify({
+            "success": True,
+            "operator": products,
+            "gd_price": gd_price,
+        })
+    except Exception as e:
+        logger.error(f"api_topup_operator_products error: {e}")
         return jsonify({"success": False, "error": sanitize_error(e)}), 500
 
 
