@@ -1228,6 +1228,8 @@
             line-height: 1.5;
         }
         .pk-warning strong { color: var(--red); }
+        .pk-copy { font-size: 0.82rem; color: var(--text-dim); line-height: 1.5; margin-bottom: 0.7rem; }
+        .pk-copy-head { font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
         .pk-box {
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 12px;
@@ -2803,6 +2805,10 @@
                     onkeydown="if(event.key==='Enter')_lwUnlockSubmit()">
             </div>
             <div id="lwUnlockError" style="display:none;color:var(--red);font-size:0.8rem;margin-bottom:0.8rem;text-align:center"></div>
+            <button type="button" id="lwUnlockPasskeyBtn" onclick="_lwUnlockViaPasskey()" class="btn-primary"
+                    style="display:none;margin-bottom:0.5rem;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;">
+                👆 Use fingerprint / Face ID
+            </button>
             <button id="lwUnlockBtn" onclick="_lwUnlockSubmit()" class="btn-primary">
                 Sign &amp; Continue
             </button>
@@ -2989,6 +2995,18 @@
                     <strong>Never share your private key.</strong> Anyone who sees it can take <strong>all</strong> the funds in this wallet. GoodMarket support will <strong>never</strong> ask you for it.
                 </div>
                 <button type="button" class="btn-secondary" style="width:100%;" onclick="openPkModal()">Reveal private key</button>
+            </div>
+            {% endif %}
+
+            {% if (login_method or '')|lower == 'local' %}
+            {# Optional passkey (WebAuthn) quick-unlock; revealed by
+               _refreshPasskeySettings() only on a supported, enrolled device. #}
+            <div id="passkeySettingsSection" style="display:none;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--card-border);">
+                <div class="pk-copy pk-copy-head">👆 Passkey sign-in</div>
+                <div id="passkeySettingsCopy" class="pk-copy">Skip typing your PIN on this device — unlock with your fingerprint, Face ID, or device PIN.</div>
+                <button type="button" id="passkeyEnableBtn" class="btn-secondary" style="width:100%;" onclick="openPasskeyEnrollModal()">Enable passkey sign-in</button>
+                <button type="button" id="passkeyDisableBtn" class="btn-secondary" style="display:none;width:100%;" onclick="disablePasskeySignIn()">Disable passkey sign-in</button>
+                <div id="passkeySettingsStatus" class="pk-copy" style="display:none;"></div>
             </div>
             {% endif %}
 
@@ -3529,6 +3547,7 @@
     <!-- Shared WalletConnect bridge (claim / send / FV signing fallback for WC users). -->
     <script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/local-wallet-passkey.js', v=ASSET_VERSION) }}"></script>
     {% if dapp_connect_visible %}
     <!-- Connect a dApp (WalletConnect wallet role) — styles live in their own
          static file so wallet.html stays inside its size budget. Included only
