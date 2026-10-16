@@ -492,6 +492,7 @@
                 <input type="password" id="lwModalPin" inputmode="numeric" maxlength="8" placeholder="••••••••"
                     style="width:100%;padding:0.8rem;text-align:center;font-size:1.3rem;letter-spacing:0.4rem;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;outline:none;margin-bottom:0.8rem;">
                 <div id="lwModalError" style="display:none;color:#f87171;font-size:0.75rem;margin-bottom:0.8rem"></div>
+                <button id="lwModalPasskey" style="display:none;width:100%;padding:0.75rem;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem">👆 Use fingerprint / Face ID</button>
                 <button id="lwModalSubmit" style="width:100%;padding:0.75rem;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:600;border:none;border-radius:10px;cursor:pointer;margin-bottom:0.5rem">Sign &amp; Continue</button>
                 <button id="lwModalCancel" style="width:100%;padding:0.6rem;background:transparent;color:#888;border:1px solid rgba(255,255,255,0.2);border-radius:10px;cursor:pointer;font-size:0.85rem">Cancel</button>
             </div>
@@ -610,6 +611,43 @@
         }
     }
 
+    // ── Passkey (WebAuthn) quick-unlock ──────────────────────────────────
+    // Optional fast path on top of the PIN: the user approves with their
+    // device's own user verification (fingerprint / Face ID / device PIN) and
+    // we unlock from the PRF-wrapped keystore. Falls back to the PIN prompt on
+    // every failure — a passkey can never strand a user.
+    async function unlockViaPasskey() {
+        if (typeof window.GMLocalWalletPasskey === 'undefined') {
+            throw new Error('Passkey unlock is not available on this page.');
+        }
+        var res = await window.GMLocalWalletPasskey.unlock();
+        if (!res || !res.ok) {
+            throw new Error((res && res.message) || 'Passkey unlock failed. Please enter your PIN.');
+        }
+        await unlockWithKeystore(res.keystore, res.pin);
+        return true;
+    }
+
+    // Show/hide the passkey button based on real device support + whether the
+    // user has enrolled. Never blocks the PIN path.
+    async function _refreshPasskeyButton(overlay) {
+        var btn = overlay.querySelector('#lwModalPasskey');
+        if (!btn || typeof window.GMLocalWalletPasskey === 'undefined') {
+            if (btn) btn.style.display = 'none';
+            return;
+        }
+        btn.style.display = 'none';
+        try {
+            var available = await window.GMLocalWalletPasskey.isAvailable();
+            if (available) {
+                btn.style.display = 'block';
+                // Rebuild the label from the copy overrides on this open()
+                var label = overlay.getAttribute('data-pk-label') || '👆 Use fingerprint / Face ID';
+                btn.textContent = label;
+            }
+        } catch (_) { /* unsupported → PIN only */ }
+    }
+
     window._lwOpenUnlockModal = function (opts) {
         // Optional copy overrides, e.g. {title, subtitle, submitLabel, busyLabel}
         // for message-signing (non-transaction) prompts. Defaults are
@@ -624,6 +662,7 @@
             if (_t) _t.textContent = opts.title || 'Sign this transaction';
             if (_s) _s.textContent = opts.subtitle || 'Enter your PIN to confirm and sign';
             if (_b) _b.textContent = opts.submitLabel || 'Sign & Continue';
+            _ov.setAttribute('data-pk-label', opts.passkeyLabel || '👆 Use fingerprint / Face ID');
         }
         var _busyLabel = opts.busyLabel || 'Signing…';
         var _submitLabel = opts.submitLabel || 'Sign & Continue';
@@ -689,6 +728,30 @@
                 if (e.key === 'Enter') submitBtn.click();
             };
 
+            // Optional passkey fast path. Visible only when the user has
+            // enrolled on a supported device; every failure falls through to
+            // the normal PIN prompt (never resolves on a failed attempt).
+            var pkBtn = overlay.querySelector('#lwModalPasskey');
+            if (pkBtn) {
+                pkBtn.onclick = async function () {
+                    pkBtn.disabled = true;
+                    var original = pkBtn.textContent;
+                    pkBtn.textContent = 'Waiting for device…';
+                    try {
+                        await unlockViaPasskey();
+                        close();
+                        resolveFn();
+                    } catch (err) {
+                        showError((err && err.message) || 'Passkey unlock failed. Please enter your PIN.');
+                        pinInput.focus();
+                    } finally {
+                        pkBtn.disabled = false;
+                        pkBtn.textContent = original;
+                    }
+                };
+            }
+            _refreshPasskeyButton(overlay);
+
             overlay.style.display = 'flex';
             setTimeout(function () { pinInput.focus(); }, 100);
         });
@@ -732,6 +795,7 @@
         tryServerKeystore: tryServerKeystore,
         expectedWalletAddress: _expectedWalletAddress,
         isUnlocked: function () { return !!_activeWallet; },
+        unlockViaPasskey: unlockViaPasskey,
         normalizeEmail: _normalizeEmail,
         normalizePin: _normalizePin,
         normalizeNewPin: _normalizeNewPin,
