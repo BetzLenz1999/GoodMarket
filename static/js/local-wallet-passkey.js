@@ -242,6 +242,25 @@
         return 'Passkey sign-in did not work (' + (msg || 'unknown error') + '). Enter your PIN instead.';
     }
 
+    // Reason → user-facing copy. `enroll()`/`unlock()` return a machine reason;
+    // callers surface this so a failed setup never looks like a silent no-op.
+    var REASON_MESSAGES = {
+        unsupported: 'This device or browser cannot use a passkey for the wallet. Enter your PIN instead.',
+        no_prf: 'This device/browser does not support the secure passkey extension needed. Enter your PIN instead — you can still sign normally.',
+        storage: 'Your browser blocked local storage, so a passkey cannot be saved here. Enter your PIN instead.',
+        no_keystore: 'No wallet backup found on this device. Enter your PIN to finish the login first.',
+        no_pin: 'Enter your wallet PIN to enable the passkey.',
+        create_failed: 'The passkey was not created. Enter your PIN instead.',
+        no_credential: 'No passkey is set up on this device. Enter your PIN, or enable one in Settings.',
+        bad_payload: 'The saved passkey could not be read. Enter your PIN, then re-enable the passkey in Settings.',
+        address_mismatch: 'This passkey belongs to a different wallet. Enter the PIN for this account instead.',
+        cancelled: 'Passkey prompt was cancelled or timed out. Enter your PIN instead.'
+    };
+
+    function describeReason(reason) {
+        return REASON_MESSAGES[reason] || 'Passkey sign-in did not work. Enter your PIN instead.';
+    }
+
     // ── Enroll ────────────────────────────────────────────────────────────
 
     /**
@@ -254,9 +273,9 @@
         var keystore = opts.keystore;
         var pin = opts.pin;
         var address = opts.address || _walletAddress();
-        if (!keystore) return { ok: false, reason: 'no_keystore' };
-        if (!pin) return { ok: false, reason: 'no_pin' };
-        if (!(await isSupported())) return { ok: false, reason: 'unsupported' };
+        if (!keystore) return { ok: false, reason: 'no_keystore', message: describeReason('no_keystore') };
+        if (!pin) return { ok: false, reason: 'no_pin', message: describeReason('no_pin') };
+        if (!(await isSupported())) return { ok: false, reason: 'unsupported', message: describeReason('unsupported') };
 
         try {
             var prfSalt = _prfSalt();
@@ -284,7 +303,7 @@
                     extensions: { prf: { eval: { first: prfSalt } } }
                 }
             });
-            if (!cred) return { ok: false, reason: 'create_failed' };
+            if (!cred) return { ok: false, reason: 'create_failed', message: describeReason('create_failed') };
 
             var credentialId = _arrayBuffer(cred.rawId);
             var prfOutput = _prfFromCreate(cred);
@@ -303,7 +322,7 @@
                 });
                 prfOutput = assertion && _prfFromGet(assertion);
             }
-            if (!prfOutput) return { ok: false, reason: 'no_prf' };
+            if (!prfOutput) return { ok: false, reason: 'no_prf', message: describeReason('no_prf') };
 
             var hkdfSalt = _randomBytes(32);
             var wrapped = await _wrap(prfOutput, hkdfSalt, { keystore: keystore, pin: pin });
@@ -316,7 +335,7 @@
                 address: address ? String(address) : null,
                 createdAt: Date.now()
             });
-            if (!stored) return { ok: false, reason: 'storage' };
+            if (!stored) return { ok: false, reason: 'storage', message: describeReason('storage') };
             return { ok: true };
         } catch (err) {
             return { ok: false, reason: 'error', error: err, message: describeError(err) };
@@ -332,8 +351,8 @@
 
     async function unlock() {
         var st = _readStore();
-        if (!st) return { ok: false, reason: 'no_credential' };
-        if (!(await isSupported())) return { ok: false, reason: 'unsupported' };
+        if (!st) return { ok: false, reason: 'no_credential', message: describeReason('no_credential') };
+        if (!(await isSupported())) return { ok: false, reason: 'unsupported', message: describeReason('unsupported') };
         try {
             var prfSalt = _prfSalt();
             var assertion = await navigator.credentials.get({
@@ -346,7 +365,7 @@
                 }
             });
             var prfOutput = assertion && _prfFromGet(assertion);
-            if (!prfOutput) return { ok: false, reason: 'no_prf' };
+            if (!prfOutput) return { ok: false, reason: 'no_prf', message: describeReason('no_prf') };
 
             var payload = await _unwrap(
                 prfOutput,
@@ -354,13 +373,13 @@
                 st.iv,
                 st.ciphertext
             );
-            if (!payload || !payload.keystore) return { ok: false, reason: 'bad_payload' };
+            if (!payload || !payload.keystore) return { ok: false, reason: 'bad_payload', message: describeReason('bad_payload') };
 
             // Guard against a stale credential that belongs to another account
             // (the same rule the PIN path enforces before decrypting).
             var expected = _walletAddress();
             if (st.address && expected && String(st.address).toLowerCase() !== expected.toLowerCase()) {
-                return { ok: false, reason: 'address_mismatch' };
+                return { ok: false, reason: 'address_mismatch', message: describeReason('address_mismatch') };
             }
             return { ok: true, keystore: payload.keystore, pin: payload.pin };
         } catch (err) {
@@ -376,6 +395,7 @@
         revoke: revoke,
         hasStoredCredential: hasStoredCredential,
         describeError: describeError,
+        describeReason: describeReason,
         STORAGE_KEY: STORAGE_KEY
     };
 })();
