@@ -83,6 +83,35 @@
         .op-country { font-size: 12px; color: #aaa; }
         .op-amounts { font-size: 11px; color: #7986cb; margin-top: 6px; }
 
+        /* Product-type filter chips (All / Airtime / Data & Bundles) and the
+           per-operator type badge. Reloadly returns both product kinds in one
+           payload, so these let the user separate them. */
+        .product-filter-bar {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+        }
+        .product-filter-chip {
+            padding: 6px 14px; border-radius: 20px; border: 1px solid #2e3150;
+            background: #0f1117; color: #ccc; font-size: 12.5px; cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .product-filter-chip:hover { border-color: #7986cb; }
+        .product-filter-chip.active {
+            background: #5c6bc0; border-color: #5c6bc0; color: #fff; font-weight: 600;
+        }
+        .op-type-badge {
+            display: inline-block; font-size: 9.5px; font-weight: 700;
+            letter-spacing: 0.03em; text-transform: uppercase;
+            padding: 2px 7px; border-radius: 10px; margin-bottom: 6px;
+            background: rgba(121,134,203,0.16); color: #a5b0e8;
+            border: 1px solid rgba(121,134,203,0.35);
+        }
+        .op-type-badge.is-data {
+            background: rgba(105,240,174,0.12); color: #6ee7a8;
+            border-color: rgba(105,240,174,0.35);
+        }
+        .plan-desc { font-size: 12.5px; font-weight: 500; color: #e0e0e0; }
+        .plan-meta { font-size: 10px; color: #888; margin-top: 2px; }
+
         .amount-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
         .bundle-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 320px; overflow-y: auto; }
         .bundle-chip {
@@ -390,6 +419,29 @@
         .op-name { color: var(--text); }
         .op-country { color: var(--text-muted); }
         .op-amounts { color: #c2410c; }
+
+        .product-filter-chip {
+            border-color: var(--card-border);
+            background: #ffffff;
+            color: var(--text-dim);
+        }
+        .product-filter-chip:hover { border-color: rgba(var(--accent-rgb),0.5); }
+        .product-filter-chip.active {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+            border-color: #ea580c; color: #fff;
+        }
+        .op-type-badge {
+            background: rgba(var(--accent-rgb),0.10);
+            color: #b45309;
+            border-color: rgba(var(--accent-rgb),0.30);
+        }
+        .op-type-badge.is-data {
+            background: rgba(21,128,61,0.10);
+            color: #15803d;
+            border-color: rgba(21,128,61,0.30);
+        }
+        .plan-desc { color: var(--text); }
+        .plan-meta { color: var(--text-muted); }
 
         .bundle-chip {
             background: #ffffff;
@@ -917,6 +969,10 @@ setInterval(refreshGdPrice, 5 * 60 * 1000);  // refresh every 5 minutes
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let selectedOperator = null, selectedAmount = null;
+// Product-type filter for the operator grid: 'all' | 'airtime' | 'data'.
+// Reloadly returns airtime and data/bundle operators in one payload, so the
+// chips let users see both without them being mixed together.
+let _operatorProductFilter = 'all';
 let selectedGcProduct = null, selectedBiller = null;
 let currentOrderId = null;
 let _pendingOrderData = null;
@@ -1109,6 +1165,9 @@ function applyTopupCountry(country) {
     window._allOperators = null;
     window._allOperatorsCountry = null;
     window._currentlyFiltered = false;
+    window._familyOperators = null;
+    _operatorProductsCache.clear();
+    _operatorProductFilter = 'all';
     selectedOperator = null;
     selectedAmount = null;
     const opList = document.getElementById('operatorList');
@@ -2356,11 +2415,91 @@ function showAllOperatorsForCountry() {
     });
 }
 
+// ─── Product-type filtering ───────────────────────────────────────────────────
+// Reloadly returns airtime AND data/bundle operators in one country payload and
+// labels neither, so the backend tags each operator with `product_type`. These
+// chips let the user view all of them, or just one kind.
+const PRODUCT_FILTER_LABELS = {
+    all: 'All products',
+    airtime: 'Airtime',
+    data: 'Data & Bundles',
+};
+
+function operatorProductType(op) {
+    if (op && op.product_type) return op.product_type;
+    // Fallback for a payload from an older backend revision.
+    if (op && (op.data || op.bundle)) return 'data';
+    return 'airtime';
+}
+
+function operatorIsDataBundle(op) {
+    return operatorProductType(op) !== 'airtime';
+}
+
+function operatorTypeLabel(op) {
+    const t = operatorProductType(op);
+    return { airtime: 'Airtime', data: 'Data', bundle: 'Data bundle', combo: 'Airtime + data' }[t] || 'Airtime';
+}
+
+// Counts for the chip labels, computed over the currently shown (family
+// filtered) list so the numbers always match what the user would see.
+function productFilterCounts(operators) {
+    let airtime = 0, data = 0;
+    (operators || []).forEach(op => { operatorIsDataBundle(op) ? data++ : airtime++; });
+    return { all: airtime + data, airtime, data };
+}
+
+function setOperatorProductFilter(filter) {
+    _operatorProductFilter = ['all', 'airtime', 'data'].includes(filter) ? filter : 'all';
+    if (!window._familyOperators) return;
+    renderOperators(window._familyOperators, window._detectedOperatorId ?? null, {
+        filtered: window._currentlyFiltered,
+        totalCount: window._allOperators ? window._allOperators.length : window._familyOperators.length,
+        phoneTyped: !!document.getElementById('tuPhone')?.value.trim(),
+    });
+}
+
+// Narrow to the active product chip. Returns the filtered list.
+function applyProductFilter(operators) {
+    if (_operatorProductFilter === 'all') return operators || [];
+    return (operators || []).filter(op =>
+        _operatorProductFilter === 'data' ? operatorIsDataBundle(op) : !operatorIsDataBundle(op));
+}
+
+function renderProductFilterBar(operators) {
+    const counts = productFilterCounts(operators);
+    const order = ['all', 'airtime', 'data'];
+    // Hide the bar entirely when the list has only one kind of product — the
+    // chips would be a no-op.
+    if (!counts.airtime || !counts.data) return '';
+    return `<div class="product-filter-bar">${order.map(key => {
+        const active = _operatorProductFilter === key ? ' active' : '';
+        return `<button type="button" class="product-filter-chip${active}"
+            onclick="setOperatorProductFilter('${key}')"
+            aria-pressed="${_operatorProductFilter === key}">${PRODUCT_FILTER_LABELS[key]} (${counts[key]})</button>`;
+    }).join('')}</div>`;
+}
+
 function renderOperators(operators, detectedId = null, meta = {}) {
     const list = document.getElementById('operatorList');
     if (!operators || !operators.length) { list.innerHTML = '<div class="empty-msg">No operators found.</div>'; return; }
-    window._operators = operators;
+    window._familyOperators = operators;
+    window._detectedOperatorId = detectedId;
     const { filtered = false, totalCount = operators.length, phoneTyped = false } = meta;
+
+    // If the active chip would show nothing (e.g. the number's brand family has
+    // no data plans), fall back to "all" instead of stranding the user on an
+    // empty grid with no chip left to switch back with.
+    let visible = applyProductFilter(operators);
+    if (!visible.length && _operatorProductFilter !== 'all') {
+        _operatorProductFilter = 'all';
+        visible = applyProductFilter(operators);
+    }
+
+    const filterBar = renderProductFilterBar(operators);
+    // The grid renders the product-filtered subset, so selectOperator() must
+    // index into that same list (not the unfiltered family list).
+    window._operators = visible;
 
     let banner = '';
     if (filtered) {
@@ -2395,22 +2534,28 @@ function renderOperators(operators, detectedId = null, meta = {}) {
         ? '<span style="font-size:11px;color:#15803d;font-weight:400;margin-left:6px">✓ Auto-detected from phone number</span>'
         : '';
 
-    list.innerHTML = `<div class="card">
-        <h3>Select Operator ${headerExtra}</h3>
-        ${banner}
-        <div class="operator-grid">${
-        operators.map((op, i) => {
+    const grid = visible.length
+        ? `<div class="operator-grid">${visible.map((op, i) => {
             const isDetected = op.id === detectedId;
+            const isData = operatorIsDataBundle(op);
             return `
             <div class="operator-card${isDetected ? ' selected' : ''}" onclick="selectOperator(${i})" id="opcard-${i}">
                 ${op.logoUrls && op.logoUrls[0] ? `<img src="${op.logoUrls[0]}" style="height:32px;margin-bottom:8px;object-fit:contain;max-width:100%">` : ''}
+                <span class="op-type-badge${isData ? ' is-data' : ''}">${operatorTypeLabel(op)}</span>
                 <div class="op-name">${op.name}</div>
                 <div class="op-country">${op.country?.name || ''}</div>
                 <div class="op-amounts">${op.gd_amounts ? op.gd_amounts.slice(0,3).map(a=>`${a} G$`).join(' · ') : (op.minAmount ? `$${op.minAmount}–$${op.maxAmount}` : '')}</div>
                 ${isDetected ? '<div style="font-size:9px;color:#15803d;margin-top:4px">● Detected</div>' : ''}
             </div>`;
-        }).join('')
-    }</div></div>`;
+        }).join('')}</div>`
+        : `<div class="empty-msg">No ${_operatorProductFilter === 'data' ? 'data/bundle' : 'airtime'} operators for this number.</div>`;
+
+    list.innerHTML = `<div class="card">
+        <h3>Select Operator ${headerExtra}</h3>
+        ${filterBar}
+        ${banner}
+        ${grid}
+    </div>`;
 }
 
 function selectOperator(idx) {
@@ -2419,66 +2564,114 @@ function selectOperator(idx) {
     document.querySelectorAll('.operator-card').forEach(c => c.classList.remove('selected'));
     document.getElementById('opcard-' + idx)?.classList.add('selected');
     document.getElementById('tuOperatorName').textContent = selectedOperator.name;
-    const sec = document.getElementById('tuAmountSection');
-    if (selectedOperator.fixedAmounts && selectedOperator.fixedAmounts.length) {
-        const gd = selectedOperator.gd_amounts || selectedOperator.fixedAmounts.map(a => Math.round(a / GD_PRICE));
-        const localAmounts = selectedOperator.localFixedAmounts || [];
-        const localDescs = selectedOperator.localFixedAmountsDescriptions || {};
-        const usdDescs = selectedOperator.fixedAmountsDescriptions || {};
-        const currSymbol = selectedOperator.destinationCurrencySymbol || '$';
-        const currCode = selectedOperator.destinationCurrencyCode || 'USD';
-        const isUSD = currCode === 'USD';
-        const hasDescs = Object.keys(localDescs).length > 0 || Object.keys(usdDescs).length > 0;
-        const isBundle = selectedOperator.bundle || selectedOperator.data || hasDescs;
+    document.getElementById('topupForm').style.display = 'block';
+    renderOperatorAmounts(selectedOperator, null);
+    // Fetch the full product list (plan descriptions live only on the
+    // per-operator detail) and re-render when it arrives. The summary payload
+    // already renders, so a slow/failed fetch degrades instead of blocking.
+    loadOperatorProducts(selectedOperator).then(products => {
+        if (products && selectedOperator && selectedOperator.id === products.operator_id) {
+            renderOperatorAmounts(selectedOperator, products);
+        }
+    }).catch(() => {});
+}
 
-        sec.innerHTML = `<label style="font-size:12px;color:#6b5d48;display:block;margin-bottom:8px">
-            ${isBundle ? 'Select Promo / Bundle' : 'Select Amount'}
-            </label>
-            <div class="${isBundle ? 'bundle-list' : 'amount-chips'}">${selectedOperator.fixedAmounts.map((a, i) => {
-                const localAmt = localAmounts[i];
-                const localKey = localAmt !== undefined ? parseFloat(localAmt).toFixed(2) : null;
-                const usdKey = parseFloat(a).toFixed(2);
-                // Try local description first, then USD description
-                const desc = (localKey && (localDescs[localKey] || localDescs[parseFloat(localKey)])) ||
-                             usdDescs[a] || usdDescs[usdKey] || usdDescs[String(parseFloat(a))] || '';
-                // Local currency display
-                const localDisplay = localAmt !== undefined && !isUSD
-                    ? `${currSymbol}${parseFloat(localAmt).toLocaleString()}`
-                    : `$${parseFloat(a).toFixed(2)}`;
-                if (isBundle && desc) {
-                    return `<div class="bundle-chip" onclick="selectFixedAmt(${a},${gd[i]},this)" data-usd="${a}" data-local="${localAmt||''}">
-                        <div class="bundle-name">${desc}</div>
+// Per-operator product detail, cached per operator id so switching back is
+// instant. Resolves null on any failure (the summary view stays usable).
+const _operatorProductsCache = new Map();
+async function loadOperatorProducts(op) {
+    const opId = op?.operatorId || op?.id;
+    if (!opId) return null;
+    if (_operatorProductsCache.has(opId)) return _operatorProductsCache.get(opId);
+    try {
+        const data = await apiFetch(`/reloadly/api/topup/operator-products/${opId}`);
+        const products = data.success ? data.operator : null;
+        _operatorProductsCache.set(opId, products);
+        return products;
+    } catch (e) {
+        return null;
+    }
+}
+
+function _escHtml(v) {
+    return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Render the amount/bundle chooser for an operator. `products` (per-operator
+// detail) is preferred because it carries plan descriptions; without it we fall
+// back to the summary fields from the country list.
+function renderOperatorAmounts(op, products) {
+    const sec = document.getElementById('tuAmountSection');
+    const isData = operatorIsDataBundle(op);
+    const currSymbol = op.destinationCurrencySymbol || '$';
+    const currCode = op.destinationCurrencyCode || 'USD';
+    const isUSD = currCode === 'USD';
+
+    const localDisplayFor = (localAmt, usd) => (localAmt != null && !isUSD)
+        ? `${currSymbol}${parseFloat(localAmt).toLocaleString()}`
+        : `$${parseFloat(usd).toFixed(2)}`;
+
+    const fixed = (products && products.fixed && products.fixed.length)
+        ? products.fixed
+        : (op.fixedAmounts || []).map((a, i) => ({
+            usd: a,
+            local: (op.localFixedAmounts || [])[i] ?? null,
+            description: '',
+            gd: (op.gd_amounts || [])[i] ?? Math.round(a / GD_PRICE),
+        }));
+
+    if (fixed.length) {
+        const withDesc = fixed.filter(e => e.description);
+        // Data/bundle plans are shown as described rows; plain airtime stays as
+        // amount chips. A data operator whose descriptions are missing still
+        // gets the list treatment so its plans are not mistaken for credit.
+        const asBundleList = isData || withDesc.length > 0;
+        const heading = isData ? 'Select Data / Bundle Plan' : 'Select Amount';
+        sec.innerHTML = `<label style="font-size:12px;color:#6b5d48;display:block;margin-bottom:8px">${heading}</label>
+            <div class="${asBundleList ? 'bundle-list' : 'amount-chips'}">${fixed.map(e => {
+                const usd = e.usd;
+                const gd = e.gd != null ? e.gd : Math.round(usd / GD_PRICE);
+                const localAmt = e.local;
+                const localDisplay = localDisplayFor(localAmt, usd);
+                if (asBundleList) {
+                    const title = e.description ? _escHtml(e.description) : `${localDisplay}`;
+                    const meta = e.description ? `<div class="plan-meta">${_escHtml(localDisplay)}</div>` : '';
+                    return `<div class="bundle-chip" onclick="selectFixedAmt(${usd},${gd},this)" data-usd="${usd}" data-local="${localAmt != null ? localAmt : ''}" data-desc="${_escHtml(e.description || '')}">
+                        <div style="flex:1;min-width:0">
+                            <div class="plan-desc">${title}</div>
+                            ${meta}
+                        </div>
                         <div class="bundle-price">
-                            <div style="color:#15803d;font-weight:700;font-size:13px">${Math.round(gd[i]).toLocaleString()} G$</div>
-                            <div style="color:#888;font-size:10px">${localDisplay}</div>
+                            <div style="color:#15803d;font-weight:700;font-size:13px">${Math.round(gd).toLocaleString()} G$</div>
                         </div>
                     </div>`;
                 }
-                return `<div class="chip" onclick="selectFixedAmt(${a},${gd[i]},this)">
-                    ${localDisplay} <span style="color:#c2410c">(${Math.round(gd[i]).toLocaleString()} G$)</span>
+                return `<div class="chip" onclick="selectFixedAmt(${usd},${gd},this)">
+                    ${localDisplay} <span style="color:#c2410c">(${Math.round(gd).toLocaleString()} G$)</span>
                 </div>`;
             }).join('')}</div>`;
     } else {
-        const cSym = selectedOperator.destinationCurrencySymbol || '$';
-        const localMin = selectedOperator.localMinAmount || selectedOperator.minAmount;
-        const localMax = selectedOperator.localMaxAmount || selectedOperator.maxAmount;
-        const isLocalUSD = (selectedOperator.destinationCurrencyCode || 'USD') === 'USD';
+        const cSym = currSymbol;
+        const localMin = op.localMinAmount || op.minAmount;
+        const localMax = op.localMaxAmount || op.maxAmount;
+        const isLocalUSD = isUSD;
         const rangeLabel = isLocalUSD
-            ? `$${selectedOperator.minAmount} – $${selectedOperator.maxAmount} USD`
-            : `${cSym}${localMin} – ${cSym}${localMax} (${selectedOperator.destinationCurrencyCode})`;
+            ? `$${op.minAmount} – $${op.maxAmount} USD`
+            : `${cSym}${localMin} – ${cSym}${localMax} (${currCode})`;
         sec.innerHTML = `<div class="form-group">
             <label style="font-size:12px;color:#6b5d48">Amount in USD — ${rangeLabel}</label>
-            <input id="tuCustomAmt" type="number" step="0.01" min="${selectedOperator.minAmount}" max="${selectedOperator.maxAmount}" placeholder="USD amount" oninput="updateTuSummary()"/>
+            <input id="tuCustomAmt" type="number" step="0.01" min="${op.minAmount}" max="${op.maxAmount}" placeholder="USD amount" oninput="updateTuSummary()"/>
         </div>`;
     }
-    document.getElementById('topupForm').style.display = 'block';
     updateTuSummary();
 }
 
 function selectFixedAmt(usd, gd, el) {
     document.querySelectorAll('#tuAmountSection .chip, #tuAmountSection .bundle-chip').forEach(c => c.classList.remove('selected'));
     el.classList.add('selected');
-    const desc = el.querySelector('.bundle-name')?.textContent?.trim() || null;
+    const desc = el.dataset.desc || el.querySelector('.plan-desc, .bundle-name')?.textContent?.trim() || null;
     const localAmt = el.dataset.local || null;
     const currSym = selectedOperator?.destinationCurrencySymbol || '$';
     const currCode = selectedOperator?.destinationCurrencyCode || 'USD';
