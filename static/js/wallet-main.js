@@ -1345,6 +1345,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         if (id === 'settingsModal') {
             // Refresh FV status each time Settings opens so the user sees fresh data.
             loadFvStatus(true);
+            if (typeof window._refreshPasskeySettings === 'function') window._refreshPasskeySettings();
         }
         if (id === 'gcashModal') {
             _gcashLoadBalance();
@@ -7359,6 +7360,7 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
                 if (errEl) errEl.style.display = 'none';
                 if (pinInput) pinInput.value = '';
                 if (modal) modal.classList.add('open');
+                _refreshLwPasskeyBtn();
                 setTimeout(function () { if (pinInput) pinInput.focus(); }, 100);
             });
         }
@@ -7405,6 +7407,160 @@ const WALLET = window.GM_WALLET_BOOT.wallet;
         window._lwUnlockCancel = function () {
             document.getElementById('lwUnlockModal').classList.remove('open');
             if (window._lwUnlockReject) { window._lwUnlockReject(new Error('Unlock cancelled.')); window._lwUnlockResolve = null; window._lwUnlockReject = null; }
+        };
+
+        // ── Passkey (WebAuthn) quick-unlock ──────────────────────────────
+        // Optional fast path on top of the PIN: approve with the device's own
+        // user verification (fingerprint / Face ID / device PIN) and unlock
+        // from the PRF-wrapped keystore. Every failure falls back to the PIN
+        // prompt — a passkey can never strand a user or lock them out.
+        function _passkeySupported() {
+            return typeof window.GMLocalWalletPasskey !== 'undefined';
+        }
+
+        // Reveal the passkey button only on a device that supports a platform
+        // authenticator AND the user has enrolled. Never blocks the PIN path.
+        async function _refreshLwPasskeyBtn() {
+            const btn = document.getElementById('lwUnlockPasskeyBtn');
+            if (!btn) return;
+            btn.style.display = 'none';
+            if (!_passkeySupported()) return;
+            try {
+                const available = await window.GMLocalWalletPasskey.isAvailable();
+                if (available) btn.style.display = 'block';
+            } catch (_) { /* unsupported → PIN only */ }
+        }
+
+        window._lwUnlockViaPasskey = async function () {
+            const btn = document.getElementById('lwUnlockPasskeyBtn');
+            const errEl = document.getElementById('lwUnlockError');
+            if (errEl) errEl.style.display = 'none';
+            if (btn) { btn.disabled = true; btn.textContent = 'Waiting for device…'; }
+            try {
+                const res = await window.GMLocalWalletPasskey.unlock();
+                if (!res || !res.ok) {
+                    throw new Error((res && res.message) || 'Passkey unlock failed. Please enter your PIN.');
+                }
+                await GMLocalWallet.unlockWithKeystore(res.keystore, res.pin);
+                if (window._lwUnlockResolve) { window._lwUnlockResolve(); window._lwUnlockResolve = null; window._lwUnlockReject = null; }
+                document.getElementById('lwUnlockModal').classList.remove('open');
+                const pinInput = document.getElementById('lwUnlockPin');
+                if (pinInput) pinInput.value = '';
+            } catch (err) {
+                if (errEl) {
+                    errEl.textContent = (err && err.message) || 'Passkey unlock failed. Please enter your PIN.';
+                    errEl.style.display = 'block';
+                }
+                const pinInput = document.getElementById('lwUnlockPin');
+                if (pinInput) pinInput.focus();
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '👆 Use fingerprint / Face ID'; }
+            }
+        };
+
+        // Refresh the Settings → Passkey section on load (local logins only).
+        window._refreshPasskeySettings = async function () {
+            const section = document.getElementById('passkeySettingsSection');
+            if (!section) return;
+            section.style.display = 'none';
+            if (!_passkeySupported()) return;
+            let supported = false;
+            try { supported = await window.GMLocalWalletPasskey.isSupported(); } catch (_) {}
+            if (!supported) return;
+            section.style.display = 'block';
+            const enrolled = window.GMLocalWalletPasskey.hasStoredCredential();
+            const enableBtn = document.getElementById('passkeyEnableBtn');
+            const disableBtn = document.getElementById('passkeyDisableBtn');
+            const status = document.getElementById('passkeySettingsStatus');
+            if (enableBtn) enableBtn.style.display = enrolled ? 'none' : 'block';
+            if (disableBtn) disableBtn.style.display = enrolled ? 'block' : 'none';
+            if (status) {
+                status.style.display = enrolled ? 'block' : 'none';
+                status.textContent = enrolled ? '✅ Passkey sign-in is enabled on this device. Your PIN still works as a backup.' : '';
+            }
+        };
+
+        // The enrollment sheet is built in JS (like the injected unlock modal)
+        // so wallet.html stays inside its no-cache size budget.
+        function _ensurePasskeyEnrollModal() {
+            let modal = document.getElementById('passkeyEnrollModal');
+            if (modal) return modal;
+            modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.id = 'passkeyEnrollModal';
+            modal.innerHTML = ''
+                + '<div class="modal-sheet">'
+                + '<div class="modal-handle"></div>'
+                + '<div class="modal-title">👆 Enable passkey sign-in</div>'
+                + '<div class="pk-copy">Unlock your wallet with your device\'s own verification — fingerprint, Face ID, or device PIN — instead of typing your wallet PIN each time.</div>'
+                + '<div class="pk-warning"><strong>Your wallet PIN is never stored.</strong> It is encrypted together with your wallet backup and can only be unlocked by this device\'s passkey. If you lose this device, use your <strong>12 recovery words</strong>.</div>'
+                + '<div class="pk-copy pk-copy-head">Confirm your PIN</div>'
+                + '<input type="password" id="passkeyPinInput" inputmode="numeric" maxlength="8" placeholder="••••••••" '
+                + 'style="width:100%;padding:0.8rem 1rem;text-align:center;font-size:1.2rem;letter-spacing:0.4rem;border-radius:10px;border:1px solid var(--card-border);background:rgba(255,255,255,0.07);color:var(--text);outline:none;margin-bottom:0.9rem">'
+                + '<div id="passkeyEnrollStatus" class="pk-copy" style="display:none;text-align:center;"></div>'
+                + '<button type="button" id="passkeyEnrollConfirmBtn" class="btn-primary" onclick="_passkeyEnrollSubmit()">Enable passkey</button>'
+                + '<button type="button" class="btn-secondary" style="width:100%;margin-top:0.5rem;" onclick="closePasskeyEnrollModal()">Cancel</button>'
+                + '</div>';
+            document.body.appendChild(modal);
+            modal.addEventListener('click', function (e) { if (e.target === modal) window.closePasskeyEnrollModal(); });
+            return modal;
+        }
+
+        window.openPasskeyEnrollModal = function () {
+            const modal = _ensurePasskeyEnrollModal();
+            const pinInput = document.getElementById('passkeyPinInput');
+            const status = document.getElementById('passkeyEnrollStatus');
+            if (status) { status.style.display = 'none'; status.textContent = ''; }
+            if (pinInput) pinInput.value = '';
+            if (modal) modal.classList.add('open');
+            setTimeout(function () { if (pinInput) pinInput.focus(); }, 100);
+        };
+
+        window.closePasskeyEnrollModal = function () {
+            const modal = document.getElementById('passkeyEnrollModal');
+            if (modal) modal.classList.remove('open');
+            const pinInput = document.getElementById('passkeyPinInput');
+            if (pinInput) pinInput.value = '';
+        };
+
+        window._passkeyEnrollSubmit = async function () {
+            const pinInput = document.getElementById('passkeyPinInput');
+            const status = document.getElementById('passkeyEnrollStatus');
+            const btn = document.getElementById('passkeyEnrollConfirmBtn');
+            const pin = pinInput ? pinInput.value.trim() : '';
+            if (!/^(?:\d{6}|\d{8})$/.test(pin)) {
+                if (status) { status.textContent = 'Enter your wallet PIN (6 or 8 digits).'; status.style.color = 'var(--red)'; status.style.display = 'block'; }
+                return;
+            }
+            if (btn) { btn.disabled = true; btn.textContent = 'Setting up…'; }
+            try {
+                // The keystore must be verified against this PIN before we wrap
+                // it — a wrong PIN must never be sealed into the passkey blob.
+                const saved = GMLocalWallet.getLocalKeystore();
+                const check = await GMLocalWallet.handleUnlock(pin, saved);
+                if (!check.ok) throw new Error(GMLocalWallet.describeUnlockError(check.err, saved));
+
+                const keystore = GMLocalWallet.getLocalKeystore();
+                const address = GMLocalWallet.expectedWalletAddress && GMLocalWallet.expectedWalletAddress();
+                const res = await window.GMLocalWalletPasskey.enroll({ keystore: keystore, pin: pin, address: address });
+                if (!res || !res.ok) {
+                    throw new Error((res && res.message) || 'Could not set up a passkey on this device. Your PIN still works.');
+                }
+                if (status) { status.textContent = '✅ Passkey enabled. You can now unlock with your device.'; status.style.color = '#34d399'; status.style.display = 'block'; }
+                await _refreshPasskeySettings();
+                setTimeout(window.closePasskeyEnrollModal, 1200);
+            } catch (err) {
+                if (status) { status.textContent = (err && err.message) || 'Could not enable the passkey.'; status.style.color = 'var(--red)'; status.style.display = 'block'; }
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Enable passkey'; }
+                if (pinInput) pinInput.value = '';
+            }
+        };
+
+        window.disablePasskeySignIn = function () {
+            if (!_passkeySupported()) return;
+            window.GMLocalWalletPasskey.revoke();
+            _refreshPasskeySettings();
         };
 
         // doSend / submitGcashCashout / the raffle signer live OUTSIDE this
