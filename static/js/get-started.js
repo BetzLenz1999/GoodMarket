@@ -121,6 +121,10 @@ function showWalletOptions() {
 let _lwMode = 'create';
 let _lwPendingSignup = null; // {address, keystore, mnemonic, message}
 let _lwRecoveryWords = '';   // current 12-word phrase, memory only
+// The PIN is cleared from the DOM by _lwCompleteLogin, but the passkey offer
+// runs AFTER that — so hold it (plus the keystore) here, memory only, and drop
+// it the moment the offer is answered or skipped.
+let _lwOfferPasskey = null;  // {pin, keystore, address, redirectTo}
 
 // Copy the recovery phrase straight to the clipboard. The words are
 // shown once and never stored server-side, so this is the user's only
@@ -169,6 +173,8 @@ function showLocalWalletPanel(mode) {
     document.getElementById('localWalletOptions').classList.add('visible');
     document.getElementById('lwPhraseStep').style.display = 'none';
     document.getElementById('lwUsernameStep').style.display = 'none';
+    const pkStep = document.getElementById('lwPasskeyStep');
+    if (pkStep) pkStep.style.display = 'none';
     if (mode === 'create' && !_lwPreflightAcked) {
         // Reminder gate: ask once per browser session before creating.
         // Unlock (existing users) never sees it.
@@ -420,7 +426,7 @@ async function finishLocalWalletSignup() {
         });
         const data = await resp.json();
         if (!resp.ok || !data.success) throw new Error(data.error || 'Login failed.');
-        await _lwCompleteLogin(data);
+        await _lwCompleteLogin(data, _lwPendingSignup.pin);
     } catch (err) {
         lwStatus('❌ ' + (err && err.message ? err.message : 'Login failed.'), 'error');
         btn.disabled = false;
@@ -458,10 +464,10 @@ async function _lwUnlockAccount(email, pin, btn) {
     });
     const data = await resp.json();
     if (!resp.ok || !data.success) throw new Error(data.error || 'Login failed.');
-    _lwCompleteLogin(data);
+    _lwCompleteLogin(data, pin);
 }
 
-async function _lwCompleteLogin(data) {
+async function _lwCompleteLogin(data, pin) {
     const pinEl = document.getElementById('lwPin');
     const confirmEl = document.getElementById('lwPinConfirm');
     if (pinEl) pinEl.value = '';
@@ -494,11 +500,128 @@ async function _lwCompleteLogin(data) {
         }
     } catch (e) {}
     if (needsUsername) {
+        // Hold the PIN + keystore (memory only) so the passkey offer after the
+        // username step needs no second PIN entry.
+        _lwOfferPasskey = {
+            pin: pin,
+            keystore: _lwKeystoreJson(),
+            address: data.wallet || '',
+            redirectTo: redirectTo
+        };
         _lwShowUsernameStep(redirectTo);
         return;
     }
+    // No username step — offer the passkey now, then redirect.
+    _lwOfferPasskey = {
+        pin: pin,
+        keystore: _lwKeystoreJson(),
+        address: data.wallet || '',
+        redirectTo: redirectTo
+    };
+    if (_lwCanOfferPasskey()) { _lwShowPasskeyStep(redirectTo); return; }
+    _lwClearPasskeyOffer();
     lwStatus('✅ Welcome! Redirecting…', 'success');
     setTimeout(function () { window.location.href = redirectTo; }, 900);
+}
+
+// The keystore JSON for the offer. Read from the local store (already saved by
+// create()/login) and fall back to the pending signup copy.
+function _lwKeystoreJson() {
+    const saved = GMLocalWallet.getLocalKeystore();
+    if (saved && saved.keystore) return saved.keystore;
+    return _lwPendingSignup ? _lwPendingSignup.keystore : null;
+}
+
+function _lwClearPasskeyOffer() {
+    _lwOfferPasskey = null;
+}
+
+// Show the passkey step ONLY when the device can actually create one. Many
+// wallet dApp browsers (embedded WebView) have no WebAuthn at all, and a
+// device with no screen lock has no platform authenticator — for those the
+// step is skipped entirely rather than shown as a dead end.
+function _lwCanOfferPasskey() {
+    if (!_lwOfferPasskey || !_lwOfferPasskey.pin || !_lwOfferPasskey.keystore) return false;
+    try {
+        if (!window.GMLocalWalletPasskey) return false;
+    } catch (_) { return false; }
+    // Already enrolled on this device? Nothing to offer.
+    try {
+        if (window.GMLocalWalletPasskey.hasStoredCredential()) return false;
+    } catch (_) {}
+    // Asked before? Ask once, never nag.
+    try {
+        if (localStorage.getItem('gm_passkey_offer_declined_v1') === '1') return false;
+    } catch (_) {}
+    return true;
+}
+
+function _lwShowPasskeyStep(redirectTo) {
+    const redirect = redirectTo || _lwOfferPasskey && _lwOfferPasskey.redirectTo || '/wallet';
+    ['lwCreateStep', 'lwPhraseStep', 'lwUsernameStep'].forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    const step = document.getElementById('lwPasskeyStep');
+    if (step) step.style.display = 'block';
+    const btn = document.getElementById('lwPasskeyEnableBtn');
+    if (btn) btn.disabled = false;
+    const st = document.getElementById('lwPasskeyStatus');
+    if (st) { st.className = 'status-message'; st.textContent = ''; }
+    // Probe support asynchronously; if the platform authenticator turns out to
+    // be unavailable, quietly continue to the redirect instead of stranding.
+    (async function () {
+        let ok = false;
+        try { ok = await window.GMLocalWalletPasskey.isSupported(); } catch (_) {}
+        if (!ok) {
+            lwStatus('✅ Welcome! Redirecting…', 'success');
+            _lwClearPasskeyOffer();
+            setTimeout(function () { window.location.href = redirect; }, 900);
+        }
+    })();
+}
+
+// The tap here IS the required WebAuthn user activation — this is why the
+// offer is a button in the flow rather than an automatic background call.
+async function submitLocalWalletPasskey() {
+    const btn = document.getElementById('lwPasskeyEnableBtn');
+    const st = document.getElementById('lwPasskeyStatus');
+    const offer = _lwOfferPasskey;
+    const redirect = (offer && offer.redirectTo) || '/wallet';
+    const say = function (msg, kind) {
+        if (!st) return;
+        st.className = 'status-message' + (kind ? ' ' + kind : '');
+        st.textContent = msg;
+    };
+    if (!offer || !offer.pin || !offer.keystore) {
+        say('Session expired — you can enable this later in Settings.', 'warning');
+        setTimeout(function () { window.location.href = redirect; }, 1200);
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Setting up…'; }
+    try {
+        const res = await window.GMLocalWalletPasskey.enroll({
+            keystore: offer.keystore,
+            pin: offer.pin,
+            address: offer.address
+        });
+        if (!res || !res.ok) throw new Error((res && res.message) || 'Could not set up a passkey on this device.');
+        say('✅ Done! You can unlock with your device from now on.', 'success');
+        _lwClearPasskeyOffer();
+        setTimeout(function () { window.location.href = redirect; }, 900);
+    } catch (err) {
+        // A failure must never block entry — show the reason and move on.
+        say((err && err.message) || 'Could not enable it. Your PIN still works.', 'warning');
+        if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+    }
+}
+
+// Declining is remembered so we never ask again on this device.
+function skipLocalWalletPasskey() {
+    try { localStorage.setItem('gm_passkey_offer_declined_v1', '1'); } catch (_) {}
+    const redirect = (_lwOfferPasskey && _lwOfferPasskey.redirectTo) || '/wallet';
+    _lwClearPasskeyOffer();
+    window.location.href = redirect;
 }
 
 let _lwUsernameRedirect = '/wallet';
@@ -518,6 +641,8 @@ function _lwShowUsernameStep(redirectTo) {
 }
 
 function skipLocalWalletUsername() {
+    // Skip username → still offer the passkey, then redirect.
+    if (_lwCanOfferPasskey()) { _lwShowPasskeyStep(_lwUsernameRedirect); return; }
     window.location.href = _lwUsernameRedirect;
 }
 
@@ -541,7 +666,9 @@ async function submitLocalWalletUsername() {
         if (!resp.ok || !data.success) throw new Error(data.error || 'Could not save username.');
         const savedUsername = data.username || username.toLowerCase();
         try { sessionStorage.setItem('username', savedUsername); } catch (e) {}
-        lwStatus('✅ Username set! Welcome, @' + savedUsername + ' — redirecting to your wallet…', 'success');
+        lwStatus('✅ Username set! Welcome, @' + savedUsername + '…', 'success');
+        // Offer the passkey before leaving the flow, then redirect.
+        if (_lwCanOfferPasskey()) { _lwShowPasskeyStep(_lwUsernameRedirect); return; }
         setTimeout(function () { window.location.href = _lwUsernameRedirect; }, 900);
     } catch (err) {
         lwStatus('❌ ' + (err && err.message ? err.message : 'Could not save username.'), 'error');
@@ -1999,6 +2126,8 @@ window.submitLocalWallet         = submitLocalWallet;
 window.finishLocalWalletSignup   = finishLocalWalletSignup;
 window.submitLocalWalletUsername = submitLocalWalletUsername;
 window.skipLocalWalletUsername   = skipLocalWalletUsername;
+window.submitLocalWalletPasskey  = submitLocalWalletPasskey;
+window.skipLocalWalletPasskey    = skipLocalWalletPasskey;
 window.lwCopyRecoveryWords       = lwCopyRecoveryWords;
 window.lwPinStrengthHint         = lwPinStrengthHint;
 window.syncReferralInputs        = syncReferralInputs;
