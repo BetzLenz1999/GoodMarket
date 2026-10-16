@@ -2192,6 +2192,7 @@
     <!-- ethers.js for in-browser wallet generation (local self-custodial accounts) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/local-wallet-passkey.js', v=ASSET_VERSION) }}"></script>
     <!-- Shared PWA install + service-worker module. Registers the SW at root
          scope (so it controls "/", the manifest start_url) and drives the
          "Install app" banner via data-gm-pwa-* attributes. -->
