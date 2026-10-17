@@ -83,6 +83,7 @@
         .b-done { background:rgba(148,163,184,.12); border-color:rgba(148,163,184,.3); color:#94a3b8; }
         .b-def { background:rgba(248,113,113,.13); border-color:rgba(248,113,113,.34); color:var(--err); }
         .b-you { background:rgba(45,212,191,.14); border-color:rgba(45,212,191,.4); color:var(--palu); }
+        .b-creator { background:rgba(251,191,36,.13); border-color:rgba(251,191,36,.36); color:var(--gold); }
 
         .btn { border:none; border-radius:11px; padding:.72rem 1rem; font-weight:700; font-size:.86rem;
             cursor:pointer; font-family:inherit; transition:transform .15s,opacity .15s; width:100%; color:var(--text); }
@@ -101,6 +102,10 @@
             font-size:.78rem; background:rgba(45,212,191,.14); color:var(--palu); border:1px solid rgba(45,212,191,.3); flex-shrink:0; }
         .slot.empty { border-style:dashed; opacity:.62; }
         .slot.empty .idx { background:rgba(255,255,255,.06); color:var(--muted); border-color:var(--card-brd); }
+        .slot-tags { display:flex; align-items:center; gap:.3rem; flex-shrink:0; }
+        .slot-act { flex-shrink:0; }
+        .slot-act-danger { border-color:rgba(248,113,113,.38); color:var(--err); }
+        .slot-act-danger:hover { background:rgba(248,113,113,.12); }
 
         .alert { border-radius:11px; padding:.8rem .95rem; font-size:.82rem; line-height:1.5; margin-bottom:.8rem; display:none; }
         .alert.show { display:block; }
@@ -284,6 +289,12 @@
                 <button class="btn btn-ghost sm" onclick="copyInvite()">Copy invite link</button>
                 <button class="btn btn-palu" id="activateBtn" onclick="activateGroup()">Activate Group</button>
             </div>
+            <p class="note" id="lobbyNote" style="display:none;">
+                Waiting on someone? A slot can be freed <strong>only before the group starts</strong>.
+                The group creator can remove a member who has been in for at least 2 days, and any
+                member can leave on their own. Once the group is activated the commitment is binding
+                and the only exit is a unanimous early settlement.
+            </p>
         </div>
 
         <div class="card">
@@ -366,6 +377,8 @@
         chainId: {{ chain_id|tojson }},
         members: {{ members|tojson }},
         allowedWeeks: {{ allowed_weeks|tojson }},
+        removalSupported: {{ 'true' if removal_supported else 'false' }},
+        removalGracePeriod: {{ removal_grace_period|tojson }},
         gracePeriod: {{ 2 * 24 * 3600 }},
         roundDuration: {{ 7 * 24 * 3600 }},
         walletconnectProjectId: {{ walletconnect_project_id|tojson }},
