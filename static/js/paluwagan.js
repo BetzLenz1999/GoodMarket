@@ -19,6 +19,12 @@
 (function () {
     "use strict";
 
+    // GM_PALUWAGAN_BOOT is emitted as an INLINE object in the page body. Read
+    // it through _syncBoot() rather than snapshotting it here: if the boot
+    // script is ever placed AFTER this bundle (it was — the create-group flow
+    // failed with "Please log in to sign this transaction." because WALLET and
+    // LOGIN_METHOD were captured as ""), every signing path would resolve the
+    // wrong signer forever. Same landmine that bit dapp-connect.js.
     var boot = window.GM_PALUWAGAN_BOOT || {};
     var WALLET = String(boot.wallet || "");
     var LOGIN_METHOD = String(boot.loginMethod || "").toLowerCase();
@@ -33,6 +39,28 @@
     var GRACE_PERIOD = Number(boot.gracePeriod || 2 * 24 * 3600);
     var ROUND_DURATION = Number(boot.roundDuration || 7 * 24 * 3600);
     var CELO_RPC_FALLBACKS = ["https://forno.celo.org", "https://1rpc.io/celo", "https://celo.publicnode.com"];
+
+    // Re-read the live boot object. Safe to call repeatedly; only overwrites a
+    // value when the boot config actually carries one.
+    function _syncBoot() {
+        var b = window.GM_PALUWAGAN_BOOT;
+        if (!b) return;
+        boot = b;
+        if (b.wallet != null) WALLET = String(b.wallet || "");
+        if (b.loginMethod != null) LOGIN_METHOD = String(b.loginMethod || "").toLowerCase();
+        if (b.contract != null) CONTRACT = String(b.contract || "");
+        if (b.deploymentBlock != null) DEPLOYMENT_BLOCK = Number(b.deploymentBlock || 0);
+        if (b.configured != null) CONFIGURED = b.configured !== false && !!CONTRACT;
+        if (b.gdContract != null) GD_CONTRACT = String(b.gdContract || GD_CONTRACT);
+        if (b.chainId != null) {
+            CHAIN_ID = Number(b.chainId || 42220);
+            CHAIN_HEX = "0x" + CHAIN_ID.toString(16);
+        }
+        if (b.members != null) MEMBERS = Number(b.members || 5);
+        if (Array.isArray(b.allowedWeeks) && b.allowedWeeks.length) ALLOWED_WEEKS = b.allowedWeeks;
+        if (b.gracePeriod != null) GRACE_PERIOD = Number(b.gracePeriod || GRACE_PERIOD);
+        if (b.roundDuration != null) ROUND_DURATION = Number(b.roundDuration || ROUND_DURATION);
+    }
 
     var DECIMALS = 18;
     var EXPLORER = "https://celoscan.io";
@@ -231,6 +259,7 @@
         });
     }
     function resolveSigner() {
+        _syncBoot();
         if (!WALLET) return Promise.reject(new Error("Please log in to sign this transaction."));
         if (isLocal()) return _localProvider().then(_bindSigner);
         return _awaitProviders().then(function (providers) {
@@ -888,6 +917,7 @@
 
     // ── boot ────────────────────────────────────────────────────────────────
     function _boot() {
+        _syncBoot();
         if (!CONFIGURED) {
             var box = $("groupList");
             if (box) box.innerHTML = '<div class="empty-state">The Paluwagan contract is not configured on this deployment yet.</div>';
