@@ -38,6 +38,11 @@
     var ALLOWED_WEEKS = Array.isArray(boot.allowedWeeks) && boot.allowedWeeks.length ? boot.allowedWeeks : [50, 100];
     var GRACE_PERIOD = Number(boot.gracePeriod || 2 * 24 * 3600);
     var ROUND_DURATION = Number(boot.roundDuration || 7 * 24 * 3600);
+    // Member removal is a v2 contract feature. The page must never offer a
+    // button that would revert on an older deployment, so this flag (set from
+    // a server-side bytecode probe) gates the whole remove/leave UI.
+    var REMOVAL_SUPPORTED = boot.removalSupported === true;
+    var REMOVAL_GRACE_PERIOD = Number(boot.removalGracePeriod || 2 * 24 * 3600);
     var CELO_RPC_FALLBACKS = ["https://forno.celo.org", "https://1rpc.io/celo", "https://celo.publicnode.com"];
 
     // Re-read the live boot object. Safe to call repeatedly; only overwrites a
@@ -60,6 +65,8 @@
         if (Array.isArray(b.allowedWeeks) && b.allowedWeeks.length) ALLOWED_WEEKS = b.allowedWeeks;
         if (b.gracePeriod != null) GRACE_PERIOD = Number(b.gracePeriod || GRACE_PERIOD);
         if (b.roundDuration != null) ROUND_DURATION = Number(b.roundDuration || ROUND_DURATION);
+        if (b.removalSupported != null) REMOVAL_SUPPORTED = b.removalSupported === true;
+        if (b.removalGracePeriod != null) REMOVAL_GRACE_PERIOD = Number(b.removalGracePeriod || REMOVAL_GRACE_PERIOD);
     }
 
     var DECIMALS = 18;
@@ -85,6 +92,10 @@
         "function getGroup(uint256 groupId) view returns (string name, address token, uint256 contributionAmount, uint256 weeks, uint8 status, uint256 currentRound, uint256 roundStartAt, uint256 memberCount, uint256 roundDeadline, uint256 graceDeadline)",
         "function getGroupName(uint256 groupId) view returns (string)",
         "function getGroupIdByName(string name) view returns (uint256)",
+        "function getGroupCreator(uint256 groupId) view returns (address)",
+        "function memberJoinedAt(uint256 groupId, address member) view returns (uint256)",
+        "function leaveGroup(uint256 groupId)",
+        "function removeMember(uint256 groupId, address member)",
         "function getMembers(uint256 groupId) view returns (address[5])",
         "function getPayoutOrder(uint256 groupId) view returns (uint8[5])",
         "function recipientOf(uint256 groupId, uint256 round) view returns (address)",
@@ -705,15 +716,33 @@
         var lobby = $("lobbyList");
         if (lobby) {
             var html = "";
+            var creator = _toLower(g.creator);
+            var forming = g.status === "forming";
+            var removable = (g.can_remove || []).map(_toLower);
             for (var i = 0; i < MEMBERS; i++) {
                 var m = (g.members || [])[i];
                 if (m) {
-                    var isYou = _toLower(m) === you;
-                    var isDef = g.member_defaults && g.member_defaults[_toLower(m)];
+                    var ml = _toLower(m);
+                    var isYou = ml === you;
+                    var isDef = g.member_defaults && g.member_defaults[ml];
+                    var tags = "";
+                    if (isYou) tags += '<span class="badge b-you">You</span>';
+                    else tags += '<span class="badge ' + (isDef ? 'b-def' : 'b-active') + '">' + (isDef ? 'Defaulted' : 'Joined') + '</span>';
+                    if (creator && ml === creator) tags += '<span class="badge b-creator">Creator</span>';
+                    // Remove is creator-only, Forming-only, past the grace
+                    // period, and never for yourself. Both controls are hidden
+                    // entirely when the deployed contract lacks v2 support.
+                    var action = "";
+                    if (REMOVAL_SUPPORTED && forming) {
+                        if (isYou && g.can_leave) {
+                            action = '<button class="btn btn-ghost sm slot-act" onclick="leaveGroup()">Leave</button>';
+                        } else if (!isYou && removable.indexOf(ml) !== -1) {
+                            action = '<button class="btn btn-ghost sm slot-act slot-act-danger" onclick="removeMember(\'' + esc(m) + '\')">Remove</button>';
+                        }
+                    }
                     html += '<div class="slot"><span class="idx">' + (i + 1) + '</span>' +
-                        '<span class="mono">' + esc(shortAddr(m)) + '</span>' +
-                        (isYou ? '<span class="badge b-you" style="margin-left:auto;">You</span>'
-                               : '<span class="badge ' + (isDef ? 'b-def' : 'b-active') + '" style="margin-left:auto;">' + (isDef ? 'Defaulted' : 'Joined') + '</span>') +
+                        '<span class="mono" style="flex:1;min-width:0;">' + esc(shortAddr(m)) + '</span>' +
+                        '<span class="slot-tags">' + tags + '</span>' + action +
                         '</div>';
                 } else {
                     html += '<div class="slot empty"><span class="idx">' + (i + 1) + '</span><span class="note">Waiting for member...</span></div>';
@@ -721,6 +750,10 @@
             }
             lobby.innerHTML = html;
         }
+        // The removal explanation is only relevant while the group is still
+        // forming AND the deployed contract actually supports freeing a slot.
+        var ln = $("lobbyNote");
+        if (ln) ln.style.display = (REMOVAL_SUPPORTED && forming) ? "block" : "none";
         var ab = $("activateBtn");
         if (ab) ab.disabled = !(g.status === "forming" && g.member_count >= MEMBERS && _isMember(g));
 
@@ -839,6 +872,42 @@
             box.innerHTML = '<div class="empty-state">Could not load payouts.</div>';
         }
     }
+
+    // ── slot removal (v2 contracts only) ───────────────────────────────────
+    // A member who has not started yet may free their own slot; the creator
+    // may free a quiet member's slot after the grace period. Both are
+    // Forming-only on-chain, so the group cannot be broken once it starts.
+    window.leaveGroup = async function () {
+        if (busy || !currentGroupId) return;
+        if (!window.confirm("Leave this group? Your slot will be freed for someone else.")) return;
+        var alertEl = $("pageAlert");
+        busy = true;
+        try {
+            var s = await resolveSigner();
+            var hash = await _signTimeout(_sendContractCall(s, "leaveGroup", [currentGroupId]), 180000);
+            alertBox(alertEl, "info", "Leaving group... " + hash);
+            await _waitReceipt(s.provider, hash);
+            alertBox(alertEl, "success", "You left the group. Your slot is now open for another member.");
+            setTimeout(refreshGroup, 1200);
+        } catch (e) { alertBox(alertEl, "error", _friendlyError(e)); }
+        finally { busy = false; }
+    };
+
+    window.removeMember = async function (member) {
+        if (busy || !currentGroupId || !member) return;
+        if (!window.confirm("Remove " + shortAddr(member) + " from this group? Their slot will be freed for someone else.")) return;
+        var alertEl = $("pageAlert");
+        busy = true;
+        try {
+            var s = await resolveSigner();
+            var hash = await _signTimeout(_sendContractCall(s, "removeMember", [currentGroupId, member]), 180000);
+            alertBox(alertEl, "info", "Removing member... " + hash);
+            await _waitReceipt(s.provider, hash);
+            alertBox(alertEl, "success", "Member removed. The slot is now open - share the invite link.");
+            setTimeout(refreshGroup, 1200);
+        } catch (e) { alertBox(alertEl, "error", _friendlyError(e)); }
+        finally { busy = false; }
+    };
 
     window.activateGroup = async function () {
         if (busy || !currentGroupId) return;
