@@ -209,6 +209,10 @@
         <div class="card palu">
             <div class="card-title">Create a paluwagan group</div>
 
+            <label class="field" for="createName">Group name (this becomes your link)</label>
+            <input id="createName" type="text" maxlength="32" placeholder="e.g. teambetz" autocapitalize="off" autocomplete="off" spellcheck="false" oninput="onNameInput()" />
+            <p class="note" id="createNameNote" style="margin-top:.3rem;">3&ndash;32 characters. Letters, numbers and &ndash; only. Your invite link will be <span id="createNameLink">/paluwagan/&hellip;</span></p>
+
             <label class="field" for="createToken">Token</label>
             <select id="createToken"></select>
 
@@ -243,8 +247,11 @@
     <div id="secJoin" class="section">
         <div class="card palu">
             <div class="card-title">Join a group</div>
-            <label class="field" for="joinId">Group id</label>
+            <label class="field" for="joinName">Group name or link</label>
+            <input id="joinName" type="text" maxlength="64" placeholder="e.g. teambetz" autocapitalize="off" autocomplete="off" spellcheck="false" />
+            <label class="field" for="joinId">Group id (optional)</label>
             <input id="joinId" type="number" min="1" step="1" placeholder="e.g. 3" />
+            <p class="note">You can paste the whole invite link (e.g. goodmarketph.live/paluwagan/teambetz) &mdash; the group is looked up on-chain.</p>
             <div class="btn-row" style="margin-top:1rem;">
                 <button class="btn btn-ghost" onclick="showOverview()">Cancel</button>
                 <button class="btn btn-palu" onclick="previewJoin()">Preview Group</button>
@@ -355,6 +362,7 @@
         wallet: {{ wallet|tojson }},
         isGuest: {{ 'true' if is_guest else 'false' }},
         loginMethod: {{ login_method|tojson }},
+        joinName: {{ join_name|tojson }},
         contract: {{ paluwagan_contract|tojson }},
         deploymentBlock: {{ paluwagan_deployment_block|tojson }},
         configured: {{ 'true' if paluwagan_configured else 'false' }},
