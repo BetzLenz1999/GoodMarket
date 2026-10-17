@@ -33,11 +33,24 @@ const CELO_NETWORK = Object.freeze({
 // two or three — the reported "parang spamming". The token is now offered
 // by an explicit, user-initiated "Add G$ to my wallet" button on the wallet
 // page (wallet-main.js `addGdTokenToWallet`), never automatically.
+// Background scroll lock while the modal is open. Without it the page behind
+// the sheet kept scrolling on touch, which reads as "the modal is broken".
+// Reference-counted so nested open/close calls cannot unlock too early.
+let _gmModalLockCount = 0;
+function _setBodyScrollLock(locked) {
+    _gmModalLockCount = Math.max(0, _gmModalLockCount + (locked ? 1 : -1));
+    const on = _gmModalLockCount > 0;
+    document.documentElement.style.overflow = on ? 'hidden' : '';
+    document.body.style.overflow = on ? 'hidden' : '';
+}
+
 function _showWalletModalNow() {
     showWalletOptions();
     hidePrivyRetry();
     window.restoreWalletModalAfterPrivy?.(false);
-    document.getElementById('walletModal').classList.add('active');
+    const _wm = document.getElementById('walletModal');
+    if (_wm && !_wm.classList.contains('active')) _setBodyScrollLock(true);
+    _wm.classList.add('active');
     // Re-apply any referral code captured from the URL / sessionStorage
     // so the local-wallet create form keeps the referral context.
     try { initReferralFromUrl(); } catch (e) {}
@@ -76,12 +89,15 @@ async function openWalletModal() {
 }
 
 function closeWalletModal() {
-    document.getElementById('walletModal').classList.remove('active');
+    const _wm = document.getElementById('walletModal');
+    if (_wm && _wm.classList.contains('active')) _setBodyScrollLock(false);
+    _wm.classList.remove('active');
 }
 
 function hideWalletModalForPrivy() {
     const modal = document.getElementById('walletModal');
     if (!modal) return;
+    if (modal.classList.contains('active')) _setBodyScrollLock(false);
     modal.classList.remove('active');
     modal.setAttribute('aria-hidden', 'true');
 }
@@ -90,7 +106,10 @@ function restoreWalletModalAfterPrivy(showModal = true) {
     const modal = document.getElementById('walletModal');
     if (!modal) return;
     modal.removeAttribute('aria-hidden');
-    if (showModal) modal.classList.add('active');
+    if (showModal) {
+        if (!modal.classList.contains('active')) _setBodyScrollLock(true);
+        modal.classList.add('active');
+    }
 }
 
 window.hideWalletModalForPrivy = hideWalletModalForPrivy;
