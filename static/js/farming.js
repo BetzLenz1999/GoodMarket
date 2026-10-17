@@ -172,6 +172,18 @@
             GMWalletConnect.prefersWcSigning();
     };
 
+    // GMWalletConnect.getProvider() returns the EIP-1193 provider
+    // SYNCHRONOUSLY (wc-bridge.js builds it on first call and returns the
+    // object). Calling .then() on it threw
+    // "GMWalletConnect.getProvider(...).then is not a function" and every
+    // WalletConnect farm action died before the wallet was ever prompted.
+    // Tolerate both shapes so a future async getProvider can't re-break this.
+    function _wcProviderPromise() {
+        return Promise.resolve().then(function () {
+            return GMWalletConnect.getProvider();
+        });
+    }
+
     window.__farmEip6963Providers = window.__farmEip6963Providers || [];
     (function _initEip6963() {
         try {
@@ -274,7 +286,7 @@
         return _awaitProviders().then(function (providers) {
             if (!providers.length) {
                 if (prefersWc()) {
-                    return GMWalletConnect.getProvider().then(function (wcProvider) {
+                    return _wcProviderPromise().then(function (wcProvider) {
                         var p = new ethers.BrowserProvider(wcProvider);
                         return p.getSigner().then(function (signer) {
                             if (_toLower(signer.address) !== _toLower(WALLET)) {
@@ -1169,6 +1181,9 @@
 
     window.GMFarm = {
         init: init,
+        startFarm: startFarm,
+        sellEggs: sellEggs,
+        closeFarm: closeFarm,
         refreshFarm: refreshFarm,
         renderHistory: renderHistory,
         validateFarmAmount: validateFarmAmount,
