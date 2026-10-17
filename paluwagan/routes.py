@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from flask import Blueprint, jsonify, render_template, request, session
 
@@ -40,6 +41,11 @@ CHAIN_ID = chain.CHAIN_ID
 ALLOWED_WEEKS = (50, 100)
 MEMBERS = chain.MEMBERS
 
+# Group slugs are the shareable link (/paluwagan/teambetz). The contract is the
+# authority (it rejects anything else); this mirrors it so a bad URL is a clean
+# 404 rather than a pointless RPC round trip.
+NAME_RE = re.compile(r"^[A-Za-z0-9-]{3,32}$")
+
 
 def _session_wallet():
     wallet = session.get("wallet") or session.get("wallet_address")
@@ -57,8 +63,8 @@ def _feature_enabled():
 
 # ── Page ─────────────────────────────────────────────────────────────────────
 
-@paluwagan_bp.route("/")
-def paluwagan_home():
+def _render_paluwagan(join_name=""):
+    """Render the paluwagan page. `join_name` is a /paluwagan/<name> deep link."""
     wallet = session.get("wallet") or session.get("wallet_address")
     verified = session.get("verified") or session.get("ubi_verified")
     is_guest = not (wallet and verified)
@@ -78,6 +84,7 @@ def paluwagan_home():
         "paluwagan.html",
         wallet=wallet,
         is_guest=is_guest,
+        join_name=join_name,
         paluwagan_contract=chain.PALUWAGAN_CONTRACT_ADDRESS,
         paluwagan_deployment_block=chain.PALUWAGAN_DEPLOYMENT_BLOCK,
         paluwagan_configured=chain.is_configured(),
@@ -97,6 +104,24 @@ def paluwagan_home():
         # (that would start wc-bridge's expiry guard and bounce the guest).
         login_method=session.get("login_method", ""),
     )
+
+
+@paluwagan_bp.route("/")
+def paluwagan_home():
+    return _render_paluwagan()
+
+
+@paluwagan_bp.route("/<name>")
+def paluwagan_by_name(name):
+    """Shareable group link: /paluwagan/teambetz.
+
+    The page opens the join flow with the group pre-filled. The name is passed
+    through as-is; the frontend resolves it on-chain (getGroupIdByName), so the
+    contract — not the URL — decides whether the group exists.
+    """
+    if not NAME_RE.match(name or ""):
+        return _render_paluwagan()
+    return _render_paluwagan(join_name=name)
 
 
 # ── Read-only API ────────────────────────────────────────────────────────────
@@ -160,6 +185,29 @@ def api_group(group_id):
         logger.warning("paluwagan: group %s read failed: %s", group_id, e)
         return jsonify({"error": "chain_read_failed"}), 200
     return jsonify({"group": group})
+
+
+@paluwagan_bp.route("/api/resolve/<name>")
+def api_resolve_name(name):
+    """Resolve a group name to its id + live overview (deep-link helper).
+
+    Public: a shareable link must be previewable before the visitor has joined,
+    and the contract is the only source of truth for what exists.
+    """
+    guard = _require_configured()
+    if guard:
+        return guard
+    if not NAME_RE.match(name or ""):
+        return jsonify({"error": "bad_name"}), 400
+    wallet = _session_wallet()
+    try:
+        group = chain.get_group_by_name(name, wallet)
+    except Exception as e:
+        logger.warning("paluwagan: resolve %s failed: %s", name, e)
+        return jsonify({"error": "chain_read_failed"}), 200
+    if not group:
+        return jsonify({"error": "not_found", "name": name}), 404
+    return jsonify({"group": group, "name": name})
 
 
 @paluwagan_bp.route("/api/group/<int:group_id>/contributions")
