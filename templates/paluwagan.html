@@ -349,15 +349,11 @@
 {% include "_get_started_modal.html" %}
 {% endif %}
 
-<script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"
-        integrity="sha384-VxRGsQMQ8CG4l2gVN44TCDmNY5cdlxbSvejrgmWxcLKHft0Q3XQDbeuJ9aot14mpNuRWGtI//WKraedDGNZ+g=="
-        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
-<script src="{{ url_for('static', filename='js/local-wallet-passkey.js', v=ASSET_VERSION) }}"></script>
-<script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
-<script src="{{ url_for('static', filename='js/paluwagan.js', v=ASSET_VERSION) }}"></script>
 <script>
+    // Must precede paluwagan.js: the bundle reads this to resolve the signer
+    // (login method + session wallet). Emitting it after the bundle left WALLET
+    // and LOGIN_METHOD empty, so every action failed with "Please log in to
+    // sign this transaction." even for a logged-in user.
     window.GM_PALUWAGAN_BOOT = {
         wallet: {{ wallet|tojson }},
         isGuest: {{ 'true' if is_guest else 'false' }},
@@ -381,5 +377,13 @@
     });
     {% endif %}
 </script>
+<script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"
+        integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/local-wallet-passkey.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/paluwagan.js', v=ASSET_VERSION) }}"></script>
 </body>
 </html>
