@@ -576,11 +576,12 @@ def inject_feature_visibility():
         chatroom_visible = False
         goodmarket_agent_visible = False
         dapp_connect_visible = False
+        paluwagan_visible = True
         if supabase:
             result = safe_supabase_operation(
                 lambda: supabase.table('maintenance_settings')
                     .select('feature_name,is_maintenance')
-                    .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_utility', 'chatroom_feature', 'goodmarket_agent_feature', 'dapp_connect_feature'])
+                    .in_('feature_name', ['swap_feature', 'wallet_feature', 'savings_feature', 'store_topup', 'store_giftcard', 'store_utility', 'chatroom_feature', 'goodmarket_agent_feature', 'dapp_connect_feature', 'paluwagan_feature'])
                     .execute(),
                 operation_name="context processor feature visibility"
             )
@@ -609,13 +610,16 @@ def inject_feature_visibility():
                         goodmarket_agent_visible = val
                     elif fn == 'dapp_connect_feature':
                         dapp_connect_visible = val
+                    elif fn == 'paluwagan_feature':
+                        paluwagan_visible = val
         flags = {"swap_visible": swap_visible, "wallet_visible": wallet_visible,
                  "savings_visible": savings_visible,
                  "topup_visible": topup_visible, "giftcard_visible": giftcard_visible,
                  "utility_visible": utility_visible,
                  "chatroom_visible": chatroom_visible,
                  "goodmarket_agent_visible": goodmarket_agent_visible,
-                 "dapp_connect_visible": dapp_connect_visible}
+                 "dapp_connect_visible": dapp_connect_visible,
+                 "paluwagan_visible": paluwagan_visible}
         _feature_visibility_cache["data"] = flags
         _feature_visibility_cache["expires_at"] = now + 15
         return flags
@@ -624,7 +628,8 @@ def inject_feature_visibility():
                 "topup_visible": True, "giftcard_visible": True, "utility_visible": True,
                 "chatroom_visible": False,
                 "goodmarket_agent_visible": False,
-                "dapp_connect_visible": False}
+                "dapp_connect_visible": False,
+                "paluwagan_visible": True}
 
 # Initialize Telegram Task
 from telegram_task import init_telegram_task
@@ -738,6 +743,19 @@ if init_savings(app):
     logger.info("✅ G$ Savings initialized")
 else:
     logger.error("❌ G$ Savings initialization failed")
+
+# Initialize Community Rotating Savings (Paluwagan) — separate from G$ Savings.
+# Fully on-chain: no scheduler, no database, no privileged key. The blueprint
+# is read-only; every financial action is user-signed in the browser.
+logger.info("🤝 Initializing Paluwagan (Community Savings) system...")
+try:
+    from paluwagan import init_paluwagan
+    if init_paluwagan(app):
+        logger.info("✅ Paluwagan (Community Savings) initialized")
+    else:
+        logger.error("❌ Paluwagan initialization failed")
+except Exception as e:
+    logger.error(f"❌ Paluwagan initialization failed: {e}")
 
 # Initialize Chicken Farming
 logger.info("🐔 Initializing Chicken Farming system...")
