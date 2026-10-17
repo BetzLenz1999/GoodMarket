@@ -9,12 +9,12 @@
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="GoodMarket">
     <meta property="og:title" content="GoodMarket — Community Wallet for the G$ Token">
-    <meta property="og:description" content="Quizzes, daily tasks, minigames & more — earn real G$ and cash out to GCash. Gas-free, community-built on Celo.">
+    <meta property="og:description" content="Quizzes, daily tasks, minigames & more — earn real G$ and manage it in one wallet. Gas-free, community-built on Celo.">
     <meta property="og:image" content="{{ request.url_root }}static/icons/goodmarket-icon.png">
     <meta property="og:url" content="{{ request.url_root }}">
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="GoodMarket — Community Wallet for the G$ Token">
-    <meta name="twitter:description" content="Quizzes, daily tasks, minigames & more — earn real G$ and cash out to GCash. Gas-free, community-built on Celo.">
+    <meta name="twitter:description" content="Quizzes, daily tasks, minigames & more — earn real G$ and manage it in one wallet. Gas-free, community-built on Celo.">
     <meta name="twitter:image" content="{{ request.url_root }}static/icons/goodmarket-icon.png">
     <!-- Telegram Mini App SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -76,8 +76,14 @@
             color: #e2e8f0;
             overflow-x: hidden;
             overflow-y: auto;
-            width: 100vw;
+            /* 100vw includes the scrollbar width, which forced a horizontal
+               scroll that overflow-x:hidden then had to hide. 100% is the
+               content box. */
+            width: 100%;
+            /* dvh shrinks with the mobile address bar; 100vh does not, so the
+               layout jumped when the bar appeared. */
             min-height: 100vh;
+            min-height: 100dvh;
             margin: 0;
             padding: 0;
             position: relative;
@@ -227,14 +233,6 @@
 
         .gm-loader-dots span:nth-child(2) { animation-delay: 0.16s; }
         .gm-loader-dots span:nth-child(3) { animation-delay: 0.32s; }
-
-        .gm-loader-credit {
-            margin-top: 0.7rem;
-            color: rgba(219, 234, 254, 0.55);
-            font-size: clamp(0.72rem, 2vw, 0.85rem);
-            font-weight: 600;
-            letter-spacing: 0.01em;
-        }
 
         @keyframes gmLoaderSpin {
             to { transform: rotate(360deg); }
@@ -1111,16 +1109,15 @@
         }
 
         .submenu-wrapper {
-            background: rgba(11, 15, 42, 0.95);
-            border: 1px solid rgba(124, 58, 237, 0.25);
-            border-radius: 14px;
-            max-width: 700px;
-            margin: 0 auto 1.5rem auto;
-            padding: 1rem 1.25rem;
-            box-shadow: 0 8px 32px rgba(124, 58, 237, 0.18);
+            background: rgba(11, 15, 42, 0.92);
+            border-bottom: 1px solid rgba(124, 58, 237, 0.22);
+            padding: 0.6rem 1rem;
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            animation: submenuDrop 0.25s ease;
+            position: sticky;
+            /* Sits directly under the sticky header (which is ~56px tall). */
+            top: 56px;
+            z-index: 90;
         }
 
         @keyframes submenuDrop {
@@ -1129,36 +1126,32 @@
         }
 
         .submenu-label {
-            font-size: 0.78rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: rgba(167, 139, 250, 0.7);
-            margin-bottom: 0.65rem;
-            padding-left: 0.25rem;
+            display: none;
         }
 
         .submenu-nav {
-            flex-direction: column;
-            gap: 0.35rem !important;
+            flex-direction: row;
+            justify-content: flex-start;
+            gap: 0.4rem !important;
+            scroll-snap-type: x proximity;
         }
 
         .submenu-nav .section-tab {
             border-bottom: none !important;
-            border-radius: 9px;
+            border-radius: 999px;
             text-align: left;
-            padding: 0.7rem 1rem;
+            padding: 0.45rem 0.85rem;
+            white-space: nowrap;
+            flex: 0 0 auto;
+            scroll-snap-align: start;
             opacity: 1 !important;
             animation: none !important;
         }
 
         .submenu-nav .section-tab.active {
-            background: rgba(124, 58, 237, 0.18);
-            color: #a78bfa;
-        }
-
-        .main-menu-btn {
-            position: relative;
+            background: rgba(251, 191, 36, 0.16);
+            color: var(--action);
+            border-color: rgba(251, 191, 36, 0.45) !important;
         }
 
         .section-nav {
@@ -1823,10 +1816,14 @@
         .cert-slide img {
             width: 100%;
             display: block;
+            /* Cap the height so one portrait certificate cannot stretch the
+               whole section past the fold. */
+            max-height: min(70vh, 560px);
             border-radius: 14px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.55);
             object-fit: contain;
-            background: #0f172a;
+            background: var(--bg, #0f172a);
+            cursor: zoom-in;
         }
         .cert-slide-caption {
             position: absolute;
@@ -1872,6 +1869,47 @@
         .cert-dot.active {
             background: #34d399;
             transform: scale(1.35);
+        }
+        /* Full-screen certificate viewer — certificates are dense documents and
+           could not be read at carousel size (no zoom was possible at all). */
+        .cert-lightbox {
+            position: fixed;
+            inset: 0;
+            z-index: 100000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(3, 6, 20, 0.94);
+            padding: 1rem;
+            cursor: zoom-out;
+        }
+        .cert-lightbox.open { display: flex; }
+        .cert-lightbox img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 10px;
+            box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+        }
+        .cert-lightbox-close {
+            position: absolute;
+            top: 0.85rem;
+            right: 0.85rem;
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            font-size: 1.3rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+        .cert-lightbox-hint {
+            position: absolute;
+            bottom: 1rem; left: 0; right: 0;
+            text-align: center;
+            color: var(--text-dim, rgba(226,232,240,0.72));
+            font-size: 0.8rem;
         }
         @media (max-width: 600px) {
             .cert-carousel-section { padding: 1.25rem 0.5rem 1rem; }
@@ -1931,6 +1969,16 @@
             --sheet-dim:    #6b7280;
 
             --card-shadow: 0 18px 44px rgba(4, 7, 26, 0.5);
+
+            /* Sticky header height — used by scroll-padding so an anchor jump
+               never hides a panel title under the header. */
+            --header-h: 56px;
+        }
+
+        /* Anchor/section jumps stop clear of the sticky header. */
+        html {
+            scroll-padding-top: calc(var(--header-h) + 64px);
+            scroll-behavior: smooth;
         }
 
         /* ── Canvas: one gradient + one soft glow (was 5 stacked) ── */
@@ -1965,6 +2013,30 @@
             border: 1px solid var(--border);
             color: var(--text-dim);
         }
+        /* Loader text was the last blue hold-out (#2563eb title, #60a5fa dots,
+           blue-tinted subtitle) on an otherwise gold/indigo screen. */
+        .gm-loader-title {
+            color: var(--action);
+            text-shadow: 0 0 26px rgba(251, 191, 36, 0.35), 0 8px 28px rgba(120, 53, 15, 0.45);
+        }
+        .gm-loader-subtitle { color: var(--text-dim); }
+        .gm-loader-dots span { background: var(--action); }
+
+        /* ── Certificate carousel: green accents → brand gold ── */
+        .cert-carousel-title span { color: var(--action); }
+        .cert-caption-amount { color: var(--action); }
+        .cert-dot { background: rgba(251, 191, 36, 0.3); }
+        .cert-dot.active { background: var(--action); }
+
+        /* ── Feature showcase "books": the blue/green pair was two extra hues
+           competing with the gold action colour. Muted indigo + gold. ── */
+        .fs-book-b1 {
+            background: linear-gradient(160deg, var(--primary) 0%, var(--primary-2) 100%);
+        }
+        .fs-book-b3 {
+            background: linear-gradient(160deg, var(--action) 0%, var(--action-2) 100%);
+        }
+        .fs-module-pill .dot { background: var(--action); box-shadow: 0 0 8px rgba(251,191,36,0.8); }
 
         /* ── Header ── */
         .header {
@@ -2217,13 +2289,12 @@
         <div class="gm-loader-card">
             <div class="gm-loader-orb" aria-hidden="true"><span class="gm-loader-gs">G$</span></div>
             <h1 class="gm-loader-title">Welcome to GoodMarket</h1>
-            <p class="gm-loader-subtitle">Claim up to 100+ G$ daily by claiming UBI, taking quizzes and playing games.</p>
+            <p class="gm-loader-subtitle">Your everyday G$ wallet on Celo — earn, save, swap and spend.</p>
             <div class="gm-loader-mosaic" aria-hidden="true">
                 <span class="gm-loader-chip">📚</span>
                 <span class="gm-loader-chip is-game">🎮</span>
                 <span class="gm-loader-chip is-phone">📡</span>
             </div>
-            <p class="gm-loader-credit">Developed by MOB Labs Team &middot; Contributors: Betz Lenteria &amp; Omar Jauro</p>
             <div class="gm-loader-dots" aria-hidden="true"><span></span><span></span><span></span></div>
         </div>
     </div>
@@ -2279,10 +2350,10 @@
                 <span class="hero-eyebrow"><span class="pulse-dot"></span>Community-built · Live on Celo</span>
                 <h1 class="hero-title">
                     <span class="line">Earn <span class="highlight">G$</span> every day.</span>
-                    <span class="line">Cash out to <span class="highlight">GCash</span>.</span>
+                    <span class="line">Save, swap &amp; spend.</span>
                 </h1>
                 <p class="hero-description">
-                    Answer quizzes, finish daily social tasks, and play minigames to earn real G$ tokens on the GoodDollar protocol. Rewards land straight in your wallet — then cash out to GCash whenever you like.
+                    Answer quizzes, finish daily social tasks, and play minigames to earn real G$ tokens on the GoodDollar protocol. Rewards land straight in your wallet — ready to save, swap, or spend.
                 </p>
                 <p class="hero-tagline-tl">
                     🇵🇭 Libreng G$ araw-araw — kumita habang natututo, diretso sa wallet mo.
@@ -2298,7 +2369,7 @@
                 <div class="hero-checks">
                     <span class="hero-check">Gas-free claims</span>
                     <span class="hero-check">On-chain rewards</span>
-                    <span class="hero-check">GCash cash-out</span>
+                    <span class="hero-check">Save &amp; swap</span>
                 </div>
                 <p class="hero-community-note">
                     🤝 Independent community project for users of the <strong>G$</strong> token on the GoodDollar protocol — easing claims, swaps &amp; onboarding. Not an official GoodDollar product.
@@ -2427,17 +2498,17 @@
             </div>
             <div class="hiw-step">
                 <span class="hiw-step-num">3</span>
-                <div class="hiw-step-title">Cash out to GCash</div>
-                <p class="hiw-step-desc">Convert your G$ to pesos (100 G$ = ₱1) and receive it via GCash. Minimum 5,000 G$ per cashout.</p>
+                <div class="hiw-step-title">Save, swap &amp; spend</div>
+                <p class="hiw-step-desc">Grow your G$ in savings, swap between tokens, or send it to anyone — all from one wallet on Celo.</p>
             </div>
         </div>
     </section>
 
-    <!-- Main Menu Submenu — appears directly below hero when Main Menu is clicked -->
-    <div class="submenu-wrapper" id="main-menu-submenu" style="display:none;">
-        <div class="submenu-label">Select a section:</div>
-        <nav class="section-nav submenu-nav">
-            <button class="section-tab" id="tab-what-is" onclick="showSection('what-is')">💰 What is GoodMarket?</button>
+    <!-- Section navigation — the single entry point to every homepage panel. -->
+    <div class="submenu-wrapper" id="main-menu-submenu">
+        <div class="submenu-label">Explore GoodMarket</div>
+        <nav class="section-nav submenu-nav" aria-label="Homepage sections">
+            <button class="section-tab active" id="tab-what-is" onclick="showSection('what-is')">💰 What is GoodMarket?</button>
             <button class="section-tab" id="tab-learn-earn" onclick="showSection('learn-earn')">🎓 Learn &amp; Earn</button>
             <button class="section-tab" id="tab-daily-tasks" onclick="showSection('daily-tasks')">📱 Daily Social Tasks</button>
             <button class="section-tab" id="tab-minigames" onclick="showSection('minigames')">🎮 Play &amp; Earn</button>
@@ -2468,19 +2539,19 @@
             <div class="earn-card">
                 <div class="earn-card-icon">📱</div>
                 <div class="earn-card-title">Daily Tasks</div>
-                <span class="earn-card-badge" style="background:linear-gradient(135deg,#10b981,#059669);color:white;">Available Every Day</span>
+                <span class="earn-card-badge" style="background:linear-gradient(135deg,#fbbf24,#f59e0b);color:white;">Available Every Day</span>
                 <p class="earn-card-desc">Complete simple social media tasks daily across Telegram, Twitter/X, and Facebook.</p>
                 <ul class="earn-card-list">
-                    <li>🟢 <strong style="color:#10b981;">100 G$</strong> — Telegram tasks</li>
-                    <li>🟢 <strong style="color:#10b981;">100 G$</strong> — Twitter/X tasks</li>
-                    <li>🟢 <strong style="color:#10b981;">100 G$</strong> — Facebook tasks</li>
+                    <li>🟢 <strong style="color:#fbbf24;">100 G$</strong> — Telegram tasks</li>
+                    <li>🟢 <strong style="color:#fbbf24;">100 G$</strong> — Twitter/X tasks</li>
+                    <li>🟢 <strong style="color:#fbbf24;">100 G$</strong> — Facebook tasks</li>
                 </ul>
                 <p class="earn-card-note">⏰ New tasks reset every 72 hours</p>
             </div>
             <div class="earn-card">
                 <div class="earn-card-icon">🎓</div>
                 <div class="earn-card-title">Learn & Earn Quizzes</div>
-                <span class="earn-card-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;">Daily Quizzes</span>
+                <span class="earn-card-badge" style="background:linear-gradient(135deg,#fbbf24,#f59e0b);color:white;">Daily Quizzes</span>
                 <p class="earn-card-desc">Test your knowledge about GoodDollar and blockchain technology and get rewarded.</p>
                 <ul class="earn-card-list">
                     <li>🟡 <strong style="color:#f59e0b;">200 G$</strong> — Per correct answer</li>
@@ -2530,7 +2601,7 @@
                 <div class="earn-card-title">Twitter / X Tasks</div>
                 <p class="earn-card-desc">Post about GoodDollar on Twitter/X — share a tweet, retweet, or tag the community. Submit your post link in GoodMarket to claim your reward.</p>
                 <ul class="earn-card-list">
-                    <li>🟢 <strong style="color:#10b981;">100 G$</strong> per completed task</li>
+                    <li>🟢 <strong style="color:#fbbf24;">100 G$</strong> per completed task</li>
                     <li>🟢 Resets every 72 hours</li>
                 </ul>
             </div>
@@ -2539,7 +2610,7 @@
                 <div class="earn-card-title">Telegram Tasks</div>
                 <p class="earn-card-desc">Engage in the GoodDollar Telegram community. Post a message in an approved group or channel mentioning GoodDollar, then submit your message link to earn.</p>
                 <ul class="earn-card-list">
-                    <li>🟢 <strong style="color:#10b981;">100 G$</strong> per completed task</li>
+                    <li>🟢 <strong style="color:#fbbf24;">100 G$</strong> per completed task</li>
                     <li>🟢 Shared cooldown with Twitter task</li>
                 </ul>
             </div>
@@ -2548,7 +2619,7 @@
                 <div class="earn-card-title">Facebook Tasks</div>
                 <p class="earn-card-desc">Share GoodDollar content on Facebook — post in groups, share updates, or tag friends. Submit your Facebook post link to claim your daily G$ reward.</p>
                 <ul class="earn-card-list">
-                    <li>🟢 <strong style="color:#10b981;">100 G$</strong> per completed task</li>
+                    <li>🟢 <strong style="color:#fbbf24;">100 G$</strong> per completed task</li>
                     <li>🟢 New task available every day</li>
                 </ul>
             </div>
@@ -2644,8 +2715,8 @@
                 <div class="earn-card-icon">💰</div>
                 <div class="earn-card-title">Referral Rewards</div>
                 <ul class="earn-card-list">
-                    <li>🟢 <strong style="color:#10b981;">1,000 G$</strong> — You (the referrer) earn</li>
-                    <li>🟢 <strong style="color:#10b981;">500 G$</strong> — Your friend (referee) earns</li>
+                    <li>🟢 <strong style="color:#fbbf24;">1,000 G$</strong> — You (the referrer) earn</li>
+                    <li>🟢 <strong style="color:#fbbf24;">500 G$</strong> — Your friend (referee) earns</li>
                     <li>🟢 No limit on how many friends you can refer</li>
                 </ul>
                 <p class="earn-card-note">🎯 Rewards are sent automatically once your friend completes face verification or makes their first UBI claim.</p>
@@ -2760,7 +2831,7 @@
     </div>
 
     <!-- Community Stories from Twitter -->
-    <div id="community-tweets-section" style="display:none; max-width:600px; margin:0 auto; padding:2rem 1rem 1.5rem;">
+    <div id="community-tweets-section" style="display:none; width:100%; max-width:min(100%, 620px); margin:0 auto; padding:2rem 1rem 1.5rem;">
         <div style="text-align:center; margin-bottom:1.25rem;">
             <div style="font-size:1.25rem; font-weight:700; color:rgba(241,245,249,0.95); letter-spacing:0.01em;">
                 🌟 Community Stories from <span style="color:#a78bfa;">Twitter/X</span>
@@ -2797,6 +2868,13 @@
             </div>
             <div class="cert-carousel-dots" id="certCarouselDots"></div>
         </div>
+    </div>
+
+    <!-- Full-screen certificate viewer (opened by tapping a certificate) -->
+    <div class="cert-lightbox" id="certLightbox" role="dialog" aria-modal="true" aria-label="Certificate viewer">
+        <button type="button" class="cert-lightbox-close" id="certLightboxClose" aria-label="Close certificate viewer">&times;</button>
+        <img id="certLightboxImg" alt="">
+        <div class="cert-lightbox-hint">Tap anywhere to close</div>
     </div>
 
 
@@ -2856,18 +2934,26 @@
             }
         });
 
-        function toggleMainMenu() {
-            const submenu = document.getElementById('main-menu-submenu');
-            const btn = document.querySelector('.main-menu-btn');
-            if (submenu.style.display === 'none' || submenu.style.display === '') {
-                submenu.style.display = 'block';
-                btn.textContent = '✕ Close Menu';
-            } else {
-                submenu.style.display = 'none';
-                btn.innerHTML = '☰ Main Menu';
-                document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active'));
-                document.querySelectorAll('.section-tab').forEach(t => t.classList.remove('active'));
-            }
+        // ── Certificate lightbox ──────────────────────────────────────────
+        // Certificates are dense documents; the carousel size was unreadable
+        // and there was no zoom at all. Tapping one opens it full-screen.
+        function openCertLightbox(src, alt) {
+            const box = document.getElementById('certLightbox');
+            const img = document.getElementById('certLightboxImg');
+            if (!box || !img || !src) return;
+            img.src = src;
+            img.alt = alt || 'Certificate';
+            box.classList.add('open');
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+        }
+        function closeCertLightbox() {
+            const box = document.getElementById('certLightbox');
+            if (!box) return;
+            box.classList.remove('open');
+            document.getElementById('certLightboxImg').removeAttribute('src');
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
         }
 
         function showSection(name) {
@@ -2877,8 +2963,11 @@
             const tab   = document.getElementById('tab-' + name);
             if (panel) panel.classList.add('active');
             if (tab)   tab.classList.add('active');
-            const submenu = document.getElementById('main-menu-submenu');
-            submenu.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Scroll to the PANEL (the submenu is display:none, so scrolling to
+            // it was a no-op — the section appeared but the viewport never
+            // moved). scroll-padding-top on <html> keeps the title clear of the
+            // sticky header.
+            if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
 
@@ -3019,16 +3108,30 @@
         window.showSection             = showSection;
         window.carouselGoTo            = carouselGoTo;
         window.carouselMove            = carouselMove;
-        window.toggleMainMenu          = toggleMainMenu;
+        window.openCertLightbox        = openCertLightbox;
+        window.closeCertLightbox       = closeCertLightbox;
+
+        // Close the certificate viewer on tap-outside, on the × and on Escape.
+        (function () {
+            const box = document.getElementById('certLightbox');
+            if (!box) return;
+            box.addEventListener('click', function (e) {
+                if (e.target === box || e.target.id === 'certLightboxClose') closeCertLightbox();
+            });
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && box.classList.contains('open')) closeCertLightbox();
+            });
+        })();
 
         </script>
 
 
     <!-- Background Music Player with Mute/Unmute -->
     <style>
+        /* Transform/opacity only — animating box-shadow repaints every frame. */
         @keyframes musicPulse {
-            0%, 100% { box-shadow: 0 4px 16px rgba(124,58,237,0.45); transform: scale(1); }
-            50% { box-shadow: 0 4px 28px rgba(124,58,237,0.85); transform: scale(1.08); }
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.09); }
         }
         #musicToggleBtn.waiting { animation: musicPulse 1.8s ease-in-out infinite; }
     </style>
@@ -3187,6 +3290,9 @@
                 img.src = cert.cert_url;
                 img.alt = 'Sponsorship certificate for ' + cert.sponsor_name;
                 img.loading = i === 0 ? 'eager' : 'lazy';
+                img.addEventListener('click', function () {
+                    openCertLightbox(cert.cert_url, img.alt);
+                });
 
                 var caption = document.createElement('div');
                 caption.className = 'cert-slide-caption';
@@ -3352,7 +3458,7 @@
 
                     var iframe = document.createElement('iframe');
                     iframe.src = 'https://platform.twitter.com/embed/Tweet.html?id=' + tweetId + '&theme=dark&dnt=true&lang=en';
-                    iframe.style.cssText = 'width:100%;border:none;height:520px;display:block;';
+                    iframe.style.cssText = 'width:100%;border:none;height:min(520px, 78dvh);min-height:320px;display:block;';
                     iframe.setAttribute('loading', 'eager');
 
                     card.appendChild(iframe);
@@ -3401,8 +3507,12 @@
             const loader = document.getElementById('gmWelcomeLoader');
             if (!loader) return;
 
-            const MIN_VISIBLE_MS = 12000;
-            const MAX_VISIBLE_MS = 15000;
+            // A short splash, not a gate. The loader only exists to avoid a
+            // flash of half-rendered content, so it disappears as soon as the
+            // page is ready. (Was MIN 12000 / MAX 15000 — a 12s forced wait
+            // that made the app look frozen on every visit.)
+            const MIN_VISIBLE_MS = 800;
+            const MAX_VISIBLE_MS = 3500;
             const startedAt = Date.now();
             let pageLoaded = document.readyState === 'complete';
             let hidden = false;
