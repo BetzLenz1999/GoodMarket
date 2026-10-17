@@ -2635,6 +2635,24 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                     </button>
                     <div id="dapp-visibility-result" style="margin-top: 1rem; display: none;"></div>
                 </div>
+
+                <div class="content-box">
+                    <h2 style="margin-bottom: 1rem;">🤝 Community Savings (Paluwagan)</h2>
+                    <div style="margin-bottom: 0.75rem; padding: 0.75rem 1rem; background: rgba(45,212,191,0.10); border-radius: 8px; border-left: 3px solid #2dd4bf; font-size: 0.88rem; color: rgba(241,245,249,0.85);">
+                        A fully on-chain 5-member rotating savings group. Contributions and payouts live entirely in a <strong>separate contract</strong> (never the G$ Savings vault) and every action is user-signed on Celo. There is no off-chain database, no scheduler and no privileged key. Requires <span style="font-family:monospace;">PALUWAGAN_CONTRACT</span> to be set for the page to function.
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: rgba(241, 245, 249, 0.9); font-weight: 600;">Visibility</label>
+                        <select id="paluwagan-visibility-select" style="width: 100%; padding: 0.75rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #f1f5f9; font-size: 1rem;">
+                            <option value="true" selected>✅ Visible — Community Savings shown in the wallet Earn sheet</option>
+                            <option value="false">🚫 Hidden — the entry point is not rendered</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveFeatureVisibility('paluwagan_feature', 'paluwagan-visibility-select', 'paluwagan-visibility-result')" style="width: 100%; padding: 0.9rem; font-size: 1rem;">
+                        💾 Save Community Savings Setting
+                    </button>
+                    <div id="paluwagan-visibility-result" style="margin-top: 1rem; display: none;"></div>
+                </div>
             </section>
 
             <!-- Referral Program Section - auto-disbursement + admin recovery -->
@@ -4220,6 +4238,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 _applyVisibilityBadge('buy-eth-status-badge', data.buy_eth_visible);
                 _applyVisibilityBadge('chatroom-status-badge', data.chatroom_visible);
                 _applyVisibilityBadge('dapp-status-badge', data.dapp_connect_visible);
+                _applyVisibilityBadge('paluwagan-status-badge', data.paluwagan_visible);
 
                 document.getElementById('swap-visibility-select').value = data.swap_visible !== false ? 'true' : 'false';
                 document.getElementById('wallet-visibility-select').value = data.wallet_visible !== false ? 'true' : 'false';
@@ -4233,6 +4252,7 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                 document.getElementById('chatroom-visibility-select').value = data.chatroom_visible === true ? 'true' : 'false';
                 document.getElementById('agent-visibility-select').value = data.goodmarket_agent_visible === true ? 'true' : 'false';
                 document.getElementById('dapp-visibility-select').value = data.dapp_connect_visible === true ? 'true' : 'false';
+                document.getElementById('paluwagan-visibility-select').value = data.paluwagan_visible !== false ? 'true' : 'false';
             } catch (e) {
                 statusDiv.innerHTML = '<p style="color:#ef4444;">❌ Failed to load settings</p>';
             }
@@ -4267,7 +4287,8 @@ CREATE INDEX IF NOT EXISTS idx_jumble_contents_created ON jumble_contents (creat
                         wallet_buy_eth: 'Buy Crypto wallet button',
                         chatroom_feature: 'Community Chatroom',
                         goodmarket_agent_feature: 'GoodMarket Agent',
-                        dapp_connect_feature: 'Connect a dApp'
+                        dapp_connect_feature: 'Connect a dApp',
+                        paluwagan_feature: 'Community Savings (Paluwagan)'
                     };
                     const featureLabel = labelMap[feature] || feature;
                     resultDiv.textContent = visible
