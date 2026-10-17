@@ -639,25 +639,48 @@
         showSection("secGroup");
         await refreshGroup();
     };
-    window.refreshGroup = async function () {
+    window.refreshGroup = async function (opts) {
         if (!currentGroupId) return;
+        var silent = !!(opts && opts.silent);
         var alertEl = $("pageAlert");
         try {
             var res = await fetch("/paluwagan/api/group/" + currentGroupId);
             var data = await res.json();
             currentGroup = data && data.group;
-            if (!currentGroup) { alertBox(alertEl, "error", "Could not load group #" + currentGroupId + "."); return; }
+            if (!currentGroup) {
+                if (!silent) alertBox(alertEl, "error", "Could not load group #" + currentGroupId + ".");
+                return;
+            }
             renderGroup(currentGroup);
-            loadContributions(currentGroupId);
-            loadPayouts(currentGroupId);
+            // A background poll must not flash spinners over history the user
+            // may be reading — the member list / progress bar is what changes
+            // when other wallets join or pay.
+            if (!silent) {
+                loadContributions(currentGroupId);
+                loadPayouts(currentGroupId);
+            }
         } catch (e) {
-            alertBox(alertEl, "error", "Could not load group. Please retry.");
+            if (!silent) alertBox(alertEl, "error", "Could not load group. Please retry.");
         }
     };
-    window.openGroup = window.openGroup;
+
+    // Keep the open group live: the member list and contribution progress change
+    // when OTHER wallets join or pay, and without a poll the page only ever
+    // showed the state from the moment it was opened. Paused while the tab is
+    // hidden or a tx is in flight, and only runs while the group view is open.
+    var GROUP_POLL_MS = 15000;
+    async function _pollGroupOnce() {
+        if (document.hidden || busy || !currentGroupId) return;
+        var groupSection = $("secGroup");
+        if (!groupSection || !groupSection.classList.contains("active")) return;
+        await window.refreshGroup({ silent: true });
+    }
+    setInterval(_pollGroupOnce, GROUP_POLL_MS);
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden && currentGroupId) _pollGroupOnce();
+    });
+
     window.openGroupById = function (id) { return window.openGroup(id); };
-    // expose openGroup globally under the name used by inline handlers
-    window.openGroup = window.openGroup;
 
     function renderGroup(g) {
         var you = _toLower(WALLET);
