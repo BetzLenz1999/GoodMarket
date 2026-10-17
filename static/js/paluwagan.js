@@ -44,7 +44,7 @@
 
     // ── ABIs (human-readable, mirrors paluwagan/blockchain.py) ──────────────
     var PALUWAGAN_ABI = [
-        "function createGroup(address token, uint256 contributionAmount, uint256 weeks, uint8[5] payoutOrder) returns (uint256)",
+        "function createGroup(string name, address token, uint256 contributionAmount, uint256 weeks, uint8[5] payoutOrder) returns (uint256)",
         "function joinGroup(uint256 groupId)",
         "function activateGroup(uint256 groupId)",
         "function contribute(uint256 groupId)",
@@ -54,7 +54,9 @@
         "function claimPayout(uint256 groupId, uint256 round) returns (bool)",
         "function proposeEarlySettle(uint256 groupId)",
         "function approveEarlySettle(uint256 groupId)",
-        "function getGroup(uint256 groupId) view returns (address token, uint256 contributionAmount, uint256 weeks, uint8 status, uint256 currentRound, uint256 roundStartAt, uint256 memberCount, uint256 roundDeadline, uint256 graceDeadline)",
+        "function getGroup(uint256 groupId) view returns (string name, address token, uint256 contributionAmount, uint256 weeks, uint8 status, uint256 currentRound, uint256 roundStartAt, uint256 memberCount, uint256 roundDeadline, uint256 graceDeadline)",
+        "function getGroupName(uint256 groupId) view returns (string)",
+        "function getGroupIdByName(string name) view returns (uint256)",
         "function getMembers(uint256 groupId) view returns (address[5])",
         "function getPayoutOrder(uint256 groupId) view returns (uint8[5])",
         "function recipientOf(uint256 groupId, uint256 round) view returns (address)",
@@ -365,7 +367,7 @@
         return '<div class="slot" role="button" tabindex="0" onclick="openGroup(' + g.id + ')">' +
             '<span class="idx">' + esc(g.token_symbol) + '</span>' +
             '<div style="flex:1;min-width:0;">' +
-            '<div class="row"><span class="val">Group #' + g.id + '</span>' +
+            '<div class="row"><span class="val">' + (g.name ? esc(g.name) + ' &middot; #' + g.id : 'Group #' + g.id) + '</span>' +
             '<span class="badge ' + statusBadgeClass(g.status) + '">' + esc(statusLabel(g.status)) + '</span></div>' +
             '<div class="note" style="margin-top:.15rem;">' + esc(g.contribution_amount_h) + ' ' + esc(g.token_symbol) +
             '/week - ' + g.weeks + ' wks - ' + esc(line) + '</div>' +
@@ -441,22 +443,56 @@
         if ($("sumReceived")) $("sumReceived").textContent = received ? received.toLocaleString() + " G$ (" + Math.floor(weeks / MEMBERS) + " payouts)" : "-";
         var order = _createOrder();
         var unique = new Set(order);
-        var ok = amt > 0 && weeks > 0 && unique.size === MEMBERS;
+        var nameOk = /^[A-Za-z0-9-]{3,32}$/.test((($("createName") || {}).value || "").trim());
+        var ok = amt > 0 && weeks > 0 && unique.size === MEMBERS && nameOk;
         var btn = $("createBtn");
         if (btn) {
             btn.disabled = !ok || busy;
-            btn.textContent = ok ? "Create Group" : "Create Group (finish payout order)";
+            if (!nameOk) btn.textContent = "Create Group (add a group name)";
+            else btn.textContent = ok ? "Create Group" : "Create Group (finish payout order)";
         }
     }
     window.updateSummary = updateSummary;
 
+    // Group names are the shareable link (/paluwagan/teambetz). The contract is
+    // the authority; this mirrors its rule so the user gets instant feedback.
+    var NAME_RE = /^[A-Za-z0-9-]{3,32}$/;
+
+    function _nameFromInput(raw) {
+        // Accept a pasted full link as well as a bare name.
+        var v = String(raw || "").trim();
+        try {
+            if (/^https?:\/\//i.test(v)) {
+                var u = new URL(v);
+                var parts = u.pathname.split("/").filter(Boolean);
+                v = parts.length >= 2 && parts[0] === "paluwagan" ? parts[1] : (parts[parts.length - 1] || "");
+            } else if (v.indexOf("/paluwagan/") !== -1) {
+                v = v.split("/paluwagan/")[1].split(/[?#/]/)[0];
+            }
+        } catch (_) {}
+        return v.replace(/[?#].*$/, "").replace(/\/+$/, "").trim();
+    }
+
+    window.onNameInput = function () {
+        var raw = ($("createName") || {}).value || "";
+        var v = raw.trim();
+        var el = $("createNameLink");
+        var note = $("createNameNote");
+        var ok = NAME_RE.test(v);
+        if (el) el.textContent = v ? ("/paluwagan/" + v.toLowerCase()) : "/paluwagan/…";
+        if (note) note.style.color = (v && !ok) ? "var(--err)" : "";
+        updateSummary();
+    };
+
     window.createGroup = async function () {
         if (busy) return;
         var alertEl = $("pageAlert");
+        var name = (($("createName") || {}).value || "").trim();
         var amt = Number(($("createAmount") || {}).value || 0);
         var weeks = Number(($("createWeeks") || {}).value || 0);
         var token = ($("createToken") || {}).value || GD_CONTRACT;
         var order = _createOrder();
+        if (!NAME_RE.test(name)) { alertBox(alertEl, "error", "Group name must be 3–32 characters: letters, numbers and – only."); return; }
         if (!(amt > 0)) { alertBox(alertEl, "error", "Enter a weekly contribution amount greater than zero."); return; }
         if (ALLOWED_WEEKS.indexOf(weeks) === -1) { alertBox(alertEl, "error", "Choose a commitment period of " + ALLOWED_WEEKS.join(" or ") + " weeks."); return; }
         if (new Set(order).size !== MEMBERS) { alertBox(alertEl, "error", "Each payout round must use a different slot."); return; }
@@ -464,10 +500,10 @@
         try {
             var s = await resolveSigner();
             var amountWei = ethers.parseUnits(String(amt), DECIMALS);
-            var hash = await _signTimeout(_sendContractCall(s, "createGroup", [token, amountWei, weeks, order]), 180000);
+            var hash = await _signTimeout(_sendContractCall(s, "createGroup", [name, token, amountWei, weeks, order]), 180000);
             alertBox(alertEl, "info", "Creating group... " + hash);
             await _waitReceipt(s.provider, hash);
-            alertBox(alertEl, "success", "Group created. Share the group id so 4 others can join.");
+            alertBox(alertEl, "success", "Group \"" + name + "\" created. Share /paluwagan/" + name.toLowerCase() + " so 4 others can join.");
             setTimeout(function () { window.showOverview(); }, 1200);
         } catch (e) {
             alertBox(alertEl, "error", _friendlyError(e));
@@ -477,22 +513,54 @@
     };
 
     // ── join ────────────────────────────────────────────────────────────────
-    window.previewJoin = async function () {
+
+    // Resolves whatever the user typed (name, or a pasted invite link) to a
+    // group id via the on-chain name registry. Returns 0 when unknown.
+    async function _resolveJoinTarget() {
+        var rawName = ($("joinName") || {}).value || "";
+        var name = _nameFromInput(rawName);
         var gid = Number(($("joinId") || {}).value || 0);
+        if (!name) return gid;
+        var res = await fetch("/paluwagan/api/resolve/" + encodeURIComponent(name));
+        if (res.status === 404) return -1;
+        var data = await res.json();
+        var g = data && data.group;
+        if (!g) return -1;
+        if ($("joinId")) $("joinId").value = g.id;
+        return Number(g.id);
+    }
+
+    window.previewJoin = async function () {
         var alertEl = $("pageAlert");
-        if (!(gid > 0)) { alertBox(alertEl, "error", "Enter a valid group id."); return; }
         hideAlert(alertEl);
         var box = $("joinPreview");
         if (box) box.style.display = "block";
         var body = $("joinPreviewBody");
         if (body) body.innerHTML = '<span class="spinner"></span> Loading group&hellip;';
+        var gid;
+        try {
+            gid = await _resolveJoinTarget();
+        } catch (_) {
+            if (body) body.innerHTML = '<div class="empty-state">Could not look up that group.</div>';
+            return;
+        }
+        if (gid === -1) {
+            if (body) body.innerHTML = '<div class="empty-state">No group found with that name.</div>';
+            return;
+        }
+        if (!(gid > 0)) {
+            if (body) body.innerHTML = '<div class="empty-state">Enter a group name or id.</div>';
+            return;
+        }
         try {
             var res = await fetch("/paluwagan/api/group/" + gid);
             var data = await res.json();
             var g = data && data.group;
             if (!g) { if (body) body.innerHTML = '<div class="empty-state">Group not found.</div>'; return; }
+            currentGroupId = gid;
             var rows =
-                '<div class="split"><div class="kv"><div class="k">Token</div><div class="v">' + esc(g.token_symbol) + '</div></div>' +
+                '<div class="split"><div class="kv"><div class="k">Group</div><div class="v">' + esc(g.name || ("#" + g.id)) + '</div></div>' +
+                '<div class="kv"><div class="k">Token</div><div class="v">' + esc(g.token_symbol) + '</div></div>' +
                 '<div class="kv"><div class="k">Weekly</div><div class="v">' + esc(g.contribution_amount_h) + ' ' + esc(g.token_symbol) + '</div></div>' +
                 '<div class="kv"><div class="k">Period</div><div class="v">' + g.weeks + ' weeks</div></div>' +
                 '<div class="kv"><div class="k">Members</div><div class="v">' + g.member_count + '/' + MEMBERS + '</div></div></div>' +
@@ -517,8 +585,12 @@
 
     window.joinGroup = async function () {
         if (busy) return;
-        var gid = Number(($("joinId") || {}).value || 0);
         var alertEl = $("pageAlert");
+        var gid;
+        try {
+            gid = await _resolveJoinTarget();
+        } catch (_) { gid = 0; }
+        if (!(gid > 0)) { alertBox(alertEl, "error", "Enter a valid group name or id."); return; }
         busy = true;
         try {
             var s = await resolveSigner();
@@ -560,7 +632,7 @@
 
     function renderGroup(g) {
         var you = _toLower(WALLET);
-        if ($("gTitle")) $("gTitle").textContent = "Group #" + g.id;
+        if ($("gTitle")) $("gTitle").textContent = g.name ? (g.name + " · #" + g.id) : ("Group #" + g.id);
         if ($("gMeta")) $("gMeta").textContent = g.token_symbol + " - " + g.contribution_amount_h + "/wk - " + g.weeks + " weeks";
         var st = $("gStatus");
         if (st) { st.className = "badge " + statusBadgeClass(g.status); st.textContent = statusLabel(g.status); }
@@ -720,7 +792,10 @@
     };
 
     window.copyInvite = function () {
-        var url = window.location.origin + "/paluwagan?join=" + currentGroupId;
+        var slug = (currentGroup && currentGroup.name) ? String(currentGroup.name).toLowerCase() : "";
+        var url = slug
+            ? window.location.origin + "/paluwagan/" + slug
+            : window.location.origin + "/paluwagan?join=" + currentGroupId;
         try {
             navigator.clipboard.writeText(url);
             alertBox($("pageAlert"), "success", "Invite link copied.");
@@ -828,10 +903,25 @@
                 });
             } catch (_) {}
         }
-        // Deep link: /paluwagan?join=<id> pre-fills the join form.
+        // Deep link: /paluwagan/<name> (path) or /paluwagan?join=<id|name>.
         try {
+            var deepName = boot.joinName || "";
             var params = new URLSearchParams(window.location.search);
-            var join = params.get("join");
+            var join = params.get("join") || "";
+            if (!deepName && join) {
+                // `join` is either a numeric id or a name.
+                if (/^\d+$/.test(join)) {
+                    if ($("joinId")) $("joinId").value = join;
+                } else {
+                    deepName = join;
+                }
+            }
+            if (deepName && $("joinName")) {
+                $("joinName").value = deepName;
+                showSection("secJoin");
+                window.previewJoin();
+                return;
+            }
             if (join && $("joinId")) {
                 $("joinId").value = join;
                 showSection("secJoin");
