@@ -13,6 +13,7 @@ from env_utils import get_env_int
 import os
 import logging
 import threading
+import time
 
 from web3 import Web3
 
@@ -54,6 +55,9 @@ GROUP_STATUS = {0: "none", 1: "forming", 2: "active", 3: "completed", 4: "settle
 MEMBERS = 5
 ROUND_DURATION = 7 * 24 * 3600
 GRACE_PERIOD = 2 * 24 * 3600
+# v2: how long a member must be in a Forming group before the creator may
+# remove them. Mirrors REMOVAL_GRACE_PERIOD in the contract.
+REMOVAL_GRACE_PERIOD = get_env_int('PALUWAGAN_REMOVAL_GRACE_PERIOD', 2 * 24 * 3600)
 
 # forno rejects eth_getLogs beyond ~5000 blocks; keep chunks under that.
 # NOTE: GETLOGS_MAX_CHUNK is the CEILING, not a starting point to exceed. A
@@ -68,6 +72,11 @@ PALUWAGAN_ABI = [
     {"inputs": [], "name": "MEMBERS", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "nextGroupId", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "groupCount", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+    # ── v2 member removal (absent from the first deployment) ───────────────
+    {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}], "name": "leaveGroup", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}, {"internalType": "address", "name": "member", "type": "address"}], "name": "removeMember", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}], "name": "getGroupCreator", "outputs": [{"internalType": "address", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}, {"internalType": "address", "name": "member", "type": "address"}], "name": "memberJoinedAt", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     # ── Views ──────────────────────────────────────────────────────────────
     {
         "inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}],
@@ -116,6 +125,8 @@ PALUWAGAN_ABI = [
     # ── Events (history is reconstructed from these) ───────────────────────
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "creator", "type": "address"}, {"indexed": True, "internalType": "address", "name": "token", "type": "address"}, {"indexed": False, "internalType": "string", "name": "name", "type": "string"}, {"indexed": False, "internalType": "uint256", "name": "contributionAmount", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "periodWeeks", "type": "uint256"}], "name": "GroupCreated", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "slot", "type": "uint256"}], "name": "MemberJoined", "type": "event"},
+    {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "slot", "type": "uint256"}], "name": "MemberLeft", "type": "event"},
+    {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "slot", "type": "uint256"}], "name": "MemberRemoved", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "activatedAt", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "roundStartAt", "type": "uint256"}], "name": "GroupActivated", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "uint256", "name": "round", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "ContributionMade", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "uint256", "name": "round", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "ContributionLate", "type": "event"},
@@ -131,21 +142,100 @@ PALUWAGAN_ABI = [
 ]
 
 # ERC-20 fragments used by the user-signed contribution flow.
+# NOTE: this MUST be a JSON ABI. The human-readable string form
+# ("function balanceOf(address) view returns (uint256)") is an ethers.js
+# feature — web3.py rejects it with
+#   ValueError: Could not format invalid value [...] as field 'abi'
+# so get_token_balance() raised, logged, and returned 0, which is why the
+# page always showed a 0 G$ balance while CELO (read via eth_getBalance)
+# worked. Every other module in this repo already uses the JSON form.
 ERC20_ABI = [
-    "function balanceOf(address owner) view returns (uint256)",
-    "function allowance(address owner, address spender) view returns (uint256)",
-    "function approve(address spender, uint256 amount) returns (bool)",
+    {
+        "inputs": [{"name": "owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"},
+        ],
+        "name": "allowance",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "spender", "type": "address"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "approve",
+        "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
 ]
 
 _w3_pool = {}
 _w3_lock = threading.Lock()
 _deploy_block_lock = threading.Lock()
 _deploy_block_cache = {}
+_removal_support_lock = threading.Lock()
+_removal_support_cache = {}
+
+# 4-byte function selectors of the v2 slot-removal API. Kept as literals rather
+# than computed from keccak so the probe (and its tests) never depend on a
+# hashing backend being importable.
+_LEAVE_GROUP_SELECTOR = "33471df5"      # leaveGroup(uint256)
+_REMOVE_MEMBER_SELECTOR = "6be7658b"    # removeMember(uint256,address)
 
 
 def is_configured():
     """True when a paluwagan contract address is configured for this deploy."""
     return bool(PALUWAGAN_CONTRACT_ADDRESS)
+
+
+def supports_member_removal():
+    """True when the DEPLOYED contract exposes leaveGroup/removeMember.
+
+    Member removal shipped in contract v2. The first mainnet deployment has no
+    such function and cannot be upgraded (no owner, no proxy — by design), so a
+    group on that contract genuinely cannot free a slot. The UI must therefore
+    not offer a Remove/Leave button that would revert: this probe is the gate.
+
+    Detection is a bytecode selector scan — cheap, exact, and independent of any
+    ABI we happen to ship. Cached per contract address (immutable bytecode).
+    Fails CLOSED (False) when the code cannot be read, so a flaky RPC can never
+    surface a dead button.
+    """
+    contract = (PALUWAGAN_CONTRACT_ADDRESS or "").lower()
+    if not contract:
+        return False
+    with _removal_support_lock:
+        cached = _removal_support_cache.get(contract)
+    if cached is not None:
+        return cached
+    try:
+        w3 = get_w3()
+        code = w3.eth.get_code(Web3.to_checksum_address(PALUWAGAN_CONTRACT_ADDRESS))
+        if hasattr(code, "hex"):
+            code = code.hex()
+        code = str(code or "").lower()
+        # A 4-byte selector appears in the dispatcher as a literal hex substring.
+        supported = bool(code) and all(
+            sel in code
+            for sel in (_LEAVE_GROUP_SELECTOR, _REMOVE_MEMBER_SELECTOR)
+        )
+    except Exception as e:
+        logger.warning("paluwagan: member-removal support probe failed: %s", e)
+        return False
+    with _removal_support_lock:
+        _removal_support_cache[contract] = supported
+    logger.info("paluwagan: member removal supported = %s", supported)
+    return supported
 
 
 def get_deploy_block():
@@ -229,6 +319,23 @@ def get_contract(w3=None):
         address=Web3.to_checksum_address(PALUWAGAN_CONTRACT_ADDRESS),
         abi=PALUWAGAN_ABI,
     )
+
+
+def _to_checksum(addr):
+    """Checksum an address for a contract call, or return it unchanged.
+
+    web3.py v7 REJECTS a non-checksummed address with ``InvalidAddress`` rather
+    than coercing it, so passing a lowercase session wallet straight into a
+    contract call raised and the caller silently degraded (``get_my_groups``
+    returned [] and logged "failed to load group N"). Sessions are checksummed
+    today, but nothing guarantees that, so normalise at the boundary.
+    """
+    if not addr:
+        return addr
+    try:
+        return Web3.to_checksum_address(addr)
+    except Exception:
+        return addr
 
 
 def _token_meta(addr):
@@ -392,10 +499,69 @@ def get_group_overview(group_id, wallet=None):
         lw = str(wallet).lower()
         group["is_member"] = any(m.lower() == lw for m in members)
         if group["is_member"]:
-            group["my_missed_rounds"] = int(contract.functions.missedRounds(int(group_id), wallet).call())
-            group["my_consecutive_misses"] = int(contract.functions.consecutiveMisses(int(group_id), wallet).call())
-            group["my_defaulted"] = bool(contract.functions.isDefaulted(int(group_id), wallet).call())
+            w = _to_checksum(wallet)
+            group["my_missed_rounds"] = int(contract.functions.missedRounds(int(group_id), w).call())
+            group["my_consecutive_misses"] = int(contract.functions.consecutiveMisses(int(group_id), w).call())
+            group["my_defaulted"] = bool(contract.functions.isDefaulted(int(group_id), w).call())
+
+    _add_removal_info(group, contract, group_id, wallet)
     return group
+
+
+def _add_removal_info(group, contract, group_id, wallet):
+    """Attach the v2 slot-removal picture (creator, per-member joined-at, flags).
+
+    Every read is individually guarded: the first deployment has none of these
+    functions, so each call reverts there and the whole overview must still
+    return. `removal_supported` (the bytecode probe) is the authoritative gate
+    the UI keys off — the per-group flags are derived from it plus live state.
+    """
+    group["removal_supported"] = supports_member_removal()
+    group["removal_grace_period"] = REMOVAL_GRACE_PERIOD
+    group["creator"] = ""
+    group["member_joined_at"] = {}
+    group["can_leave"] = False
+    group["can_remove"] = []
+
+    if not group["removal_supported"]:
+        return
+
+    creator = ""
+    try:
+        creator = str(contract.functions.getGroupCreator(int(group_id)).call())
+    except Exception as e:
+        logger.warning("paluwagan: getGroupCreator failed for %s: %s", group_id, e)
+    group["creator"] = creator
+
+    joined = {}
+    now = None
+    for m in group.get("members") or []:
+        try:
+            ts = int(contract.functions.memberJoinedAt(int(group_id), _to_checksum(m)).call())
+        except Exception:
+            ts = 0
+        joined[m.lower()] = ts
+    group["member_joined_at"] = joined
+
+    if group.get("status") != "forming":
+        # A started group is a binding commitment: the only exit is unanimous
+        # early settlement, so no per-slot removal is offered.
+        return
+
+    if wallet:
+        lw = str(wallet).lower()
+        group["can_leave"] = bool(group.get("is_member"))
+        if creator and creator.lower() == lw:
+            now = int(time.time())
+            removable = []
+            for m in group.get("members") or []:
+                ml = m.lower()
+                if ml == lw:
+                    continue  # the creator cannot remove themselves
+                ts = joined.get(ml, 0)
+                if ts and now >= ts + REMOVAL_GRACE_PERIOD:
+                    removable.append(m)
+            group["can_remove"] = removable
 
 
 # Events whose INDEXED user argument identifies a wallet that touched a group.
@@ -404,6 +570,8 @@ def get_group_overview(group_id, wallet=None):
 # member who only ever contributed/claimed, is still discovered.
 _MEMBER_EVENT_FILTERS = (
     ("MemberJoined", "member"),
+    ("MemberLeft", "member"),
+    ("MemberRemoved", "member"),
     ("ContributionMade", "member"),
     ("ContributionLate", "member"),
     ("PayoutClaimed", "recipient"),
@@ -419,7 +587,7 @@ def _groups_for_wallet_event(contract, event_name, arg_name, wallet, from_block,
     try:
         logs = _chunked_logs(
             contract, event_name, from_block, latest,
-            {arg_name: Web3.to_checksum_address(wallet)},
+            {arg_name: _to_checksum(wallet)},
         )
     except Exception as e:
         logger.warning("paluwagan: %s scan failed for %s: %s", event_name, wallet, e)
@@ -519,8 +687,8 @@ def get_token_balance(wallet, token_address=None):
     w3 = get_w3()
     token = token_address or GD_TOKEN_ADDRESS
     try:
-        erc20 = w3.eth.contract(address=Web3.to_checksum_address(token), abi=ERC20_ABI)
-        return int(erc20.functions.balanceOf(Web3.to_checksum_address(wallet)).call())
+        erc20 = w3.eth.contract(address=_to_checksum(token), abi=ERC20_ABI)
+        return int(erc20.functions.balanceOf(_to_checksum(wallet)).call())
     except Exception as e:
         logger.warning("paluwagan: balance read failed: %s", e)
         return 0
@@ -531,7 +699,7 @@ def get_native_balance(wallet):
     if not wallet:
         return 0
     try:
-        return int(get_w3().eth.get_balance(Web3.to_checksum_address(wallet)))
+        return int(get_w3().eth.get_balance(_to_checksum(wallet)))
     except Exception as e:
         logger.warning("paluwagan: native balance read failed: %s", e)
         return 0
