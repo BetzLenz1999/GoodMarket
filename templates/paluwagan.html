@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Community Savings (Paluwagan) - GoodMarket</title>
+    <meta name="theme-color" content="#0B0F2A">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <link rel="manifest" href="/static/manifest.json?v={{ ASSET_VERSION }}">
+    <link rel="icon" type="image/png" href="/static/icons/goodmarket-icon.png?v={{ ASSET_VERSION }}">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192x192.png?v={{ ASSET_VERSION }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+          integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0"
+          crossorigin="anonymous" referrerpolicy="no-referrer"/>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        * { margin:0; padding:0; box-sizing:border-box; }
+
+        /* ── Paluwagan theme ──
+           Deep indigo canvas (matches wallet/swap/savings) with a TEAL accent
+           so this feature is never confused with the violet G$ Savings page.
+           Kept responsive-first (no html zoom) per the responsive contract. */
+        :root {
+            --bg:#0B0F2A; --bg2:#130D35; --bg3:#1A103D;
+            --card:rgba(255,255,255,.045); --card-brd:rgba(255,255,255,.09);
+            --text:#e8ecf6; --dim:rgba(255,255,255,.52); --muted:rgba(255,255,255,.34);
+            --palu:#2dd4bf; --palu2:#0d9488; --palu-ink:#04211f;
+            --gold:#fbbf24; --gold2:#f59e0b;
+            --ok:#34d399; --warn:#fcd34d; --err:#f87171; --info:#60a5fa;
+            --header-h:56px;
+        }
+        html { scroll-padding-top: calc(var(--header-h) + 16px); }
+        body {
+            font-family:'Inter',sans-serif; color:var(--text);
+            background:
+                radial-gradient(1100px 650px at 12% -10%, rgba(45,212,191,.10), transparent 60%),
+                radial-gradient(900px 600px at 100% 0%, rgba(124,58,237,.10), transparent 55%),
+                linear-gradient(135deg,var(--bg) 0%,var(--bg2) 52%,var(--bg3) 100%);
+            min-height:100dvh; overflow-x:clip;
+        }
+
+        /* ── Navbar ── */
+        .navbar { background:rgba(11,15,42,0.92); border-bottom:1px solid rgba(255,255,255,0.07);
+            padding:0 1.5rem; position:sticky; top:0; z-index:100; backdrop-filter:blur(20px); }
+        .nav-container { max-width:1300px; margin:0 auto; display:flex; align-items:center; height:var(--header-h); gap:.75rem; }
+        .back-wallet-btn { display:inline-flex; align-items:center; padding:.4rem .8rem; border-radius:10px;
+            border:1px solid rgba(45,212,191,.26); background:rgba(45,212,191,.12); color:#fff;
+            text-decoration:none; font-weight:700; white-space:nowrap; flex-shrink:0; }
+        .back-wallet-btn:hover { background:rgba(45,212,191,.2); }
+        .logo { font-size:1.2rem; font-weight:800; color:var(--palu); text-decoration:none; letter-spacing:-.5px; white-space:nowrap; }
+        .nav-links { display:flex; gap:.1rem; align-items:center; flex-wrap:nowrap; overflow-x:auto; min-width:0; }
+        .nav-links a { color:var(--dim); text-decoration:none; font-weight:500; font-size:.85rem; white-space:nowrap;
+            padding:.4rem .65rem; border-radius:8px; }
+        .nav-links a:hover { color:var(--palu); background:rgba(45,212,191,.1); }
+        .nav-links a.active { color:#fff; background:rgba(45,212,191,.18); font-weight:600; }
+        .wallet-tag { background:rgba(45,212,191,.12); border:1px solid rgba(45,212,191,.28); border-radius:20px;
+            padding:.28rem .8rem; font-weight:600; font-family:'Courier New',monospace; font-size:.8rem;
+            color:var(--palu); white-space:nowrap; flex-shrink:0; margin-left:auto; }
+        @media(max-width:768px){ .navbar{padding:0 .75rem;} .nav-links{display:none;} }
+
+        .container { max-width:920px; margin:0 auto; padding:1rem 1.25rem 3rem; }
+        .page-title { font-size:1.5rem; font-weight:800; color:#fff; letter-spacing:-.5px; margin-bottom:.2rem; }
+        .page-subtitle { color:var(--dim); font-size:.85rem; line-height:1.6; }
+
+        .card { background:var(--card); border:1px solid var(--card-brd); border-radius:14px; padding:1.1rem; margin-bottom:.85rem; }
+        .card.palu { border-color:rgba(45,212,191,.30); background:linear-gradient(180deg,rgba(45,212,191,.07),rgba(45,212,191,.02)); }
+        .card-title { font-size:.7rem; font-weight:600; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; margin-bottom:.85rem; }
+        .section { display:none; }
+        .section.active { display:block; }
+
+        .row { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+        .row + .row { margin-top:.6rem; }
+        .lbl { font-size:.8rem; color:var(--dim); }
+        .val { font-weight:700; font-size:.9rem; }
+        .big { font-size:1.5rem; font-weight:800; letter-spacing:-.02em; }
+        .mono { font-family:'Courier New',monospace; font-size:.8rem; }
+
+        .badge { display:inline-flex; align-items:center; gap:.35rem; padding:.24rem .6rem; border-radius:999px;
+            font-size:.68rem; font-weight:700; border:1px solid transparent; }
+        .b-forming { background:rgba(252,211,77,.12); border-color:rgba(252,211,77,.34); color:var(--warn); }
+        .b-active { background:rgba(52,211,153,.12); border-color:rgba(52,211,153,.34); color:var(--ok); }
+        .b-done { background:rgba(148,163,184,.12); border-color:rgba(148,163,184,.3); color:#94a3b8; }
+        .b-def { background:rgba(248,113,113,.13); border-color:rgba(248,113,113,.34); color:var(--err); }
+        .b-you { background:rgba(45,212,191,.14); border-color:rgba(45,212,191,.4); color:var(--palu); }
+
+        .btn { border:none; border-radius:11px; padding:.72rem 1rem; font-weight:700; font-size:.86rem;
+            cursor:pointer; font-family:inherit; transition:transform .15s,opacity .15s; width:100%; color:var(--text); }
+        .btn:disabled { opacity:.42; cursor:not-allowed; }
+        .btn-palu { background:linear-gradient(135deg,var(--palu),var(--palu2)); color:var(--palu-ink); }
+        .btn-gold { background:linear-gradient(135deg,var(--gold),var(--gold2)); color:#1f1300; }
+        .btn-ghost { background:rgba(255,255,255,.05); border:1px solid var(--card-brd); }
+        .btn.sm { padding:.5rem .8rem; font-size:.78rem; width:auto; }
+        .btn-row { display:flex; gap:.6rem; flex-wrap:wrap; }
+        .btn-row .btn { width:auto; flex:1; min-width:140px; }
+
+        .slot { display:flex; align-items:center; gap:.7rem; padding:.6rem .7rem; border-radius:12px;
+            background:rgba(0,0,0,.22); border:1px solid var(--card-brd); }
+        .slot + .slot { margin-top:.5rem; }
+        .slot .idx { width:26px; height:26px; border-radius:8px; display:grid; place-items:center; font-weight:800;
+            font-size:.78rem; background:rgba(45,212,191,.14); color:var(--palu); border:1px solid rgba(45,212,191,.3); flex-shrink:0; }
+        .slot.empty { border-style:dashed; opacity:.62; }
+        .slot.empty .idx { background:rgba(255,255,255,.06); color:var(--muted); border-color:var(--card-brd); }
+
+        .alert { border-radius:11px; padding:.8rem .95rem; font-size:.82rem; line-height:1.5; margin-bottom:.8rem; display:none; }
+        .alert.show { display:block; }
+        .alert-info { background:rgba(96,165,250,.1); border:1px solid rgba(96,165,250,.28); color:#bfdbfe; }
+        .alert-warn { background:rgba(252,211,77,.09); border:1px solid rgba(252,211,77,.26); color:var(--warn); }
+        .alert-error { background:rgba(248,113,113,.1); border:1px solid rgba(248,113,113,.28); color:#fca5a5; }
+        .alert-success { background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.26); color:#a7f3d0; }
+
+        .bar { height:8px; border-radius:999px; background:rgba(255,255,255,.09); overflow:hidden; }
+        .bar > i { display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,var(--palu),var(--palu2)); }
+
+        .tabs { display:flex; gap:.25rem; border-bottom:1px solid var(--card-brd); margin-bottom:.9rem; overflow-x:auto; }
+        .tab { padding:.55rem .85rem; font-size:.82rem; font-weight:600; color:var(--muted); white-space:nowrap;
+            border-bottom:2px solid transparent; cursor:pointer; background:none; border-left:none; border-right:none; border-top:none; }
+        .tab.on { color:var(--palu); border-bottom-color:var(--palu); }
+
+        table { width:100%; border-collapse:collapse; font-size:.78rem; }
+        th { text-align:left; color:var(--muted); font-weight:600; font-size:.66rem; letter-spacing:.08em;
+            text-transform:uppercase; padding:.45rem .5rem; border-bottom:1px solid var(--card-brd); }
+        td { padding:.5rem .5rem; border-bottom:1px solid rgba(255,255,255,.05); color:var(--dim); }
+        td.strong { color:var(--text); font-weight:600; }
+        .hash { color:var(--palu); text-decoration:none; font-family:'Courier New',monospace; font-size:.72rem; }
+        .hash:hover { text-decoration:underline; }
+        .tbl-wrap { overflow-x:auto; }
+
+        .note { font-size:.72rem; color:var(--muted); line-height:1.55; margin-top:.7rem; }
+        .split { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; }
+        .kv { background:rgba(0,0,0,.22); border:1px solid var(--card-brd); border-radius:11px; padding:.6rem .7rem; }
+        .kv .k { font-size:.64rem; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+        .kv .v { font-weight:700; font-size:.9rem; margin-top:.15rem; }
+        .empty-state { text-align:center; color:var(--muted); font-size:.82rem; padding:1.4rem .5rem; }
+        .spinner { width:16px; height:16px; border:2px solid rgba(45,212,191,.3); border-top-color:var(--palu);
+            border-radius:50%; display:inline-block; animation:spin .8s linear infinite; vertical-align:-3px; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        @media (prefers-reduced-motion:reduce){ .spinner{ animation:none; } .btn{ transition:none; } }
+
+        input, select { width:100%; padding:.7rem .9rem; border-radius:10px; border:1px solid var(--card-brd);
+            background:rgba(0,0,0,.25); color:var(--text); font-size:.9rem; font-family:inherit; outline:none; }
+        input:focus, select:focus { border-color:rgba(45,212,191,.5); }
+        label.field { display:block; font-size:.75rem; color:var(--dim); margin:.8rem 0 .35rem; }
+        .order-row { display:flex; align-items:center; gap:.5rem; margin-top:.5rem; }
+        .order-row select { flex:1; }
+        .order-row .idx { width:26px; height:26px; border-radius:8px; display:grid; place-items:center; font-weight:800;
+            font-size:.78rem; background:rgba(45,212,191,.14); color:var(--palu); border:1px solid rgba(45,212,191,.3); flex-shrink:0; }
+
+        @media(max-width:560px){ .split{ grid-template-columns:1fr; } .container{ padding:.85rem .85rem 2.5rem; } }
+    </style>
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="nav-container">
+        <a href="/wallet" class="back-wallet-btn">&larr; Wallet</a>
+        <a href="/paluwagan" class="logo">&#129309; Paluwagan</a>
+        <div class="nav-links">
+            <a href="/savings">My Savings</a>
+            <a href="/swap?tab=goodswap">Swap</a>
+        </div>
+        {% if not is_guest %}<span class="wallet-tag">{{ wallet[:6] }}...{{ wallet[-4:] }}</span>{% endif %}
+    </div>
+</nav>
+
+<div class="container">
+    <div class="page-header" style="margin-bottom:1rem;">
+        <h1 class="page-title">&#129309; Community Savings (Paluwagan)</h1>
+        <p class="page-subtitle">
+            Five members contribute a fixed amount every week and take turns receiving the pooled
+            contributions. <strong>This is separate from My Savings</strong> &mdash; group contributions
+            are held in their own contract and never touch your personal savings.
+        </p>
+    </div>
+
+    {% if not paluwagan_configured %}
+    <div class="alert alert-warn show">
+        The Paluwagan contract is not configured on this deployment yet. Reading and joining are
+        disabled until <span class="mono">PALUWAGAN_CONTRACT</span> is set.
+    </div>
+    {% endif %}
+
+    <div id="pageAlert" class="alert"></div>
+
+    <!-- ── OVERVIEW ── -->
+    <div id="secOverview" class="section active">
+        <div class="card palu">
+            <div class="row">
+                <div>
+                    <div class="card-title" style="margin:0;">Community Savings</div>
+                    <div class="note" style="margin-top:.2rem;">Group funds are held separately from My Savings.</div>
+                </div>
+                <span class="badge b-you">Paluwagan</span>
+            </div>
+            <div class="btn-row" style="margin-top:.9rem;">
+                <button class="btn btn-palu" onclick="showCreate()">+ Create Group</button>
+                <button class="btn btn-ghost" onclick="showJoin()">Join Group</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">My groups</div>
+            <div id="groupList"><div class="empty-state"><span class="spinner"></span> Loading your groups&hellip;</div></div>
+        </div>
+    </div>
+
+    <!-- ── CREATE ── -->
+    <div id="secCreate" class="section">
+        <div class="card palu">
+            <div class="card-title">Create a paluwagan group</div>
+
+            <label class="field" for="createToken">Token</label>
+            <select id="createToken"></select>
+
+            <label class="field" for="createAmount">Weekly contribution (per member)</label>
+            <input id="createAmount" type="number" min="1" step="1" placeholder="e.g. 5000" />
+
+            <label class="field" for="createWeeks">Commitment period</label>
+            <select id="createWeeks"></select>
+
+            <div class="card-title" style="margin:1rem 0 .2rem;">Payout order</div>
+            <p class="note" style="margin-top:0;">Choose which slot receives each round's pool. You are slot 1.</p>
+            <div id="orderBuilder"></div>
+
+            <div class="card" style="background:rgba(0,0,0,.2);margin-top:1rem;">
+                <div class="card-title">Rules summary</div>
+                <div class="row"><span class="lbl">Pool per week</span><span class="val" id="sumPool">&mdash;</span></div>
+                <div class="row"><span class="lbl">Your total obligation</span><span class="val" id="sumObligation">&mdash;</span></div>
+                <div class="row"><span class="lbl">Your total received</span><span class="val" id="sumReceived">&mdash;</span></div>
+                <div class="row"><span class="lbl">Deadline / grace</span><span class="val">Every 7 days &middot; 2-day grace</span></div>
+                <div class="row"><span class="lbl">Early exit</span><span class="val" style="color:var(--err);">Not allowed after start</span></div>
+            </div>
+
+            <div class="btn-row" style="margin-top:1rem;">
+                <button class="btn btn-ghost" onclick="showOverview()">Cancel</button>
+                <button class="btn btn-palu" id="createBtn" onclick="createGroup()">Create Group</button>
+            </div>
+            <p class="note">Rules are frozen on-chain at creation. The group cannot start until all 5 members join and it is activated.</p>
+        </div>
+    </div>
+
+    <!-- ── JOIN ── -->
+    <div id="secJoin" class="section">
+        <div class="card palu">
+            <div class="card-title">Join a group</div>
+            <label class="field" for="joinId">Group id</label>
+            <input id="joinId" type="number" min="1" step="1" placeholder="e.g. 3" />
+            <div class="btn-row" style="margin-top:1rem;">
+                <button class="btn btn-ghost" onclick="showOverview()">Cancel</button>
+                <button class="btn btn-palu" onclick="previewJoin()">Preview Group</button>
+            </div>
+        </div>
+        <div class="card" id="joinPreview" style="display:none;">
+            <div class="card-title">Group rules</div>
+            <div id="joinPreviewBody"></div>
+            <button class="btn btn-palu" style="margin-top:1rem;" id="joinBtn" onclick="joinGroup()">Join Group</button>
+            <p class="note">Your signature is your acceptance of these on-chain rules. No off-chain checkbox is used as a gate.</p>
+        </div>
+    </div>
+
+    <!-- ── GROUP DETAIL ── -->
+    <div id="secGroup" class="section">
+        <div class="card palu">
+            <div class="row">
+                <div>
+                    <div class="val" id="gTitle" style="font-size:1.05rem;">Group</div>
+                    <div class="note" id="gMeta" style="margin-top:.2rem;"></div>
+                </div>
+                <span class="badge" id="gStatus">&mdash;</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Lobby &mdash; all five members must join before the group can start</div>
+            <div id="lobbyList"></div>
+            <div class="btn-row" style="margin-top:.9rem;">
+                <button class="btn btn-ghost sm" onclick="copyInvite()">Copy invite link</button>
+                <button class="btn btn-palu" id="activateBtn" onclick="activateGroup()">Activate Group</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="tabs">
+                <button class="tab on" data-tab="members" onclick="switchGroupTab('members')">Members</button>
+                <button class="tab" data-tab="schedule" onclick="switchGroupTab('schedule')">Schedule</button>
+                <button class="tab" data-tab="contrib" onclick="switchGroupTab('contrib')">Contributions</button>
+                <button class="tab" data-tab="payouts" onclick="switchGroupTab('payouts')">Payouts</button>
+            </div>
+            <div id="tab-members"></div>
+            <div id="tab-schedule" style="display:none;"></div>
+            <div id="tab-contrib" style="display:none;"></div>
+            <div id="tab-payouts" style="display:none;"></div>
+        </div>
+
+        <div class="card palu">
+            <div class="card-title">This week</div>
+            <div class="row"><span class="lbl">Round</span><span class="val" id="curRound">&mdash;</span></div>
+            <div class="row"><span class="lbl">Recipient</span><span class="val mono" id="curRecipient">&mdash;</span></div>
+            <div class="row"><span class="lbl">Collected</span><span class="val" id="curCollected">&mdash;</span></div>
+            <div class="bar" style="margin:.6rem 0;"><i id="curBar" style="width:0%;"></i></div>
+            <div class="btn-row">
+                <button class="btn btn-gold" id="contributeBtn" onclick="openContribute()">Make Contribution</button>
+                <button class="btn btn-palu" id="claimBtn" onclick="claimPayout()">Claim Payout</button>
+            </div>
+        </div>
+
+        <div class="card" id="missedCard" style="display:none;">
+            <div class="card-title">Missed payment / default</div>
+            <div id="missedBody"></div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-ghost" onclick="showOverview()">&larr; All groups</button>
+            <button class="btn btn-ghost" onclick="refreshGroup()">Refresh</button>
+        </div>
+    </div>
+
+    <!-- ── CONTRIBUTE (modal-style sheet) ── -->
+    <div id="secContribute" class="section">
+        <div class="card palu">
+            <div class="card-title">Make contribution</div>
+            <div class="row"><span class="lbl">Amount (fixed by group)</span><span class="val" id="cAmount">&mdash;</span></div>
+            <div class="row"><span class="lbl">Your G$ balance</span><span class="val" id="cBalance">&mdash;</span></div>
+            <div class="row"><span class="lbl">Your CELO (for gas)</span><span class="val" id="cCelo">&mdash;</span></div>
+            <div class="split" style="margin:.9rem 0;">
+                <div class="kv"><div class="k">To the group</div><div class="v" id="cToGroup">&mdash;</div></div>
+                <div class="kv"><div class="k">Network fee (est.)</div><div class="v" id="cGas">&mdash;</div></div>
+            </div>
+            <div id="contributeAlert" class="alert"></div>
+            <button class="btn btn-ghost" id="approveBtn" style="margin-bottom:.6rem;" onclick="doApprove()">Step 1 &mdash; Approve G$ spending</button>
+            <button class="btn btn-gold" id="payBtn" onclick="doContribute()">Step 2 &mdash; Contribute</button>
+            <div class="btn-row" style="margin-top:.7rem;">
+                <button class="btn btn-ghost" onclick="refreshGroup()">Back to group</button>
+            </div>
+            <p class="note">Contribution and gas are shown as two separate numbers. There is no relayer or gas sponsorship &mdash; you pay the Celo network fee in CELO.</p>
+        </div>
+    </div>
+</div>
+
+{% if is_guest %}
+{% set get_started_boot = {'return_to': request.full_path if request else ''} %}
+{% include "_get_started_modal.html" %}
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/wc-bridge.js', v=ASSET_VERSION) }}"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"
+        integrity="sha384-VxRGsQMQ8CG4l2gVN44TCDmNY5cdlxbSvejrgmWxcLKHft0Q3XQDbeuJ9aot14mpNuRWGtI//WKraedDGNZ+g=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/local-wallet.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/local-wallet-passkey.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/tx-error.js', v=ASSET_VERSION) }}"></script>
+<script src="{{ url_for('static', filename='js/paluwagan.js', v=ASSET_VERSION) }}"></script>
+<script>
+    window.GM_PALUWAGAN_BOOT = {
+        wallet: {{ wallet|tojson }},
+        isGuest: {{ 'true' if is_guest else 'false' }},
+        loginMethod: {{ login_method|tojson }},
+        contract: {{ paluwagan_contract|tojson }},
+        deploymentBlock: {{ paluwagan_deployment_block|tojson }},
+        configured: {{ 'true' if paluwagan_configured else 'false' }},
+        gdContract: {{ gd_contract|tojson }},
+        chainId: {{ chain_id|tojson }},
+        members: {{ members|tojson }},
+        allowedWeeks: {{ allowed_weeks|tojson }},
+        gracePeriod: {{ 2 * 24 * 3600 }},
+        roundDuration: {{ 7 * 24 * 3600 }},
+        walletconnectProjectId: {{ walletconnect_project_id|tojson }},
+        assetVersion: {{ ASSET_VERSION|tojson }}
+    };
+    {% if is_guest %}
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof window.openGoodMarketGetStarted === 'function') window.openGoodMarketGetStarted();
+    });
+    {% endif %}
+</script>
+</body>
+</html>
