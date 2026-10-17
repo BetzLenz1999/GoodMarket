@@ -1314,6 +1314,11 @@
     }
 
     var _provider = null;
+    // NOTE: this returns the EIP-1193 provider SYNCHRONOUSLY (no Promise).
+    // Callers that want a promise must wrap it — `getProvider().then(...)` is a
+    // TypeError ("getProvider(...).then is not a function") and it silently
+    // broke every WalletConnect action on the farming page. Prefer
+    // `Promise.resolve().then(function () { return GMWalletConnect.getProvider(); })`.
     function getProvider() {
         if (!_provider) {
             _provider = {
