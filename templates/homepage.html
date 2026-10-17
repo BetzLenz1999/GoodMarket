@@ -913,8 +913,11 @@
             animation: fsFloat 6.5s ease-in-out 0.4s infinite;
         }
         .fs-game-pad {
-            width: 92px;
-            height: 92px;
+            /* Scales with the viewport so the pad + multiplier row still fit
+               inside the card on a 320px phone (a fixed 92px pad pushed the
+               multiplier 12px past the viewport edge). */
+            width: clamp(64px, 20vw, 92px);
+            height: clamp(64px, 20vw, 92px);
             border-radius: 24px;
             background: linear-gradient(150deg, rgba(124,58,237,0.92), rgba(76,29,149,0.92));
             border: 1px solid rgba(167,139,250,0.55);
@@ -953,6 +956,7 @@
             flex-direction: column;
             align-items: center;
             gap: 0.55rem;
+            min-width: 0;
         }
         .fs-mult-big {
             font-size: 2.6rem;
@@ -965,6 +969,10 @@
         .fs-mult-row {
             display: flex;
             gap: 0.4rem;
+            /* Three chips are ~167px unwrapped; on a 320px phone that escaped
+               the card. Let the row wrap instead of overflowing. */
+            flex-wrap: wrap;
+            justify-content: center;
         }
         .fs-mini-chip {
             font-size: 0.62rem;
