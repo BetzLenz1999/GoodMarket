@@ -202,6 +202,18 @@
         if (c.provider && typeof c.provider.request === "function") return c.provider;
         return null;
     }
+
+    // GMWalletConnect.getProvider() returns the EIP-1193 provider
+    // SYNCHRONOUSLY (wc-bridge.js builds it on first call and returns the
+    // object). Calling .then() on it threw
+    // "GMWalletConnect.getProvider(...).then is not a function" and every
+    // WalletConnect action died before the wallet was ever prompted.
+    // Tolerate both shapes so a future async getProvider can't re-break this.
+    function _wcProviderPromise() {
+        return Promise.resolve().then(function () {
+            return GMWalletConnect.getProvider();
+        });
+    }
     function _collectProviders() {
         var out = [];
         var push = function (p) { var pr = _coerceProvider(p); if (pr && out.indexOf(pr) === -1) out.push(pr); };
@@ -265,7 +277,7 @@
         return _awaitProviders().then(function (providers) {
             if (!providers.length) {
                 if (prefersWc() && typeof GMWalletConnect !== "undefined") {
-                    return GMWalletConnect.getProvider().then(_bindSigner);
+                    return _wcProviderPromise().then(_bindSigner);
                 }
                 throw new Error("No wallet detected. Open this page in MetaMask, Trust Wallet or another Celo wallet.");
             }
