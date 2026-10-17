@@ -56,7 +56,12 @@ ROUND_DURATION = 7 * 24 * 3600
 GRACE_PERIOD = 2 * 24 * 3600
 
 # forno rejects eth_getLogs beyond ~5000 blocks; keep chunks under that.
+# NOTE: GETLOGS_MAX_CHUNK is the CEILING, not a starting point to exceed. A
+# chunk larger than the provider's cap is rejected outright, so the initial
+# step must be <= this value and the adaptive retry must be able to shrink
+# down to GETLOGS_MIN_CHUNK.
 GETLOGS_MAX_CHUNK = get_env_int("GETLOGS_MAX_CHUNK", 4000)
+GETLOGS_MIN_CHUNK = get_env_int("GETLOGS_MIN_CHUNK", 500)
 
 PALUWAGAN_ABI = [
     # ── Constants / state ──────────────────────────────────────────────────
@@ -134,11 +139,66 @@ ERC20_ABI = [
 
 _w3_pool = {}
 _w3_lock = threading.Lock()
+_deploy_block_lock = threading.Lock()
+_deploy_block_cache = {}
 
 
 def is_configured():
     """True when a paluwagan contract address is configured for this deploy."""
     return bool(PALUWAGAN_CONTRACT_ADDRESS)
+
+
+def get_deploy_block():
+    """Return the block the paluwagan contract was deployed at, or 0.
+
+    Prefers ``PALUWAGAN_DEPLOYMENT_BLOCK`` (explicit and free), else
+    binary-searches ``eth_getCode`` for the first block holding bytecode.
+    Mirrors farming/blockchain.py::get_deploy_block so the event scan is
+    anchored instead of walking the whole lookback window on every read.
+    """
+    if PALUWAGAN_DEPLOYMENT_BLOCK > 0:
+        return PALUWAGAN_DEPLOYMENT_BLOCK
+    contract = (PALUWAGAN_CONTRACT_ADDRESS or "").lower()
+    if not contract:
+        return 0
+    with _deploy_block_lock:
+        cached = _deploy_block_cache.get(contract)
+        if cached is not None:
+            return cached
+    try:
+        w3 = get_w3()
+        head = int(w3.eth.block_number)
+    except Exception:
+        return 0
+
+    def _has_code(block):
+        try:
+            code = w3.eth.get_code(
+                Web3.to_checksum_address(PALUWAGAN_CONTRACT_ADDRESS),
+                block_identifier=block,
+            )
+        except Exception:
+            return False
+        if hasattr(code, "hex"):
+            code = code.hex()
+        return isinstance(code, str) and len(code) > 2
+
+    try:
+        if not _has_code(head):
+            return 0
+        low, high = 0, head
+        while low < high:
+            mid = (low + high) // 2
+            if _has_code(mid):
+                high = mid
+            else:
+                low = mid + 1
+    except Exception:
+        return 0
+    with _deploy_block_lock:
+        _deploy_block_cache[contract] = low
+    logger.info("paluwagan: contract deploy block discovered: %s", low)
+    return low
 
 
 def get_w3():
@@ -190,16 +250,23 @@ def _raw_to_human(raw, decimals):
 def _chunked_logs(contract, event_name, from_block, to_block, argument_filters=None, step=None):
     """Pull event logs in chunks under forno's eth_getLogs range cap.
 
-    Mirrors savings/blockchain.py's _chunked_event_logs: on a range error the
-    chunk is halved and retried; a genuine failure is surfaced (never silently
-    dropped, which is what previously made savings history look empty).
+    The initial chunk is clamped to GETLOGS_MAX_CHUNK (4000 by default) — a
+    wider span is rejected by forno with "query exceeds range" and, because the
+    adaptive retry could not shrink below the hardcoded 10_000 floor, the whole
+    scan raised and every caller returned an empty list. That is what made a
+    freshly created group invisible in "My Groups" while the same group loaded
+    fine by name/id (a direct view call, no log scan).
+
+    On a range error the chunk is halved and retried, down to
+    GETLOGS_MIN_CHUNK. The failure is surfaced only when even the minimum chunk
+    is rejected, so a genuine outage is never silently reported as "no groups".
     """
     event = getattr(contract.events, event_name)
     logs = []
     start = int(from_block)
     end = int(to_block)
     if step is None:
-        step = max(10_000, int(GETLOGS_MAX_CHUNK))
+        step = max(GETLOGS_MIN_CHUNK, int(GETLOGS_MAX_CHUNK))
     while start <= end:
         stop = min(start + step - 1, end)
         try:
@@ -209,7 +276,7 @@ def _chunked_logs(contract, event_name, from_block, to_block, argument_filters=N
                 to_block=stop,
             ))
         except Exception:
-            if step > 10_000:
+            if step > GETLOGS_MIN_CHUNK:
                 return _chunked_logs(
                     contract, event_name, start, end, argument_filters, step // 2
                 )
@@ -219,10 +286,17 @@ def _chunked_logs(contract, event_name, from_block, to_block, argument_filters=N
 
 
 def _from_block():
-    if PALUWAGAN_DEPLOYMENT_BLOCK > 0:
-        return PALUWAGAN_DEPLOYMENT_BLOCK
-    # No configured deployment block: scan a bounded recent window rather than
-    # genesis. Callers can force a wider scan by setting the env var.
+    """Lower bound for every event scan.
+
+    Prefers the configured deployment block, else discovers it once with an
+    ``eth_getCode`` binary search (archive state is available on forno), and
+    only then falls back to a bounded recent window. Anchoring at the deploy
+    block keeps the multi-event membership scan cheap instead of walking
+    hundreds of thousands of blocks on every request.
+    """
+    deploy = get_deploy_block()
+    if deploy > 0:
+        return deploy
     w3 = get_w3()
     latest = w3.eth.block_number
     return max(0, latest - get_env_int('PALUWAGAN_LOOKBACK_BLOCKS', 500_000))
@@ -324,20 +398,57 @@ def get_group_overview(group_id, wallet=None):
     return group
 
 
+# Events whose INDEXED user argument identifies a wallet that touched a group.
+# Membership discovery unions these so a wallet is found from the FIRST action
+# it took — not only from MemberJoined. A creator who later contributed, or a
+# member who only ever contributed/claimed, is still discovered.
+_MEMBER_EVENT_FILTERS = (
+    ("MemberJoined", "member"),
+    ("ContributionMade", "member"),
+    ("ContributionLate", "member"),
+    ("PayoutClaimed", "recipient"),
+)
+
+
+def _groups_for_wallet_event(contract, event_name, arg_name, wallet, from_block, latest):
+    """Group ids the wallet appears in for one event, tolerant of per-event failure.
+
+    A single unreadable event type must not blank the whole list, so each scan
+    is isolated: whatever succeeds is merged, whatever fails is logged.
+    """
+    try:
+        logs = _chunked_logs(
+            contract, event_name, from_block, latest,
+            {arg_name: Web3.to_checksum_address(wallet)},
+        )
+    except Exception as e:
+        logger.warning("paluwagan: %s scan failed for %s: %s", event_name, wallet, e)
+        return set()
+    return {int(log["args"]["groupId"]) for log in logs}
+
+
 def get_my_groups(wallet):
-    """Find every group the wallet is a member of, from MemberJoined events."""
+    """Every group the wallet is a member of or has transacted with.
+
+    Unions MemberJoined with the other member-indexed events (contributions and
+    payouts) so a group becomes visible from the first action the wallet takes,
+    not only from the join that may predate the indexed scan window.
+    """
     if not wallet or not is_configured():
         return []
     contract = get_contract()
     w3 = get_w3()
     latest = w3.eth.block_number
-    logs = _chunked_logs(
-        contract, "MemberJoined", _from_block(), latest,
-        {"member": Web3.to_checksum_address(wallet)},
-    )
-    group_ids = sorted({int(log["args"]["groupId"]) for log in logs})
+    from_block = _from_block()
+
+    group_ids = set()
+    for event_name, arg_name in _MEMBER_EVENT_FILTERS:
+        group_ids |= _groups_for_wallet_event(
+            contract, event_name, arg_name, wallet, from_block, latest
+        )
+
     out = []
-    for gid in group_ids:
+    for gid in sorted(group_ids):
         try:
             out.append(get_group_overview(gid, wallet))
         except Exception as e:
