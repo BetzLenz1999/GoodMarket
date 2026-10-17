@@ -68,9 +68,10 @@ PALUWAGAN_ABI = [
         "inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}],
         "name": "getGroup",
         "outputs": [
+            {"internalType": "string", "name": "name", "type": "string"},
             {"internalType": "address", "name": "token", "type": "address"},
             {"internalType": "uint256", "name": "contributionAmount", "type": "uint256"},
-            {"internalType": "uint256", "name": "weeks", "type": "uint256"},
+            {"internalType": "uint256", "name": "periodWeeks", "type": "uint256"},
             {"internalType": "uint8", "name": "status", "type": "uint8"},
             {"internalType": "uint256", "name": "currentRound", "type": "uint256"},
             {"internalType": "uint256", "name": "roundStartAt", "type": "uint256"},
@@ -81,6 +82,10 @@ PALUWAGAN_ABI = [
         "stateMutability": "view",
         "type": "function",
     },
+    {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}], "name": "getGroupName", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [{"internalType": "string", "name": "name", "type": "string"}], "name": "getGroupIdByName", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "MIN_NAME_LENGTH", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+    {"inputs": [], "name": "MAX_NAME_LENGTH", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}], "name": "getMembers", "outputs": [{"internalType": "address[5]", "name": "", "type": "address[5]"}], "stateMutability": "view", "type": "function"},
     {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}], "name": "getPayoutOrder", "outputs": [{"internalType": "uint8[5]", "name": "", "type": "uint8[5]"}], "stateMutability": "view", "type": "function"},
     {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}, {"internalType": "uint256", "name": "round", "type": "uint256"}], "name": "recipientOf", "outputs": [{"internalType": "address", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
@@ -104,7 +109,7 @@ PALUWAGAN_ABI = [
     {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}, {"internalType": "address", "name": "member", "type": "address"}], "name": "isDefaulted", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "view", "type": "function"},
     {"inputs": [{"internalType": "uint256", "name": "groupId", "type": "uint256"}], "name": "contractBalance", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
     # ── Events (history is reconstructed from these) ───────────────────────
-    {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "creator", "type": "address"}, {"indexed": True, "internalType": "address", "name": "token", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "contributionAmount", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "periodWeeks", "type": "uint256"}], "name": "GroupCreated", "type": "event"},
+    {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "creator", "type": "address"}, {"indexed": True, "internalType": "address", "name": "token", "type": "address"}, {"indexed": False, "internalType": "string", "name": "name", "type": "string"}, {"indexed": False, "internalType": "uint256", "name": "contributionAmount", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "periodWeeks", "type": "uint256"}], "name": "GroupCreated", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "slot", "type": "uint256"}], "name": "MemberJoined", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "activatedAt", "type": "uint256"}, {"indexed": False, "internalType": "uint256", "name": "roundStartAt", "type": "uint256"}], "name": "GroupActivated", "type": "event"},
     {"anonymous": False, "inputs": [{"indexed": True, "internalType": "uint256", "name": "groupId", "type": "uint256"}, {"indexed": True, "internalType": "uint256", "name": "round", "type": "uint256"}, {"indexed": True, "internalType": "address", "name": "member", "type": "address"}, {"indexed": False, "internalType": "uint256", "name": "amount", "type": "uint256"}], "name": "ContributionMade", "type": "event"},
@@ -232,10 +237,12 @@ def get_group(group_id):
     """Read a single group's live state from the contract."""
     contract = get_contract()
     g = contract.functions.getGroup(int(group_id)).call()
-    token, contribution, weeks, status, current_round, round_start, member_count, round_deadline, grace_deadline = g
+    (name, token, contribution, weeks, status, current_round,
+     round_start, member_count, round_deadline, grace_deadline) = g
     meta = _token_meta(token)
     return {
         "id": int(group_id),
+        "name": str(name or ""),
         "token": token,
         "token_symbol": meta["symbol"],
         "decimals": meta["decimals"],
@@ -251,6 +258,23 @@ def get_group(group_id):
         "pool_amount": str(int(contribution) * MEMBERS),
         "pool_amount_h": _raw_to_human(int(contribution) * MEMBERS, meta["decimals"]),
     }
+
+
+def resolve_group_id(name):
+    """Resolve a group name (any casing) to its id. Returns 0 when unclaimed."""
+    contract = get_contract()
+    return int(contract.functions.getGroupIdByName(str(name)).call())
+
+
+def get_group_by_name(name, wallet=None):
+    """Deep-link helper: name -> full group overview, or None when unknown."""
+    try:
+        group_id = resolve_group_id(name)
+    except Exception:
+        return None
+    if not group_id:
+        return None
+    return get_group_overview(group_id, wallet)
 
 
 def get_members(group_id):
