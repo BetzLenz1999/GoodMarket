@@ -9,7 +9,11 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #0B0F2A 0%, #130D35 50%, #1A103D 100%); color: #e2e8f0; min-height: 100vh; }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #0B0F2A 0%, #130D35 50%, #1A103D 100%); color: #e2e8f0; min-height: 100vh;
+            /* Backstop only: the real fix is the responsive navbar below.
+               `clip` (not `hidden`) so the sticky navbar keeps working — a
+               scroll container on an ancestor breaks position:sticky. */
+            overflow-x: clip; }
 
         .navbar { background: rgba(11,15,42,0.92); border-bottom: 1px solid rgba(255,255,255,0.07); padding: 0 1.5rem; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(20px); }
         .nav-container { max-width: 1300px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; height: 56px; gap: 0.75rem; }
@@ -20,6 +24,29 @@
         .nav-links a.active { color: #fff; background: rgba(124,58,237,0.18); font-weight: 600; }
         .wallet-tag { background: rgba(124,58,237,0.12); border: 1px solid rgba(124,58,237,0.28); border-radius: 20px; padding: 0.28rem 0.8rem; font-weight: 600; font-family: 'Courier New', monospace; font-size: 0.8rem; color: #a78bfa; white-space: nowrap; flex-shrink: 0; }
         .logout-btn { background: rgba(239,68,68,0.1) !important; border: 1px solid rgba(239,68,68,0.25) !important; color: #f87171 !important; border-radius: 20px !important; }
+
+        /* ── Phone navbar ──
+           `.nav-links` is ~503px wide on one unwrappable row (logo + 5 links +
+           wallet tag + Logout), which pushed the page 351px past a 320px
+           viewport. Below 640px the link row becomes a horizontally swipeable
+           strip so every destination stays reachable, and the wallet tag is
+           dropped (the page content already shows the wallet). */
+        @media (max-width: 640px) {
+            .navbar { padding: 0 0.75rem; }
+            .nav-container { gap: 0.4rem; height: auto; min-height: 56px; padding: 0.35rem 0; }
+            .logo { font-size: 1rem; }
+            .nav-links {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow-x: auto;
+                flex-wrap: nowrap;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            .nav-links::-webkit-scrollbar { display: none; }
+            .nav-links a { padding: 0.4rem 0.5rem; font-size: 0.8rem; white-space: nowrap; flex-shrink: 0; }
+            .wallet-tag { display: none; }
+        }
 
         .container { max-width: 520px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
         .page-header { text-align: center; margin-bottom: 2rem; }
