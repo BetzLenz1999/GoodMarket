@@ -92,6 +92,8 @@ def _render_paluwagan(join_name=""):
         chain_id=CHAIN_ID,
         members=MEMBERS,
         allowed_weeks=list(ALLOWED_WEEKS),
+        removal_supported=chain.supports_member_removal(),
+        removal_grace_period=chain.REMOVAL_GRACE_PERIOD,
         supported_tokens=[
             {"address": addr, "symbol": meta["symbol"], "decimals": meta["decimals"]}
             for addr, meta in SUPPORTED_TOKENS.items()
@@ -148,6 +150,8 @@ def api_config():
         "allowed_weeks": list(ALLOWED_WEEKS),
         "grace_period": chain.GRACE_PERIOD,
         "round_duration": chain.ROUND_DURATION,
+        "removal_supported": chain.supports_member_removal(),
+        "removal_grace_period": chain.REMOVAL_GRACE_PERIOD,
         "tokens": [
             {"address": addr, "symbol": meta["symbol"], "decimals": meta["decimals"]}
             for addr, meta in SUPPORTED_TOKENS.items()
